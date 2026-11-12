@@ -17,14 +17,14 @@ Add the registry package to the plugin list:
 
 ```jsonc
 {
-  "plugins": ["opencode-fs-plugin@1.4.1"]
+  "plugins": ["opencode-fs-plugin@1.4.2"]
 }
 ```
 
 Or let the CLI install and configure it:
 
 ```bash
-opencode plugin add opencode-fs-plugin@1.4.1
+opencode plugin add opencode-fs-plugin@1.4.2
 ```
 
 A bare `opencode-fs-plugin` follows `latest`. OpenCode installs it into its
@@ -36,7 +36,7 @@ Option A if you also want the skill.
 Download the release artifact and install it as a normal npm package:
 
 ```bash
-VERSION=1.4.1
+VERSION=1.4.2
 curl -L -o "opencode-fs-plugin-${VERSION}.tgz" \
   "https://github.com/masterjg/opencode-fs-plugin/releases/download/v${VERSION}/opencode-fs-plugin-${VERSION}.tgz"
 npm install "./opencode-fs-plugin-${VERSION}.tgz"
@@ -64,20 +64,20 @@ OpenCode installs it from Git:
 
 ```jsonc
 {
-  "plugins": ["github:masterjg/opencode-fs-plugin#v1.4.1"]
+  "plugins": ["github:masterjg/opencode-fs-plugin#v1.4.2"]
 }
 ```
 
-`opencode plugin add 'github:masterjg/opencode-fs-plugin#v1.4.1'` installs the
+`opencode plugin add 'github:masterjg/opencode-fs-plugin#v1.4.2'` installs the
 same spec and writes the entry for you. The equivalent full URL is
-`git+https://github.com/masterjg/opencode-fs-plugin.git#v1.4.1`. A tag is
+`git+https://github.com/masterjg/opencode-fs-plugin.git#v1.4.2`. A tag is
 checked for updates; use a full commit hash to pin it.
 
 Git plugins are installed under OpenCode's cache, so their package path is not
 stable. For a stable skill path, install the tag with npm instead:
 
 ```bash
-npm install "github:masterjg/opencode-fs-plugin#v1.4.1"
+npm install "github:masterjg/opencode-fs-plugin#v1.4.2"
 ```
 
 Then configure `./node_modules/opencode-fs-plugin` in `plugins` as in the
@@ -174,9 +174,9 @@ and description until the model loads it.
 To let a coding agent install the plugin, use:
 
 ```text
-Install opencode-fs-plugin 1.4.1 with "npm install opencode-fs-plugin@1.4.1",
+Install opencode-fs-plugin 1.4.2 with "npm install opencode-fs-plugin@1.4.2",
 or from its release tarball or the Git tag
-"github:masterjg/opencode-fs-plugin#v1.4.1". Add
+"github:masterjg/opencode-fs-plugin#v1.4.2". Add
 "./node_modules/opencode-fs-plugin" to the plugins array in opencode.jsonc, add
 "./node_modules/opencode-fs-plugin/skills" to the skills array, then verify that
 the filesystem skill loads with the skill tool using id "filesystem".
