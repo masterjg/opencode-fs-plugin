@@ -1,6 +1,6 @@
 ---
 name: Filesystem
-description: Use when a task needs Linux-style filesystem or text operations beyond OpenCode's built-ins - copy, move, metadata, touch, truncate, symlinks, chmod, hashes, disk usage, find, archives, diff, trash, background jobs, or composing filters through a pipe. Covers the fs namespace, argument shapes, native options, permissions, limits, and verification.
+description: Use when a task needs Linux-style filesystem or text operations beyond OpenCode's built-ins - copy, move, metadata, touch, truncate, symlinks, chmod, hashes, disk usage, find, archives, diff, HTTP(S) requests and downloads, trash, background jobs, or composing filters through a pipe. Covers the fs namespace, argument shapes, native options, permissions, limits, and verification.
 ---
 
 # Filesystem
@@ -24,6 +24,7 @@ With `execute` allowed, call it as `tools.fs.<command>`; agents without
 | Metadata/predicate search | `fs.find` |
 | Regex substitution or in-place edit | `fs.sed` |
 | Recoverable deletion | `fs.trash` |
+| HTTP(S) fetch, API call, or file download | `fs.http_request` |
 | Batching or loops | `execute` JS loops over `tools.fs.*` |
 
 Do not duplicate a built-in when it already covers the job. `fs` exists for the
@@ -50,6 +51,7 @@ what `fs.stat`, `fs.ls`, `fs.hash`, `fs.diff`, or `fs.cat` can confirm.
 | Temp and trash | `fs.mktemp`, `fs.trash` |
 | Text filters | `fs.cat`, `fs.head`, `fs.tail`, `fs.grep`, `fs.sed`, `fs.sort`, `fs.uniq`, `fs.cut`, `fs.tr`, `fs.wc`, `fs.tee` |
 | Compose filters | `fs.pipe` |
+| HTTP(S) | `fs.http_request` (`output`, `checksum`, `maxBytes`, `json`) |
 | Background jobs | `background: true`, then `fs.job` |
 
 Recent parity additions:
@@ -77,6 +79,7 @@ Use the exact field names; scalar `path` is only valid for `fs.mkdir`.
 | `archive` + `paths` | `fs.tar` create, `fs.zip` create |
 | `archive` + `mode` | `fs.tar` (`create`/`extract`/`list`), `fs.unzip` (`extract`/`list`) |
 | `content` | `fs.tee` when there is no stdin |
+| `url` + optional `output` | `fs.http_request` |
 | `stages` + optional `input`/`output` | `fs.pipe` |
 
 ## Pipe
@@ -99,6 +102,18 @@ await tools.fs.pipe({
 native names (`cat`, `grep`, `sort`), not `fs.cat`. There is no shell,
 redirection operator, nested pipe, or `find -exec`. A filter stage needs
 `input` or a preceding source stage.
+
+`http_request` is a source stage. Pipe stages exchange whole buffers, so set
+`maxBytes` for large responses; use `output` for real streaming to disk.
+
+```js
+await tools.fs.pipe({
+  stages: [
+    { tool: "http_request", args: { url: "https://example.com/app.log", maxBytes: 8_000_000 } },
+    { tool: "grep", args: { pattern: "ERROR" } },
+  ],
+})
+```
 
 ## Background jobs
 
@@ -216,6 +231,16 @@ await tools.fs.unzip({ archive: "bundle.zip", mode: "list" })
 
 // compare two files
 await tools.fs.diff({ left: "old.txt", right: "new.txt", unified: 3 })
+
+// API call, then a verified download
+await tools.fs.http_request({ url: "https://api.github.com/repos/owner/repo/releases/latest" })
+await tools.fs.http_request({
+  url: "https://example.com/tool-1.0.0.tgz",
+  output: "tool-1.0.0.tgz",
+  checksum: "sha256:<hex>",
+  maxBytes: 50_000_000,
+  background: true,
+})
 ```
 
 ## Limits
@@ -225,9 +250,11 @@ await tools.fs.diff({ left: "old.txt", right: "new.txt", unified: 3 })
   `i` and `p`. It is not a full sed interpreter.
 - `fs.find` has no `-exec`; use `fs.rm`/`fs.trash` separately.
 - No `xz`, `zstd`, `7z`, `chown`, `chattr`, `dd`, or `rsync`.
-- `fs.tail` has no follow mode; `fs.diff` compares files/directories only.
+- `fs.tail` has bounded `follow` only; unbounded `tail -f` is not supported.
 - `cp -a` preserves mode and timestamps but not ACLs or xattrs.
-- `fs.tar`/`fs.zip` are file-backed; they are not pipe stages.
+- `fs.tar`/`fs.zip` create from `input` or stdin; extraction is file-backed.
+- `fs.http_request` is HTTP(S) only: no FTP/SFTP, cookie jars, client
+  certificates, proxies, multipart uploads, or resumable downloads.
 - `fs.tar` resolves `paths` even when `directory` is set; pass absolute sources
   with `directory` or the member path may not be found.
 - `fs.du` reports allocated blocks like `du`; use `fs.stat` with `%s` for
@@ -255,6 +282,11 @@ await tools.fs.diff({ left: "old.txt", right: "new.txt", unified: 3 })
 Command actions are `fs_<command>` (for example `fs_cp`). `fs_*` wildcards work
 in agent rules. `fs.pipe` asserts each stage's action; a denied stage cannot be
 hidden inside a pipeline. Do not work around a denied tool with shell.
+
+`fs_http_request` is allowed by default, like `fetch`. Its resource is the
+request host; rules can allow one host and ask or deny the rest. Each redirect
+hop is checked against the new host. Nothing blocks localhost or private
+addresses by default.
 
 ## Errors and output
 

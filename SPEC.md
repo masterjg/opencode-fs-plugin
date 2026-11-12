@@ -25,6 +25,21 @@ the `fs` namespace (`tools.fs.cp`, direct `fs_cp`).
 - Results stay in memory and are returned by `fs.job`; status files contain only
   state and metadata. Permission checks still apply to background work.
 
+## HTTP requests
+
+- `fs.http_request` supports `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, and `HEAD`
+  over `http:`/`https:` only; other schemes fail with `unsupported`.
+- Requests are allowed by default. The permission resource is the request host,
+  and every redirect hop re-asserts `fs_http_request` for the new host.
+- Redirects are followed manually: 301/302 rewrite `POST` to `GET`, 303 always
+  does, and the hop count is bounded by `maxRedirects`.
+- `output` streams the response to a temporary file in the target directory and
+  renames it only after the body and checksum are complete.
+- `checksum` accepts `<md5|sha1|sha256|sha512>:<hex>`; a bare digest means
+  SHA-256. Mismatches fail with `checksum` and leave no partial file.
+- `maxBytes` is enforced while reading, for buffered and downloaded bodies.
+- Pipe use is a buffered source; whole bodies pass between stages.
+
 ## Deliberate gaps
 
 These are not implemented:
@@ -38,6 +53,9 @@ These are not implemented:
 - unbounded `tail -f`; use bounded `follow` or the wait plugin
 - archive extraction from arbitrary streams; create accepts text/stdin stream input
 - cross-filesystem `trash`; use `rm` or a mount-trash helper
+- curl protocols beyond HTTP(S), cookie jars, client certificates, proxies,
+  multipart uploads, and resumable/range downloads
+- true streaming through pipe stages; `http_request` buffers unless `output` is set
 
 ## Format details
 

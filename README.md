@@ -45,6 +45,7 @@ unit, end-to-end and coverage tests.
 | `mktemp` | `fs.mktemp` | `template`, `directory`, `tmpdir`, `suffix` |
 | `trash` | `fs.trash` | XDG home trash |
 | `diff` | `fs.diff` | `unified`, `brief`, `recursive`, `ignoreWhitespace`, `ignoreCase`, `exclude` |
+| HTTP(S) | `fs.http_request` | `url`, `method`, `headers`, `body`, `json`, `output`, `checksum`, `maxBytes`, `timeoutMs`, `failOnError`, `followRedirects`, `maxRedirects` |
 | shell pipe | `fs.pipe` | `stages`, `input`, `output`, `append` |
 
 ## Pipe
@@ -63,6 +64,20 @@ await tools.fs.pipe({
   output: "errors.txt",
 })
 ```
+
+`fs.http_request` is a pipe source, so network data can feed the same stages:
+
+```js
+await tools.fs.pipe({
+  stages: [
+    { tool: "http_request", args: { url: "https://example.com/app.log" } },
+    { tool: "grep", args: { pattern: "ERROR" } },
+  ],
+})
+```
+
+Pipe stages exchange whole buffers, so use `maxBytes` for large responses. For
+large downloads prefer `fs.http_request({ output })`, which streams to disk.
 
 There is no shell, redirection operator, nested pipe, or `find -exec`.
 
@@ -127,18 +142,18 @@ Add the registry package directly to the plugin list:
 
 ```jsonc
 {
-  "plugins": ["opencode-fs-plugin@1.2.2"]
+  "plugins": ["opencode-fs-plugin@1.3.0"]
 }
 ```
 
-`opencode plugin add opencode-fs-plugin@1.2.2` installs it and writes the config
+`opencode plugin add opencode-fs-plugin@1.3.0` installs it and writes the config
 entry. A bare `opencode-fs-plugin` follows the `latest` tag.
 
 OpenCode manages the package under its cache, so the path is not stable. If you
 also want the packaged skill, install it into a project instead:
 
 ```bash
-npm install opencode-fs-plugin@1.2.2
+npm install opencode-fs-plugin@1.3.0
 ```
 
 ```jsonc
@@ -153,7 +168,7 @@ npm install opencode-fs-plugin@1.2.2
 Download the release tarball, then install it as a normal npm package:
 
 ```bash
-VERSION=1.2.2
+VERSION=1.3.0
 curl -L -o "opencode-fs-plugin-${VERSION}.tgz" \
   "https://github.com/masterjg/opencode-fs-plugin/releases/download/v${VERSION}/opencode-fs-plugin-${VERSION}.tgz"
 npm install "./opencode-fs-plugin-${VERSION}.tgz"
@@ -182,20 +197,20 @@ OpenCode installs it from Git:
 
 ```jsonc
 {
-  "plugins": ["github:masterjg/opencode-fs-plugin#v1.2.2"]
+  "plugins": ["github:masterjg/opencode-fs-plugin#v1.3.0"]
 }
 ```
 
-`opencode plugin add 'github:masterjg/opencode-fs-plugin#v1.2.2'` installs the
+`opencode plugin add 'github:masterjg/opencode-fs-plugin#v1.3.0'` installs the
 same spec and writes the config entry. The equivalent full URL is
-`git+https://github.com/masterjg/opencode-fs-plugin.git#v1.2.2`. A tag is
+`git+https://github.com/masterjg/opencode-fs-plugin.git#v1.3.0`. A tag is
 checked for updates; use a full commit hash to pin it.
 
 Git plugins are installed under OpenCode's cache, so their package path is not
 stable. If you also want the packaged skill, install with npm instead:
 
 ```bash
-npm install "github:masterjg/opencode-fs-plugin#v1.2.2"
+npm install "github:masterjg/opencode-fs-plugin#v1.3.0"
 ```
 
 Then use `./node_modules/opencode-fs-plugin` in `plugins` and
@@ -253,6 +268,20 @@ Every tool asserts an action named after the tool (`fs_cp`, `fs_rm`,
 external targets first require `external_directory` on the absolute boundary.
 `allow always` persists the same patterns as the built-in tools.
 
+`fs.http_request` is allowed by default, like `fetch`. Its resource is the
+request host (`example.com:8443`), so requests can be restricted per host:
+
+```jsonc
+{
+  "permissions": [
+    { "action": "fs_http_request", "resource": "api.github.com", "effect": "allow" },
+    { "action": "fs_http_request", "resource": "*", "effect": "ask" }
+  ]
+}
+```
+
+Redirects re-assert the rule against each new host.
+
 Agent rules can use wildcards:
 
 ```jsonc
@@ -285,6 +314,10 @@ when only some agents should be shell-free.
   project requires `external_directory`; removing or renaming the link itself is
   internal.
 - Archive extraction rejects absolute paths, `..`, and escaping symlinks.
+- `http_request` accepts only `http:` and `https:`, keeps TLS verification on,
+  re-checks permissions on redirect hops, and writes downloads to a temporary
+  file before renaming. Localhost and private addresses are not blocked by
+  default.
 - `rm` is permanent. `trash` uses the XDG home trash and refuses cross-device
   moves instead of silently copying.
 - The sandbox is a guardrail, not a kernel security boundary. Symlink races

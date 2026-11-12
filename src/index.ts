@@ -26,6 +26,7 @@ import { grepTool } from "./tools/grep.js";
 import { gunzipTool, gzipTool } from "./tools/gzip.js";
 import { hashTool } from "./tools/hash.js";
 import { headTool } from "./tools/head.js";
+import { httpRequestTool } from "./tools/http_request.js";
 import { lnTool } from "./tools/ln.js";
 import { lsTool } from "./tools/ls.js";
 import { mkdirTool } from "./tools/mkdir.js";
@@ -80,6 +81,7 @@ const TOOLS: readonly AnyTool[] = [
   headTool,
   tailTool,
   teeTool,
+  httpRequestTool,
   wcTool,
   sortTool,
   uniqTool,
