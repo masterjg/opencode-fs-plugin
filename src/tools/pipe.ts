@@ -8,15 +8,26 @@ import { FsError } from "../core/errors.js";
 import { parseSchema } from "../core/schema.js";
 import { writeAll } from "../core/stream.js";
 import { textResult, type ToolSpec, type ToolResult } from "../core/types.js";
+import { base64Tool } from "./base64.js";
 import { catTool } from "./cat.js";
+import { cpioTool } from "./cpio.js";
 import { cutTool } from "./cut.js";
+import { ddTool } from "./dd.js";
+import { foldTool } from "./fold.js";
 import { grepTool } from "./grep.js";
 import { gunzipTool, gzipTool } from "./gzip.js";
 import { hashTool } from "./hash.js";
 import { headTool } from "./head.js";
 import { httpRequestTool } from "./http_request.js";
+import { nlTool } from "./nl.js";
+import { odTool } from "./od.js";
+import { pasteTool } from "./paste.js";
+import { revTool } from "./rev.js";
 import { sedTool } from "./sed.js";
+import { shufTool } from "./shuf.js";
 import { sortTool } from "./sort.js";
+import { stringsTool } from "./strings.js";
+import { tacTool } from "./tac.js";
 import { tailTool } from "./tail.js";
 import { tarTool } from "./tar.js";
 import { teeTool } from "./tee.js";
@@ -50,7 +61,8 @@ const REGISTRY: ReadonlyMap<string, AnyTool> = new Map(
   [
     catTool, headTool, tailTool, grepTool, sedTool, sortTool, uniqTool, cutTool,
     trTool, wcTool, teeTool, hashTool, gzipTool, gunzipTool, tarTool, zipTool,
-    httpRequestTool,
+    httpRequestTool, base64Tool, odTool, stringsTool, tacTool, revTool, nlTool,
+    pasteTool, shufTool, foldTool, ddTool, cpioTool,
   ].map((tool) => [tool.name, tool]),
 );
 

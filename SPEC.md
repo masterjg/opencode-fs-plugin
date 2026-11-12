@@ -32,6 +32,29 @@ the `fs` namespace (`tools.fs.cp`, direct `fs_cp`).
 - Results stay in memory and are returned by `fs.job`; status files contain only
   state and metadata. Permission checks still apply to background work.
 
+## Batch 1 tools
+
+- `ps`, `pgrep`, and `kill` read `/proc` and use `process.kill`; no process can
+  be started or wrapped, so `nohup`, `setsid`, and `timeout` are out of scope.
+- `kill` rejects pid 0, pid 1, and negative process groups.
+- `file` reads the first 1 KiB and detects ELF, images, archives, compression,
+  SQLite, wasm, text, and generic data.
+- `base64` encodes with optional wrapping and validates decoded input; decoded
+  bytes may be binary and are base64-encoded again by the renderer.
+- `od` is an xxd-style hex/ASCII dump with offset, length, and width.
+- `strings` extracts printable ASCII runs.
+- `id`, `uname`, `uptime`, `date`, `findmnt`, and `mountpoint` read OS data;
+  `findmnt` parses `/proc/self/mountinfo`.
+- `tac`, `rev`, `nl`, `paste`, `comm`, `split`, `shuf`, and `fold` cover text
+  primitives that `pipe` could not express. `comm` expects sorted input.
+- `chown` uses `fs.chown`/`fs.lchown`, accepts names or ids, and walks
+  recursively with the shared concurrency limit.
+- `sync` calls `fsync` per path; Node has no global sync syscall.
+- `dd` supports `bs`, `count`, `skip`, `seek`, and `status`; it does not
+  implement conversions or `iflag`/`oflag`.
+- `cpio` reads and writes newc archives; `ar` uses GNU short names (max 16 bytes).
+  Both reject traversal and unsafe member names.
+
 ## HTTP requests
 
 - `fs.http_request` supports `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, and `HEAD`
@@ -65,6 +88,14 @@ These are not implemented:
 - true streaming through pipe stages; `http_request` buffers unless `output` is set
 - worker threads for CPU-bound stages (`sort`, `sed`, text diffing)
 - parallel member reads inside a single `tar`/`zip` archive; member order is fixed
+- process start, `nohup`, `setsid`, and `timeout` wrappers; the plugin never
+  uses `child_process`
+- ICMP `ping` (raw sockets) and `ip`/netlink configuration
+- `rsync`, `scp`, and other transfer protocols; use the SSH MCP for remote work
+- ACLs, xattrs, and `chattr`/`lsattr`
+- `awk`, full `jq`/`yq`, and the remaining `sed` command language
+- `7z`, `rar`, `xz`, `zstd`, and `bzip2`; batch 2 may add pure-JS or native deps
+- `fallocate`, `mkfifo`, `mknod`, `flock`, and mount operations
 
 ## Format details
 

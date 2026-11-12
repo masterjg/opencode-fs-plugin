@@ -246,26 +246,53 @@ export async function lookupGroup(gid: number): Promise<string> {
   return (await lookupId("/etc/group", gid)) ?? String(gid);
 }
 
-const idCaches = new Map<string, Map<number, string>>();
+interface IdTable {
+  readonly byId: Map<number, string>;
+  readonly byName: Map<string, number>;
+}
+
+const idTables = new Map<string, IdTable>();
+
+async function loadIds(file: string): Promise<IdTable | undefined> {
+  const cached = idTables.get(file);
+  if (cached !== undefined) return cached;
+  let text: string;
+  try {
+    text = await fs.readFile(file, "utf8");
+  } catch {
+    /* v8 ignore next */
+    return undefined;
+  }
+  const table: IdTable = { byId: new Map(), byName: new Map() };
+  for (const line of text.split("\n")) {
+    const fields = line.split(":");
+    if (fields.length >= 3) {
+      const id = Number(fields[2]);
+      const name = fields[0] as string;
+      table.byId.set(id, name);
+      table.byName.set(name, id);
+    }
+  }
+  idTables.set(file, table);
+  return table;
+}
 
 async function lookupId(file: string, id: number): Promise<string | undefined> {
-  let cache = idCaches.get(file);
-  if (cache === undefined) {
-    cache = new Map();
-    let text: string;
-    try {
-      text = await fs.readFile(file, "utf8");
-    } catch {
-      /* v8 ignore next */
-      return undefined;
-    }
-    for (const line of text.split("\n")) {
-      const fields = line.split(":");
-      if (fields.length >= 3) cache.set(Number(fields[2]), fields[0] as string);
-    }
-    idCaches.set(file, cache);
-  }
-  return cache.get(id);
+  return (await loadIds(file))?.byId.get(id);
+}
+
+export async function resolveUid(value: string): Promise<number> {
+  if (/^\d+$/.test(value)) return Number(value);
+  const id = (await loadIds("/etc/passwd"))?.byName.get(value);
+  if (id === undefined) throw new FsError(`Unknown user: "${value}".`, "invalid");
+  return id;
+}
+
+export async function resolveGid(value: string): Promise<number> {
+  if (/^\d+$/.test(value)) return Number(value);
+  const id = (await loadIds("/etc/group"))?.byName.get(value);
+  if (id === undefined) throw new FsError(`Unknown group: "${value}".`, "invalid");
+  return id;
 }
 
 export function formatDate(date: Date, now = new Date()): string {
