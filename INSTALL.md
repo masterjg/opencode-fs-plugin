@@ -34,6 +34,9 @@ Plugin paths resolve from the config file that contains them, so use an absolute
 path in the global config. The tarball contains `src/`, `skills/`, `SPEC.md` and
 `INSTALL.md`; npm installs its runtime dependencies. Do not unpack it by hand.
 
+OpenCode does not accept the release asset URL or a `.tgz` file directly in
+`plugins`; install it with npm first and point at the installed directory.
+
 ### From a Git tag
 
 Every release is tagged `v<version>`. Add the tag directly to the plugin list;

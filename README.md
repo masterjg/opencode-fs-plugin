@@ -90,6 +90,9 @@ absolute path in the global config. The tarball contains `src/`, `skills/`,
 `SPEC.md` and `INSTALL.md`; npm installs its runtime dependencies. Do not unpack
 it by hand.
 
+OpenCode does not accept the release asset URL or a `.tgz` file directly in
+`plugins`; install it with npm first and point at the installed directory.
+
 ## Installing from a Git tag
 
 Every release is tagged `v<version>`. Add the tag directly to the plugin list;
@@ -176,6 +179,20 @@ Agent rules can use wildcards:
   ]
 }
 ```
+
+To direct agents to this toolkit instead of the built-in shell, deny `shell`:
+
+```jsonc
+{
+  "permissions": [
+    { "action": "shell", "resource": "*", "effect": "deny" }
+  ]
+}
+```
+
+This removes the built-in shell tool; MCP servers and other tools that run
+commands are unaffected. Apply it globally or under `agents.<id>.permissions`
+when only some agents should be shell-free.
 
 ## Safety
 
