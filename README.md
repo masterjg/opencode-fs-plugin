@@ -1,7 +1,7 @@
 # opencode-fs-plugin
 
-An OpenCode 2 plugin that adds a Linux-style filesystem and text toolkit under
-the `fs` namespace. It is a maintained fork of
+An OpenCode 2 plugin that adds a Linux-style filesystem, text, and HTTP(S)
+toolkit under the `fs` namespace. It is a maintained fork of
 [`kiu345/opencode-fs-plugin`](https://github.com/kiu345/opencode-fs-plugin),
 rewritten with async I/O, permission integration, a symlink-aware sandbox, and
 unit, end-to-end and coverage tests.
@@ -142,18 +142,18 @@ Add the registry package directly to the plugin list:
 
 ```jsonc
 {
-  "plugins": ["opencode-fs-plugin@1.3.0"]
+  "plugins": ["opencode-fs-plugin@1.3.1"]
 }
 ```
 
-`opencode plugin add opencode-fs-plugin@1.3.0` installs it and writes the config
+`opencode plugin add opencode-fs-plugin@1.3.1` installs it and writes the config
 entry. A bare `opencode-fs-plugin` follows the `latest` tag.
 
 OpenCode manages the package under its cache, so the path is not stable. If you
 also want the packaged skill, install it into a project instead:
 
 ```bash
-npm install opencode-fs-plugin@1.3.0
+npm install opencode-fs-plugin@1.3.1
 ```
 
 ```jsonc
@@ -168,7 +168,7 @@ npm install opencode-fs-plugin@1.3.0
 Download the release tarball, then install it as a normal npm package:
 
 ```bash
-VERSION=1.3.0
+VERSION=1.3.1
 curl -L -o "opencode-fs-plugin-${VERSION}.tgz" \
   "https://github.com/masterjg/opencode-fs-plugin/releases/download/v${VERSION}/opencode-fs-plugin-${VERSION}.tgz"
 npm install "./opencode-fs-plugin-${VERSION}.tgz"
@@ -197,20 +197,20 @@ OpenCode installs it from Git:
 
 ```jsonc
 {
-  "plugins": ["github:masterjg/opencode-fs-plugin#v1.3.0"]
+  "plugins": ["github:masterjg/opencode-fs-plugin#v1.3.1"]
 }
 ```
 
-`opencode plugin add 'github:masterjg/opencode-fs-plugin#v1.3.0'` installs the
+`opencode plugin add 'github:masterjg/opencode-fs-plugin#v1.3.1'` installs the
 same spec and writes the config entry. The equivalent full URL is
-`git+https://github.com/masterjg/opencode-fs-plugin.git#v1.3.0`. A tag is
+`git+https://github.com/masterjg/opencode-fs-plugin.git#v1.3.1`. A tag is
 checked for updates; use a full commit hash to pin it.
 
 Git plugins are installed under OpenCode's cache, so their package path is not
 stable. If you also want the packaged skill, install with npm instead:
 
 ```bash
-npm install "github:masterjg/opencode-fs-plugin#v1.3.0"
+npm install "github:masterjg/opencode-fs-plugin#v1.3.1"
 ```
 
 Then use `./node_modules/opencode-fs-plugin` in `plugins` and
