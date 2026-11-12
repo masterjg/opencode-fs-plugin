@@ -28,6 +28,10 @@ With `execute` allowed, call it as `tools.fs.<command>`; agents without
 Do not duplicate a built-in when it already covers the job. `fs` exists for the
 operations the built-ins do not cover, and for composable text/archive work.
 
+Use the `fs` tool for both the operation and its verification. Do not route an
+`fs` operation through a shell or `toolbox.run`, and do not use shell to check
+what `fs.stat`, `fs.ls`, `fs.hash`, `fs.diff`, or `fs.cat` can confirm.
+
 ## Command map
 
 | Need | Command |
@@ -40,7 +44,7 @@ operations the built-ins do not cover, and for composable text/archive work.
 | Links and modes | `fs.ln`, `fs.readlink`, `fs.chmod` |
 | Hash, usage | `fs.hash`, `fs.du`, `fs.df` |
 | Predicate search | `fs.find` (`name`, `type`, `size`, `mtime`, `maxDepth`) |
-| Archives | `fs.tar`, `fs.zip`, `fs.unzip`, `fs.gzip`, `fs.gunzip` |
+| Archives | `fs.tar` (`create`/`extract`/`list`), `fs.zip`, `fs.unzip` (`extract`/`list`), `fs.gzip`, `fs.gunzip` |
 | Compare | `fs.diff` |
 | Temp and trash | `fs.mktemp`, `fs.trash` |
 | Text filters | `fs.cat`, `fs.head`, `fs.tail`, `fs.grep`, `fs.sed`, `fs.sort`, `fs.uniq`, `fs.cut`, `fs.tr`, `fs.wc`, `fs.tee` |
@@ -59,7 +63,8 @@ Use the exact field names; scalar `path` is only valid for `fs.mkdir`.
 | `files` | `fs.hash` |
 | `left` + `right` | `fs.diff` |
 | `archive` + `paths` | `fs.tar` create, `fs.zip` create |
-| `archive` + `mode` | `fs.tar`, `fs.unzip` |
+| `archive` + `mode` | `fs.tar` (`create`/`extract`/`list`), `fs.unzip` (`extract`/`list`) |
+| `content` | `fs.tee` when there is no stdin |
 | `stages` + optional `input`/`output` | `fs.pipe` |
 
 ## Pipe
@@ -111,14 +116,25 @@ returns the status with `timedOut: true`. Jobs are process-local and lost on
 server restart. Status files live under `/tmp/opencode/fs-jobs/<server-pid>/`;
 eight jobs may run at once and finished jobs are cleaned after one hour.
 
-To wait without blocking the session, combine the status file with `wait_for`:
+To wait without blocking the session, combine the status file with `wait_for`.
+Wait for any terminal state, then read the job for the result or error:
 
 ```js
 await tools.wait.for({
-  condition: { type: "file_contains", path: job.statusPath, pattern: '"state":"completed"' },
+  condition: {
+    type: "file_contains",
+    path: job.statusPath,
+    pattern: '"state":"(completed|failed|cancelled)"',
+    regex: true,
+  },
   timeoutMs: 600000,
+  intervalMs: 500,
 })
+const status = JSON.parse(await tools.fs.job({ id: job.jobId }))
 ```
+
+A job that produces no text returns empty content from `fs.job wait`; verify the
+effect with `fs.stat`, `fs.ls`, or `fs.diff`, and use `fs.job({ id })` for state.
 
 ## Recipes
 
@@ -134,9 +150,11 @@ await tools.fs.ls({ paths: ["dist"], long: true, human: true })
 await tools.fs.find({ paths: ["."], name: "*.log", size: "+10M" })
 await tools.fs.trash({ paths: ["old.log"] })
 
-// create and extract an archive
+// create, list, and extract an archive
 await tools.fs.tar({ mode: "create", archive: "dist.tgz", paths: ["dist"], gzip: true })
+await tools.fs.tar({ mode: "list", archive: "dist.tgz" })
 await tools.fs.tar({ mode: "extract", archive: "dist.tgz", directory: "out" })
+await tools.fs.unzip({ archive: "bundle.zip", mode: "list" })
 
 // compare two files
 await tools.fs.diff({ left: "old.txt", right: "new.txt", unified: 3 })
@@ -152,7 +170,11 @@ await tools.fs.diff({ left: "old.txt", right: "new.txt", unified: 3 })
 - `fs.tail` has no follow mode; `fs.diff` compares files/directories only.
 - `cp -a` preserves mode and timestamps but not ACLs or xattrs.
 - `fs.tar`/`fs.zip` are file-backed; they are not pipe stages.
+- `fs.tar` resolves `paths` even when `directory` is set; pass absolute sources
+  with `directory` or the member path may not be found.
 - `fs.trash` uses the XDG home trash only and refuses cross-device moves.
+  Files under `/tmp` are usually on another filesystem; use a project path or a
+  same-filesystem holding directory instead.
 - `fs.mktemp` uses the OS temp directory unless `tmpdir` is supplied.
 
 ## Paths and safety
@@ -181,11 +203,13 @@ hidden inside a pipeline. Do not work around a denied tool with shell.
 - `fs.grep` with no matches and `fs.diff` with differences return exit code 1;
   that is a result, not a tool failure.
 - Binary output is returned as base64 when no `output` file is supplied.
+- Tools that produce no text (`cp`, `mv`, `rm`, `touch`, `chmod`, `sed -i`) return
+  empty content; verify the effect with `fs.stat`, `fs.ls`, or `fs.diff`.
 - Invalid arguments return `ERROR: Invalid ...`; fix the field names or option
   values rather than retrying the same call.
 
 ## Verification
 
 Use `fs.stat`, `fs.ls`, `fs.hash`, `fs.cat`, or `fs.diff` to confirm the result.
-Report the tool result, such as `copied: 1`, `found: 2`, or
-`differences: true`.
+Do not verify with a shell command. Report the tool result or the verified state,
+such as `copied: 1`, `found: 2`, or `differences: true`.
