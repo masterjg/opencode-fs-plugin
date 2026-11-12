@@ -24,6 +24,7 @@ With `execute` allowed, call it as `tools.fs.<command>`; agents without
 | Metadata/predicate search | `fs.find` |
 | Regex substitution or in-place edit | `fs.sed` |
 | Recoverable deletion | `fs.trash` |
+| Batching or loops | `execute` JS loops over `tools.fs.*` |
 
 Do not duplicate a built-in when it already covers the job. `fs` exists for the
 operations the built-ins do not cover, and for composable text/archive work.
@@ -135,6 +136,52 @@ const status = JSON.parse(await tools.fs.job({ id: job.jobId }))
 
 A job that produces no text returns empty content from `fs.job wait`; verify the
 effect with `fs.stat`, `fs.ls`, or `fs.diff`, and use `fs.job({ id })` for state.
+
+## Loops and batching
+
+`execute` is always available and is the orchestration layer for every `fs` tool.
+Use ordinary JavaScript for iteration, conditionals, retries, and parallel calls.
+Do not use a shell or `toolbox.run` for batching.
+
+Sequential is the safe default for writes, destructive work, ordering, and
+permission prompts:
+
+```js
+const files = (
+  await tools.fs.find({
+    paths: ["src"],
+    name: "*.sh",
+    type: "f",
+    print0: true,
+  })
+).split("\0").filter(Boolean)
+
+for (const file of files) {
+  await tools.fs.chmod({ paths: [file], mode: "640" })
+}
+```
+
+Use `Promise.all` only for independent work. It rejects on the first failure
+while the other calls continue, so prefer `Promise.allSettled` when partial
+results are useful. Bound concurrency to about 4–8:
+
+```js
+async function mapLimit(items, limit, fn) {
+  const results = []
+  for (let i = 0; i < items.length; i += limit) {
+    results.push(...(await Promise.all(items.slice(i, i + limit).map(fn))))
+  }
+  return results
+}
+
+const stats = await mapLimit(files, 4, (file) =>
+  tools.fs.stat({ paths: [file], format: "%n %s" }),
+)
+```
+
+Each call still enforces its own `fs_<tool>` and `external_directory`
+permissions; loops do not bypass them. Code Mode has no timers, so use
+`wait_for` for time-based waits and `background: true` for long jobs.
 
 ## Recipes
 
