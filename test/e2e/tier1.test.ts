@@ -205,7 +205,16 @@ describe("links and chmod", () => {
     const raw = await runSpec(readlinkTool, { paths: ["sym"] }, sb);
     expect(raw.result.stdout.toString()).toContain("target");
     const canonical = await runSpec(readlinkTool, { paths: ["sym"], mode: "canonical" }, sb);
-    expect(canonical.result.stdout.toString()).toContain(path.join(root, "sym"));
+    expect(canonical.result.stdout.toString()).toContain(path.join(root, "target"));
+    await fs.symlink("missing-target", path.join(root, "dangling"));
+    const dangling = await runSpec(readlinkTool, { paths: ["dangling"], mode: "canonical" }, sb);
+    expect(dangling.result.stdout.toString()).toContain(path.join(root, "missing-target"));
+
+    await fs.symlink("cycle2", path.join(root, "cycle1"));
+    await fs.symlink("cycle1", path.join(root, "cycle2"));
+    await expect(
+      runSpec(readlinkTool, { paths: ["cycle1"], mode: "canonical" }, sb),
+    ).rejects.toMatchObject({ code: "io" });
     const existing = await runSpec(readlinkTool, { paths: ["sym"], mode: "existing", noNewline: true }, sb);
     expect(existing.result.stdout.toString()).toBe(path.join(root, "target"));
     const missing = await runSpec(readlinkTool, { paths: ["nope"], mode: "missing" }, sb);

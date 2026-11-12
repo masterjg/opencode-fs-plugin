@@ -82,8 +82,28 @@ async function resolveLink(
     }
   }
   if (mode === "canonical") {
-    const parent = await ctx.sandbox.resolveParent(requested);
-    return path.join(parent.full, path.basename(full));
+    try {
+      return await fs.realpath(full);
+    } catch (error) {
+      /* v8 ignore next */
+      if (!isMissing(error)) throw fromErrno(error);
+      const parent = await ctx.sandbox.resolveParent(requested);
+      let current = path.join(parent.full, path.basename(full));
+      for (let depth = 0; depth < 40; depth++) {
+        let stats: Awaited<ReturnType<typeof fs.lstat>>;
+        try {
+          stats = await fs.lstat(current);
+        } catch {
+          return current;
+        }
+        /* v8 ignore next -- a dangling target normally fails lstat first */
+        if (!stats.isSymbolicLink()) return current;
+        const link = await fs.readlink(current);
+        current = path.resolve(path.dirname(current), link);
+      }
+      /* v8 ignore next -- realpath already rejects cycles; this bounds manual resolution */
+      throw new FsError(`Too many symbolic links: "${requested}".`, "io");
+    }
   }
   const target = await ctx.sandbox.resolveForCreate(requested);
   return target.full;
