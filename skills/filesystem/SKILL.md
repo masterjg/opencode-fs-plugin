@@ -52,10 +52,16 @@ what `fs.stat`, `fs.ls`, `fs.hash`, `fs.diff`, or `fs.cat` can confirm.
 | Compose filters | `fs.pipe` |
 | Background jobs | `background: true`, then `fs.job` |
 
-Parity additions: `fs.sort` accepts GNU key ranges (`keys: ["2,2n"]`);
-`fs.find` adds `lname`/`regex`/owner/link/inode/fstype/`newerXY`/`printf`;
-`fs.ls` and `fs.stat` add more GNU flags and format tokens; `fs.tail` has
-bounded `follow`; `fs.tar`/`fs.zip` accept `input`/`member` and pipe stdin.
+Recent parity additions:
+
+| Tool | Added |
+|---|---|
+| `fs.sort` | `generalNumeric`, `humanNumeric`, `version`, `dictionary`, `ignoreNonPrinting`, `stable`, `check`, `checkQuiet`, `zeroTerminated`, GNU `keys` ranges |
+| `fs.ls` | `size`, `numericIds`, `noGroup`, `noOwner`, `slash`, `quote`, `versionSort`, `extensionSort`, `fullTime`, `timeStyle`, `hide`, `ignore`, `groupDirectoriesFirst` |
+| `fs.find` | `lname`/`ilname`, `regex`/`iregex`, `uid`/`gid`/`user`/`group`, `links`, `inum`, `samefile`, `fstype`, `newerXY`, `printf`; `c`/`w`/`b` size suffixes |
+| `fs.stat` | `terse`, extended tokens `%f`, `%m`, `%r`, `%w`, `%W`, `%C` |
+| `fs.tail` | bounded `follow`, `timeoutMs`, `intervalMs`, `maxBytes` |
+| `fs.tar`/`fs.zip` | `input`/`member` stream input and pipe sink support |
 
 ## Argument shapes
 

@@ -103,8 +103,8 @@ let groupMap: Map<string, number> | undefined;
 export const findTool: ToolSpec<Input> = {
   name: "find",
   description:
-    "Find entries with Linux-like predicates: `-name`, `-iname`, `-path`, `-lname`, `-regex`, " +
-    "`-type`, `-size`, `-mtime`, `-mmin`, `-maxdepth`, `-mindepth`, `-empty`, `-perm`, " +
+    "Find entries with Linux-like predicates: `-name`, `-iname`, `-path`, `-lname`, `-ilname`, " +
+    "`-regex`, `-iregex`, `-type`, `-size`, `-mtime`, `-mmin`, `-maxdepth`, `-mindepth`, `-empty`, `-perm`, " +
     "`-uid`, `-gid`, `-user`, `-group`, `-links`, `-inum`, `-samefile`, `-fstype`, `-newer`, " +
     "`-newerXY`, `-printf`, `-L`, `-print0`.",
   schema: Schema,

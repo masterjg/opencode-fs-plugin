@@ -41,7 +41,8 @@ export const tarTool: ToolSpec<Input> = {
   name: "tar",
   description:
     "Create, list or extract tar archives with common `tar` semantics (`-c`, `-x`, `-t`, `-f`, " +
-    "`-z`, `-C`, `--strip-components`, `--exclude`). Extraction rejects path escapes.",
+    "`-z`, `-C`, `--strip-components`, `--exclude`). Create accepts `input`/`member` stream data " +
+    "and can consume pipe stdin; extraction rejects path escapes.",
   schema: Schema,
   pipeable: "sink",
   mutates: true,

@@ -25,8 +25,9 @@ type Input = Static<typeof Schema>;
 export const statTool: ToolSpec<Input> = {
   name: "stat",
   description:
-    "Display file or filesystem status with Linux `stat` semantics (`-L`, `-c`, `-f`). " +
-    "Supports the common percent tokens for path, size, type, mode, owner, times, device and inode.",
+    "Display file or filesystem status with Linux `stat` semantics (`-L`, `-c`, `-t`, `-f`). " +
+    "Supports common and extended tokens for path, size, type, mode, owner, times, birth time, " +
+    "device, inode, mount point, filesystem type and SELinux context.",
   schema: Schema,
   pipeable: false,
   mutates: false,

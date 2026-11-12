@@ -41,7 +41,9 @@ type UnzipInput = Static<typeof UnzipSchema>;
 
 export const zipTool: ToolSpec<ZipInput> = {
   name: "zip",
-  description: "Create ZIP archives with common `zip` semantics (`-r` is implicit, compression level 0-9).",
+  description:
+    "Create ZIP archives with common `zip` semantics (`-r` is implicit, compression level 0-9). " +
+    "Accepts `input`/`member` stream data and can consume pipe stdin.",
   schema: ZipSchema,
   pipeable: "sink",
   mutates: true,

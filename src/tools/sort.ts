@@ -42,7 +42,7 @@ export const sortTool: ToolSpec<Input> = {
   name: "sort",
   description:
     "Sort records with Linux `sort` semantics (`-n`, `-g`, `-h`, `-V`, `-r`, `-u`, `-f`, " +
-    "`-d`, `-i`, `-b`, `-s`, `-c`, `-C`, `-z`, `-k`, `-t`).",
+    "`-d`, `-i`, `-b`, `-s`, `-c`, `-C`, `-z`, `-k` key ranges, `-t`).",
   schema: Schema,
   pipeable: "filter",
   mutates: false,

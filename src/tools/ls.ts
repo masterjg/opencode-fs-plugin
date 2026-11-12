@@ -65,7 +65,8 @@ export const lsTool: ToolSpec<Input> = {
   name: "ls",
   description:
     "List files and directories with Linux `ls` semantics (`-a`, `-A`, `-l`, `-h`, `-R`, " +
-    "`-d`, `-i`, `-F`, `-t`, `-S`, `-r`, `-1`).",
+    "`-d`, `-i`, `-F`, `-t`, `-S`, `-r`, `-1`, `-s`, `-n`, `-g`, `-o`, `-p`, `-Q`, `-v`, `-X`, " +
+    "`--time-style`, `--hide`, `--ignore`, `--group-directories-first`).",
   schema: Schema,
   pipeable: false,
   mutates: false,
