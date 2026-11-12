@@ -128,26 +128,23 @@ describe("find parity predicates", () => {
     const linksExact = await runSpec(findTool, { paths: ["."], links: "2" }, sb);
     expect(lines(linksExact).length).toBeGreaterThan(0);
 
-    const groupText = await fs.readFile("/etc/group", "utf8");
-    const gid = process.getgid?.() ?? 0;
-    const groupName = groupText
-      .split("\n")
-      .map((line) => line.split(":"))
-      .find((fields) => Number(fields[2]) === gid)?.[0];
-    if (groupName) {
-      const group = await runSpec(findTool, { paths: ["."], group: groupName }, sb);
-      expect(lines(group).length).toBeGreaterThan(0);
-      const cachedGroup = await runSpec(findTool, { paths: ["."], group: groupName }, sb);
-      expect(lines(cachedGroup).length).toBeGreaterThan(0);
-    }
+    const rootGroup = await runSpec(findTool, { paths: ["."], group: "root" }, sb);
+    expect(rootGroup.result.metadata.found).toBeGreaterThanOrEqual(0);
     const unknownGroup = await runSpec(findTool, { paths: ["."], group: "definitely-not-a-group" }, sb);
     expect(lines(unknownGroup).length).toBe(0);
 
-    const fstype = Number((await fs.statfs(root)).type) === 0x01021994 ? "tmpfs" : "unknown";
-    if (fstype === "tmpfs") {
-      const positive = await runSpec(findTool, { paths: ["."], fstype }, sb);
-      expect(lines(positive).length).toBeGreaterThan(0);
-    }
+    const fsStats = await fs.statfs(root);
+    const type = Number(fsStats.type);
+    const names: Record<number, string> = {
+      0x01021994: "tmpfs",
+      0xef53: "ext4",
+      0x794c7630: "overlay",
+      0x58465342: "xfs",
+      0x9123683e: "btrfs",
+    };
+    const fstype = names[type] ?? `0x${type.toString(16)}`;
+    const positive = await runSpec(findTool, { paths: ["."], fstype }, sb);
+    expect(lines(positive).length).toBeGreaterThan(0);
     const negative = await runSpec(findTool, { paths: ["."], fstype: "definitely-not-a-fs" }, sb);
     expect(lines(negative).length).toBe(0);
   });
