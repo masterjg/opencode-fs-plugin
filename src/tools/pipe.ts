@@ -14,6 +14,7 @@ import { grepTool } from "./grep.js";
 import { gunzipTool, gzipTool } from "./gzip.js";
 import { hashTool } from "./hash.js";
 import { headTool } from "./head.js";
+import { httpRequestTool } from "./http_request.js";
 import { sedTool } from "./sed.js";
 import { sortTool } from "./sort.js";
 import { tailTool } from "./tail.js";
@@ -49,6 +50,7 @@ const REGISTRY: ReadonlyMap<string, AnyTool> = new Map(
   [
     catTool, headTool, tailTool, grepTool, sedTool, sortTool, uniqTool, cutTool,
     trTool, wcTool, teeTool, hashTool, gzipTool, gunzipTool, tarTool, zipTool,
+    httpRequestTool,
   ].map((tool) => [tool.name, tool]),
 );
 
