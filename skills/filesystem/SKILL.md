@@ -79,6 +79,7 @@ Use the exact field names; scalar `path` is only valid for `fs.mkdir`.
 | `archive` + `paths` | `fs.tar` create, `fs.zip` create |
 | `archive` + `mode` | `fs.tar` (`create`/`extract`/`list`), `fs.unzip` (`extract`/`list`) |
 | `content` | `fs.tee` when there is no stdin |
+| `paths` + optional `keep`/`force`/`stdout`/`level`/`suffix` | `fs.gzip`, `fs.gunzip` |
 | `url` + optional `output` | `fs.http_request` |
 | `stages` + optional `input`/`output` | `fs.pipe` |
 
@@ -263,6 +264,10 @@ await tools.fs.http_request({
   Files under `/tmp` are usually on another filesystem; use a project path or a
   same-filesystem holding directory instead.
 - `fs.mktemp` uses the OS temp directory unless `tmpdir` is supplied.
+- `fs.mkdir` fails when the directory already exists; check with `fs.stat`
+  first or treat `ERROR: Already exists` as a no-op.
+- `fs.gunzip` needs `force` to overwrite the restored file; without `keep` it
+  removes the `.gz` after decompressing.
 
 ## Paths and safety
 
