@@ -1,6 +1,6 @@
 ---
 name: Filesystem
-description: Use when a task needs Linux-style filesystem, text, or network operations beyond OpenCode's built-ins - copy, move, metadata, touch, truncate, symlinks, chmod, hashes, disk usage, find, archives, diff, HTTP(S) requests, API calls, or file downloads (curl replacement), trash, background jobs, or composing filters through a pipe. Covers the fs namespace, argument shapes, native options, permissions, limits, and verification.
+description: Use when a task needs Linux-style filesystem, text, or network operations beyond OpenCode's built-ins - copy, move, metadata, permissions, touch, truncate, symlinks, chmod, hashes, disk usage, find, archives, comparing files or directories, HTTP(S) requests, API calls, or file downloads (curl replacement), trash, background jobs, or composing filters through a pipe. Covers the fs namespace, argument shapes, native options, permissions, limits, and verification.
 ---
 
 # Filesystem
@@ -67,7 +67,9 @@ Recent parity additions:
 
 ## Argument shapes
 
-Use the exact field names; scalar `path` is only valid for `fs.mkdir`.
+Use the exact field names; scalar `path` is only valid for `fs.mkdir`. The host
+silently drops unknown arguments, so a typo like `path` instead of `paths` makes
+the tool run with defaults (often `.`), not fail.
 
 | Field | Commands |
 |---|---|
@@ -102,7 +104,8 @@ await tools.fs.pipe({
 `output` writes the final stream and `append` appends. Stage names are the short
 native names (`cat`, `grep`, `sort`), not `fs.cat`. There is no shell,
 redirection operator, nested pipe, or `find -exec`. A filter stage needs
-`input` or a preceding source stage.
+`input` or a preceding source stage. Set `grep.noFilename: true` in a pipe when
+later stages need bare lines instead of `path:line`.
 
 `http_request` is a source stage. Pipe stages exchange whole buffers, so set
 `maxBytes` for large responses; use `output` for real streaming to disk.
@@ -310,7 +313,9 @@ addresses by default.
   stop. Both carry a stable `code` in metadata.
 - `fs.grep` with no matches and `fs.diff` with differences return exit code 1;
   that is a result, not a tool failure.
-- Binary output is returned as base64 when no `output` file is supplied.
+- Binary output is returned as base64 when no `output` file is supplied. NUL
+  output (`print0`, `sort -z`) is base64 too; prefer newline output in Code
+  Mode.
 - Tools that produce no text (`cp`, `mv`, `rm`, `touch`, `chmod`, `sed -i`) return
   empty content; verify the effect with `fs.stat`, `fs.ls`, or `fs.diff`.
 - Invalid arguments return `ERROR: Invalid ...`; fix the field names or option
