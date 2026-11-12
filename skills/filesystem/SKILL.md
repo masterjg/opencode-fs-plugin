@@ -172,6 +172,8 @@ await tools.fs.diff({ left: "old.txt", right: "new.txt", unified: 3 })
 - `fs.tar`/`fs.zip` are file-backed; they are not pipe stages.
 - `fs.tar` resolves `paths` even when `directory` is set; pass absolute sources
   with `directory` or the member path may not be found.
+- `fs.du` reports allocated blocks like `du`; use `fs.stat` with `%s` for
+  apparent file bytes.
 - `fs.trash` uses the XDG home trash only and refuses cross-device moves.
   Files under `/tmp` are usually on another filesystem; use a project path or a
   same-filesystem holding directory instead.

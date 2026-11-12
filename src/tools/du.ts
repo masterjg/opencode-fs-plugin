@@ -50,7 +50,7 @@ export const duTool: ToolSpec<Input> = {
         : await ctx.sandbox.lstat(target.full, requested);
       const rootDev = num(rootStats.dev);
       const seen = new Set<string>();
-      let total = usage(target.full, rootStats, seen);
+      let total = usage(rootStats, seen);
       const local: Row[] = [];
       if (input.all === true && !rootStats.isDirectory()) {
         local.push({ path: requested, bytes: total });
@@ -65,7 +65,7 @@ export const duTool: ToolSpec<Input> = {
         })) {
           /* v8 ignore next */
           if (input.oneFileSystem === true && num(entry.stats.dev) !== rootDev) continue;
-          const bytes = usage(entry.path, entry.stats, seen);
+          const bytes = usage(entry.stats, seen);
           total += bytes;
           if (input.all === true || entry.stats.isDirectory()) {
             local.push({ path: entry.path, bytes });
@@ -89,14 +89,12 @@ export const duTool: ToolSpec<Input> = {
   },
 };
 
-function usage(path: string, stats: Awaited<ReturnType<typeof fs.lstat>>, seen: Set<string>): number {
-  /* v8 ignore next */
-  if (!stats.isFile()) return stats.isDirectory() ? num(stats.blocks) * 512 : 0;
-  if (num(stats.nlink) > 1) {
+function usage(stats: Awaited<ReturnType<typeof fs.lstat>>, seen: Set<string>): number {
+  if (!stats.isDirectory() && num(stats.nlink) > 1) {
     const key = `${num(stats.dev)}:${num(stats.ino)}`;
     /* v8 ignore next */
     if (seen.has(key)) return 0;
     seen.add(key);
   }
-  return num(stats.size);
+  return num(stats.blocks) * 512;
 }

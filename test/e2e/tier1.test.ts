@@ -6,6 +6,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { humanSize } from "../../src/core/format.js";
 import { Sandbox } from "../../src/core/sandbox.js";
 import { cpTool } from "../../src/tools/cp.js";
 import { mvTool } from "../../src/tools/mv.js";
@@ -259,6 +260,25 @@ describe("hash, du, df and find", () => {
     expect(df.result.stdout.toString()).toContain("Filesystem");
     const inodes = await runSpec(dfTool, { inodes: true }, sb);
     expect(inodes.result.stdout.toString()).toContain("Inodes");
+  });
+
+  it("reports allocated blocks consistently for files and directories", async () => {
+    const { root, sb } = await setup();
+    const dir = path.join(root, "dir");
+    const file = path.join(dir, "a");
+    await fs.mkdir(dir);
+    await fs.writeFile(file, "12345");
+    await fs.link(file, path.join(dir, "hard"));
+
+    const fileStats = await fs.stat(file);
+    const dirStats = await fs.stat(dir);
+    const allocated = (Number(fileStats.blocks) + Number(dirStats.blocks)) * 512;
+
+    const plain = await runSpec(duTool, { paths: ["dir"], summarize: true }, sb);
+    expect(plain.result.stdout.toString()).toBe(`${Math.ceil(allocated / 1024)}\tdir\n`);
+
+    const human = await runSpec(duTool, { paths: ["dir"], summarize: true, human: true }, sb);
+    expect(human.result.stdout.toString()).toBe(`${humanSize(allocated)}\tdir\n`);
   });
 
   it("finds by name, type, size, time, depth, perm and newer", async () => {
