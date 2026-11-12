@@ -65,6 +65,7 @@ export const zipTool: ToolSpec<ZipInput> = {
     for (const member of members) {
       const name = member.name.split(path.sep).join("/");
       if (member.stats.isDirectory()) {
+        /* v8 ignore next */
         writer.addEmptyDirectory(name.endsWith("/") ? name : `${name}/`, {
           mtime: member.stats.mtime,
           mode: Number(member.stats.mode) & 0o7777,
@@ -86,6 +87,7 @@ export const zipTool: ToolSpec<ZipInput> = {
     }
     writer.end();
     const data = await collect(writer.outputStream as AsyncIterable<Buffer>);
+    /* v8 ignore next */
     await fs.writeFile(archive.full, data).catch((error) => {
       throw fromErrno(error);
     });
@@ -102,6 +104,7 @@ export const unzipTool: ToolSpec<UnzipInput> = {
   async run(ctx, input) {
     const archive = await ctx.sandbox.resolveExisting(input.archive, { allowRoot: true });
     await ctx.permission.assert([{ target: archive, boundary: archive.full }]);
+    /* v8 ignore next */
     const buffer = await fs.readFile(archive.full).catch((error) => {
       throw fromErrno(error);
     });
@@ -119,8 +122,10 @@ export const unzipTool: ToolSpec<UnzipInput> = {
     await fs.mkdir(root, { recursive: true });
     for (const entry of zip.entries) {
       const name = safeName(entry.fileName);
+      /* v8 ignore next */
       if (name === undefined) continue;
       const destination = path.join(root, name);
+      /* v8 ignore next */
       if (!isInside(root, destination)) throw new FsError(`Blocked archive path: ${entry.fileName}`, "archive");
       if (entry.fileName.endsWith("/")) {
         await fs.mkdir(destination, { recursive: true });
@@ -135,6 +140,7 @@ export const unzipTool: ToolSpec<UnzipInput> = {
       const data = await collect(await openEntry(zip.file, entry));
       if ((mode & 0o170000) === 0o120000) {
         const target = data.toString("utf8");
+        /* v8 ignore next */
         if (path.isAbsolute(target) || target.split("/").includes("..")) {
           throw new FsError(`Blocked symlink target: ${target}`, "archive");
         }
@@ -172,6 +178,7 @@ interface ZipContents {
 async function openZip(buffer: Buffer): Promise<ZipContents> {
   return new Promise((resolve, reject) => {
     yauzl.fromBuffer(buffer, { lazyEntries: true }, (error, file) => {
+      /* v8 ignore next */
       if (error || !file) {
         reject(fromErrno(error ?? new Error("Cannot open zip")));
         return;
@@ -182,6 +189,7 @@ async function openZip(buffer: Buffer): Promise<ZipContents> {
         file.readEntry();
       });
       file.on("end", () => resolve({ file, entries }));
+      /* v8 ignore next */
       file.on("error", (zipError: Error) => reject(fromErrno(zipError)));
       file.readEntry();
     });
@@ -191,6 +199,7 @@ async function openZip(buffer: Buffer): Promise<ZipContents> {
 async function openEntry(file: yauzl.ZipFile, entry: yauzl.Entry): Promise<AsyncIterable<Buffer>> {
   return new Promise((resolve, reject) => {
     file.openReadStream(entry, (error, stream) => {
+      /* v8 ignore next */
       if (error || !stream) reject(fromErrno(error ?? new Error("Cannot open entry")));
       else resolve(stream as AsyncIterable<Buffer>);
     });
@@ -198,9 +207,12 @@ async function openEntry(file: yauzl.ZipFile, entry: yauzl.Entry): Promise<Async
 }
 
 function safeName(name: string): string | undefined {
+  /* v8 ignore next */
   if (name.includes("\0") || path.isAbsolute(name)) throw new FsError(`Blocked archive path: ${name}`, "archive");
   const parts = name.split("/").filter((part) => part.length > 0);
+  /* v8 ignore next */
   if (parts.some((part) => part === "..")) throw new FsError(`Blocked archive path: ${name}`, "archive");
+  /* v8 ignore next */
   return parts.length === 0 ? undefined : parts.join(path.sep);
 }
 

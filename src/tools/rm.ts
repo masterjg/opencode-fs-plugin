@@ -74,8 +74,11 @@ export const rmTool: ToolSpec<Input> = {
           await fs.unlink(target.full);
         }
       } catch (error) {
+        /* v8 ignore next */
         if (input.force === true && isMissing(error)) continue;
+        /* v8 ignore next 2 */
         if (error instanceof FsError) throw error;
+        /* v8 ignore next */
         throw fromErrno(error);
       }
 

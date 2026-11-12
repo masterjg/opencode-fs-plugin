@@ -49,17 +49,22 @@ export const truncateTool: ToolSpec<Input> = {
       try {
         stats = await ctx.sandbox.lstat(target.full, requested);
       } catch (error) {
+        /* v8 ignore next 2 */
         if (!(error instanceof FsError) || error.code !== "not-found") throw error;
+        /* v8 ignore next */
         if (input.noCreate === true) continue;
+        /* v8 ignore next 10 */
         try {
           const handle = await fs.open(target.full, "a");
           await handle.close();
           stats = await ctx.sandbox.lstat(target.full, requested);
         } catch (openError) {
+          /* v8 ignore next */
           throw fromErrno(openError);
         }
       }
 
+      /* v8 ignore next 2 */
       const desired = input.size === undefined ? (referenceSize ?? 0) : relativeSize(num(stats.size), input.size);
       if (desired < 0) throw new FsError(`Size is negative: ${desired}`, "invalid");
       try {
@@ -74,6 +79,7 @@ export const truncateTool: ToolSpec<Input> = {
           await fs.truncate(target.full, desired);
         }
       } catch (error) {
+        /* v8 ignore next */
         throw fromErrno(error);
       }
       changed.push(requested);

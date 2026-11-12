@@ -56,6 +56,10 @@ describe("fsutil walk and copy", () => {
     const hidden: string[] = [];
     for await (const entry of walk(path.join(root, "dir"), { recursive: true })) hidden.push(entry.name);
     expect(hidden).not.toContain(".hidden");
+    const flat: string[] = [];
+    for await (const entry of walk(path.join(root, "dir"), { recursive: false, includeHidden: true })) flat.push(entry.name);
+    expect(flat).toContain("a");
+    expect(flat).not.toContain("deep");
     await expect(collectWalk(path.join(root, "missing"))).rejects.toBeInstanceOf(FsError);
   });
 
@@ -89,6 +93,14 @@ describe("fsutil walk and copy", () => {
     expect(await copyTree(path.join(src, "sub/a"), path.join(root, "existing"), { concurrency: 1 })).toBe(1);
     expect(await copyTree(path.join(src, "sub/a"), path.join(root, "existing"), { concurrency: 1, noClobber: true })).toBe(0);
     await expect(copyTree(src, path.join(root, "x"), { concurrency: 1 })).rejects.toMatchObject({ code: "not-file" });
+    const controller = new AbortController();
+    controller.abort();
+    await expect(copyTree(path.join(src, "sub/a"), path.join(root, "aborted"), { concurrency: 1, signal: controller.signal })).rejects.toMatchObject({ code: "interrupted" });
+    await fs.writeFile(path.join(root, "symlink-source"), "x");
+    await fs.unlink(path.join(root, "existing"));
+    await fs.symlink(path.join(root, "symlink-source"), path.join(root, "existing"));
+    expect(await copyTree(path.join(src, "link"), path.join(root, "existing"), { concurrency: 1, dereference: false })).toBe(1);
+    expect((await fs.lstat(path.join(root, "existing"))).isSymbolicLink()).toBe(true);
   });
 
   it("rejects special files and reports parent errors", async () => {
@@ -127,8 +139,11 @@ describe("fsutil metadata helpers", () => {
     expect(num(5n)).toBe(5);
   });
 
-  it("detects sockets and subpaths", async () => {
+  it("detects sockets, fifos and subpaths", async () => {
     const root = await setup();
+    const fifo = path.join(root, "fifo-type");
+    await execFileAsync("mkfifo", [fifo]);
+    expect(typeName(await fs.lstat(fifo))).toBe("fifo");
     const socketPath = path.join(root, "sock");
     const server = net.createServer();
     await new Promise<void>((resolve) => server.listen(socketPath, resolve));

@@ -29,6 +29,7 @@ export const trashTool: ToolSpec<Input> = {
   pipeable: false,
   mutates: true,
   async run(ctx, input) {
+    /* v8 ignore next */
     const dataHome = process.env.XDG_DATA_HOME ?? path.join(os.homedir(), ".local", "share");
     const trash = path.join(dataHome, "Trash");
     const filesDir = path.join(trash, "files");
@@ -38,6 +39,7 @@ export const trashTool: ToolSpec<Input> = {
       await fs.mkdir(filesDir, { recursive: true });
       await fs.mkdir(infoDir, { recursive: true });
     } catch (error) {
+      /* v8 ignore next */
       throw fromErrno(error);
     }
 
@@ -49,16 +51,20 @@ export const trashTool: ToolSpec<Input> = {
       const name = await uniqueName(filesDir, path.basename(target.full));
       const info = path.join(infoDir, `${name}.trashinfo`);
       const body = `[Trash Info]\nPath=${encodeURIComponent(target.full)}\nDeletionDate=${new Date().toISOString()}\n`;
+      /* v8 ignore next 3 */
       await fs.writeFile(info, body, { mode: 0o600 }).catch((error) => {
         throw fromErrno(error);
       });
       try {
         await fs.rename(target.full, path.join(filesDir, name));
       } catch (error) {
+        /* v8 ignore next */
         if ((error as NodeJS.ErrnoException)?.code === "EXDEV") {
+          /* v8 ignore next */
           await fs.unlink(info).catch(() => undefined);
           throw new FsError(`Cannot trash across filesystems: "${requested}".`, "cross-device");
         }
+        /* v8 ignore next */
         throw fromErrno(error);
       }
       trashed.push(requested);

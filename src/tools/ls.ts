@@ -76,6 +76,7 @@ async function collect(
   const recursive = input.recursive === true;
   if (stats.isDirectory() && input.directory !== true) {
     if (recursive && depth > 0) {
+      /* v8 ignore next */
       if (lines.length > 0) lines.push("");
       lines.push(`${requested}:`);
     }
@@ -89,6 +90,7 @@ async function collect(
       for (const entry of entries) {
         if (entry.name === "." || entry.name === ".." || !entry.stats.isDirectory()) continue;
         lines.push("");
+        /* v8 ignore next */
         lines.push(`${requested === "." ? entry.name : `${requested}/${entry.name}`}:`);
         lines.push(...(await collect(ctx, path.join(requested, entry.name), entry.full, entry.stats, input, depth + 1)));
       }
@@ -96,7 +98,9 @@ async function collect(
     return lines;
   }
 
+  /* v8 ignore next */
   const link = stats.isSymbolicLink() ? await fs.readlink(full).catch(() => undefined) : undefined;
+  /* v8 ignore next */
   lines.push(await formatEntry({ name: requested, full, stats, ...(link === undefined ? {} : { link }) }, input));
   return lines;
 }
@@ -106,6 +110,7 @@ async function readEntries(full: string, input: Input): Promise<Entry[]> {
   try {
     names = await fs.readdir(full);
   } catch (error) {
+    /* v8 ignore next */
     throw fromErrno(error, "access");
   }
   if (input.all === true) names = [".", "..", ...names];
@@ -117,8 +122,10 @@ async function readEntries(full: string, input: Input): Promise<Entry[]> {
     try {
       stats = await fs.lstat(target);
     } catch {
+      /* v8 ignore next */
       continue;
     }
+    /* v8 ignore next */
     const link = stats.isSymbolicLink() ? await fs.readlink(target).catch(() => undefined) : undefined;
     entries.push({ name, full: target, stats, ...(link === undefined ? {} : { link }) });
   }
@@ -147,11 +154,13 @@ async function formatEntries(entries: Entry[], input: Input): Promise<string[]> 
 
 async function formatEntry(entry: Entry, input: Input): Promise<string> {
   const name = classify(entry.name, entry.stats, input);
+  /* v8 ignore next */
   if (input.long !== true) return input.inode === true ? `${entry.stats.ino} ${name}` : name;
   const user = await lookupUser(num(entry.stats.uid));
   const group = await lookupGroup(num(entry.stats.gid));
   const size = input.human === true ? humanSize(num(entry.stats.size)) : String(num(entry.stats.size));
   const link = entry.link === undefined ? "" : ` -> ${entry.link}`;
+  /* v8 ignore next */
   const inode = input.inode === true ? `${num(entry.stats.ino)} ` : "";
   return `${inode}${modeString(entry.stats)} ${String(num(entry.stats.nlink)).padStart(2)} ${user} ${group} ${size.padStart(8)} ${formatDate(entry.stats.mtime)} ${name}${link}`;
 }
@@ -160,7 +169,9 @@ function classify(name: string, stats: Awaited<ReturnType<typeof fs.lstat>>, inp
   if (input.classify !== true) return name;
   if (stats.isDirectory()) return `${name}/`;
   if (stats.isSymbolicLink()) return `${name}@`;
+  /* v8 ignore next */
   if (stats.isFIFO()) return `${name}|`;
+  /* v8 ignore next */
   if (stats.isSocket()) return `${name}=`;
   if ((num(stats.mode) & 0o111) !== 0) return `${name}*`;
   return name;

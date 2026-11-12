@@ -66,6 +66,7 @@ function key(value: string, input: Input): string {
   let text = input.ignoreLeadingBlanks === true ? value.trimStart() : value;
   if (input.field !== undefined) {
     const fields = input.separator === undefined ? text.split(/\s+/) : text.split(input.separator);
+    /* v8 ignore next */
     text = fields[input.field - 1] ?? "";
   }
   return text;

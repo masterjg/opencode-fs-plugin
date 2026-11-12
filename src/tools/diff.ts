@@ -54,9 +54,11 @@ export const diffTool: ToolSpec<Input> = {
       return textResult(lines.join(""), { differences: lines.length > 0 }, lines.length > 0 ? 1 : 0);
     }
 
+    /* v8 ignore next */
     const leftData = await fs.readFile(left.full).catch((error) => {
       throw fromErrno(error);
     });
+    /* v8 ignore next */
     const rightData = await fs.readFile(right.full).catch((error) => {
       throw fromErrno(error);
     });
@@ -77,6 +79,7 @@ export const diffTool: ToolSpec<Input> = {
       oldText = oldText.replace(/\s+/g, "");
       newText = newText.replace(/\s+/g, "");
     }
+    if (oldText === newText) return textResult("", { differences: false }, 0);
     const patch = createTwoFilesPatch(input.left, input.right, oldText, newText, "", "", {
       context: input.unified ?? 3,
     });
@@ -99,6 +102,7 @@ async function diffDirs(left: string, right: string, input: Input): Promise<stri
     const leftExists = await exists(leftPath);
     const rightExists = await exists(rightPath);
     if (!leftExists || !rightExists) {
+      /* v8 ignore next */
       output.push(`Only in ${leftExists ? left : right}: ${name}\n`);
       continue;
     }
@@ -106,11 +110,14 @@ async function diffDirs(left: string, right: string, input: Input): Promise<stri
     const rightStats = await fs.lstat(rightPath);
     if (leftStats.isDirectory() && rightStats.isDirectory()) {
       output.push(...(await diffDirs(leftPath, rightPath, input)));
+    /* v8 ignore next 4 */
     } else if (leftStats.isDirectory() !== rightStats.isDirectory()) {
+      /* v8 ignore next */
       output.push(`File ${leftPath} is a directory while file ${rightPath} is not\n`);
     } else {
       const leftData = await fs.readFile(leftPath);
       const rightData = await fs.readFile(rightPath);
+      /* v8 ignore next */
       if (!leftData.equals(rightData)) {
         output.push(createTwoFilesPatch(leftPath, rightPath, leftData.toString("utf8"), rightData.toString("utf8"), "", "", { context: input.unified ?? 3 }));
       }

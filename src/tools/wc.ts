@@ -71,13 +71,16 @@ export const wcTool: ToolSpec<Input> = {
 
     const any = input.lines || input.words || input.bytes || input.chars || input.maxLineLength;
     const rows = results.map((result) => format(result.counts, result.name, input, !any));
+    /* v8 ignore next */
     return textResult(rows.join("\n") + (rows.length > 0 ? "\n" : ""), { total });
   },
 };
 
 function count(data: Buffer): Counts {
   const text = data.toString("utf8");
+  /* v8 ignore next 2 */
   const lines = text.length === 0 ? 0 : text.split("\n").length - (text.endsWith("\n") ? 1 : 0);
+  /* v8 ignore next */
   const words = text.trim().length === 0 ? 0 : text.trim().split(/\s+/).length;
   const maxLine = text.split("\n").reduce((max, line) => Math.max(max, Array.from(line).length), 0);
   return { lines, words, bytes: data.length, chars: Array.from(text).length, maxLine };

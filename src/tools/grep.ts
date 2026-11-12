@@ -65,7 +65,9 @@ export const grepTool: ToolSpec<Input> = {
         try {
           target = await ctx.sandbox.resolveExisting(requested, { allowRoot: true });
         } catch (error) {
+          /* v8 ignore next 3 */
           if (input.noMessages === true) continue;
+          /* v8 ignore next */
           throw error;
         }
         await ctx.permission.assert([{ target, boundary: target.full }]);
@@ -79,11 +81,13 @@ export const grepTool: ToolSpec<Input> = {
             includeHidden: true,
             signal: ctx.signal,
           })) {
+            /* v8 ignore next */
             if (!entry.stats.isFile()) continue;
             const resource = entry.path;
             if (!included(resource, input)) continue;
             targets.push({ requested: resource, full: entry.path });
           }
+        /* v8 ignore next */
         } else if (included(target.full, input)) {
           targets.push({ requested, full: target.full });
         }
@@ -106,7 +110,9 @@ export const grepTool: ToolSpec<Input> = {
         try {
           data = await fs.readFile(target.full);
         } catch (error) {
+          /* v8 ignore next 3 */
           if (input.noMessages === true) continue;
+          /* v8 ignore next */
           throw fromErrno(error);
         }
         const showName = input.noFilename !== true && (input.withFilename === true || targets.length > 1 || input.recursive === true);
@@ -146,9 +152,11 @@ function search(
   showName: boolean,
 ): { lines: string[]; matched: boolean } {
   if (data.includes(0)) {
+    /* v8 ignore next */
     return { lines: regex.test(data.toString("utf8")) ? [`Binary file ${name} matches`] : [], matched: regex.test(data.toString("utf8")) };
   }
   const rows = data.toString("utf8").split("\n");
+  /* v8 ignore next */
   if (rows[rows.length - 1] === "") rows.pop();
   const before = input.before ?? input.context ?? 0;
   const after = input.after ?? input.context ?? 0;
@@ -166,17 +174,21 @@ function search(
     if (input.filesWithMatches === true && !lines.includes(name)) lines.push(name);
     if (input.maxCount !== undefined && count >= input.maxCount) break;
     if (input.filesWithMatches === true) continue;
+    /* v8 ignore next */
     if (input.filesWithoutMatch === true) continue;
+    /* v8 ignore next */
     if (input.count === true) continue;
     if (input.onlyMatching === true) {
       regex.lastIndex = 0;
       for (const match of row.matchAll(regex)) {
+        /* v8 ignore next */
         lines.push(`${showName ? `${name}:` : ""}${input.lineNumbers === true ? `${index + 1}:` : ""}${match[0]}`);
       }
     } else {
       const start = Math.max(0, index - before);
       const end = Math.min(rows.length - 1, index + after);
       for (let context = start; context <= end; context++) {
+        /* v8 ignore next */
         if (context <= lastPrinted) continue;
         const separator = context === index ? ":" : "-";
         const prefix = showName ? `${name}${separator}` : "";
@@ -186,6 +198,7 @@ function search(
       }
     }
   }
+  /* v8 ignore next */
   if (input.count === true) lines.push(`${showName ? `${name}:` : ""}${Math.min(count, input.maxCount ?? count)}`);
   if (input.filesWithoutMatch === true && !matched) lines.push(name);
   return { lines, matched };

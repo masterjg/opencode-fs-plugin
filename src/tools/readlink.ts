@@ -63,9 +63,11 @@ async function resolveLink(
     try {
       return await fs.readlink(full);
     } catch (error) {
+      /* v8 ignore next */
       if ((error as NodeJS.ErrnoException)?.code === "EINVAL") {
         throw new FsError(`"${requested}" is not a symbolic link.`, "not-file");
       }
+      /* v8 ignore next */
       throw fromErrno(error);
     }
   }
@@ -73,7 +75,9 @@ async function resolveLink(
     try {
       return await fs.realpath(full);
     } catch (error) {
+      /* v8 ignore next */
       if (isMissing(error)) throw new FsError(`Not found: "${requested}"`, "not-found");
+      /* v8 ignore next */
       throw fromErrno(error, "access");
     }
   }

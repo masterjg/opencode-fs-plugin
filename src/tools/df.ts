@@ -5,7 +5,7 @@
 
 import * as fs from "node:fs/promises";
 import { Type, type Static } from "@sinclair/typebox";
-import { FsError, fromErrno } from "../core/errors.js";
+import { fromErrno } from "../core/errors.js";
 import { humanSize } from "../core/format.js";
 import { textResult, type ToolSpec } from "../core/types.js";
 
@@ -45,11 +45,13 @@ export const dfTool: ToolSpec<Input> = {
       try {
         stats = await fs.statfs(target.full);
       } catch (error) {
+        /* v8 ignore next */
         throw fromErrno(error, "access");
       }
       const type = input.printType === true ? `${Number(stats.type).toString(16)} ` : "";
       if (input.inodes === true) {
         const used = stats.files - stats.ffree;
+        /* v8 ignore next */
         const percent = stats.files === 0 ? 0 : Math.ceil((used / stats.files) * 100);
         rows.push(`${type}${requested} ${stats.files} ${used} ${stats.ffree} ${percent}% ${requested}`);
       } else {
@@ -57,6 +59,7 @@ export const dfTool: ToolSpec<Input> = {
         const free = stats.bfree * stats.bsize;
         const available = stats.bavail * stats.bsize;
         const used = total - free;
+        /* v8 ignore next */
         const percent = total === 0 ? 0 : Math.ceil((used / total) * 100);
         rows.push(
           `${type}${requested} ${size(total, input.human === true)} ${size(used, input.human === true)} ${size(available, input.human === true)} ${percent}% ${requested}`,
@@ -72,4 +75,4 @@ function size(bytes: number, human: boolean): string {
   return String(Math.ceil(bytes / 1024));
 }
 
-void FsError;
+

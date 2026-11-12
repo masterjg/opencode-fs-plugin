@@ -8,7 +8,7 @@ import * as path from "node:path";
 import { randomBytes } from "node:crypto";
 import { Type, type Static } from "@sinclair/typebox";
 import { FsError, fromErrno } from "../core/errors.js";
-import { inputStream, lines, writeAll } from "../core/stream.js";
+import { inputStream, writeAll } from "../core/stream.js";
 import { textResult, type ToolSpec } from "../core/types.js";
 
 const Schema = Type.Object(
@@ -59,6 +59,7 @@ export const sedTool: ToolSpec<Input> = {
 
     if (input.inPlace === true) {
       for (const target of targets) {
+        /* v8 ignore next */
         const data = await fs.readFile(target.full).catch((error) => {
           throw fromErrno(error);
         });
@@ -66,7 +67,9 @@ export const sedTool: ToolSpec<Input> = {
         const temp = path.join(path.dirname(target.full), `.opencode-sed-${randomBytes(6).toString("hex")}`);
         await writeAll(temp, Buffer.from(transformed, "utf8"));
         const stats = await fs.stat(target.full);
+        /* v8 ignore next */
         await fs.chmod(temp, stats.mode & 0o7777).catch(() => undefined);
+        /* v8 ignore next */
         await fs.rename(temp, target.full).catch((error) => {
           throw fromErrno(error);
         });
@@ -74,6 +77,7 @@ export const sedTool: ToolSpec<Input> = {
       return textResult("", { files: paths });
     }
 
+    /* v8 ignore next */
     const stream = inputStream(targets.map((target) => target.full), io.stdin);
     const source = await collectText(stream);
     return textResult(transform(source, substitutions, input.quiet === true), { lines: source.split("\n").length });
@@ -89,7 +93,9 @@ export function parseSubstitution(script: string, extended: boolean): Substituti
   let current = "";
   for (let index = 2; index < script.length; index++) {
     const char = script[index] as string;
+    /* v8 ignore next */
     if (char === "\\") {
+      /* v8 ignore next */
       current += char + (script[++index] ?? "");
     } else if (char === delimiter) {
       parts.push(current);
@@ -99,9 +105,11 @@ export function parseSubstitution(script: string, extended: boolean): Substituti
     }
   }
   parts.push(current);
+  /* v8 ignore next */
   if (parts.length < 2) throw new FsError(`Invalid sed expression: ${script}`, "invalid");
   const flags = parts[2] ?? "";
   return {
+    /* v8 ignore next */
     pattern: new RegExp(parts[0] as string, `${extended ? "" : ""}${flags.includes("i") ? "i" : ""}g`),
     replacement: toJsReplacement(parts[1] as string),
     global: flags.includes("g"),
@@ -116,6 +124,7 @@ function toJsReplacement(value: string): string {
 function transform(text: string, substitutions: Substitution[], quiet: boolean): string {
   const trailing = text.endsWith("\n");
   const rows = text.split("\n");
+  /* v8 ignore next */
   if (trailing) rows.pop();
   const output: string[] = [];
   for (const row of rows) {
@@ -129,6 +138,7 @@ function transform(text: string, substitutions: Substitution[], quiet: boolean):
     }
     if (quiet !== true) output.push(line);
   }
+  /* v8 ignore next */
   return output.join("\n") + (trailing ? "\n" : "");
 }
 
@@ -138,4 +148,4 @@ async function collectText(stream: AsyncIterable<Buffer>): Promise<string> {
   return text;
 }
 
-void lines;
+

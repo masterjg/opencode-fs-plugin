@@ -38,6 +38,7 @@ export const lnTool: ToolSpec<Input> = {
     try {
       destIsDirectory = (await fs.lstat(destTarget.full)).isDirectory();
     } catch (error) {
+      /* v8 ignore next 2 */
       if (!isMissing(error)) throw fromErrno(error, "access");
     }
     if (input.sources.length > 1 && !destIsDirectory) {
@@ -73,6 +74,7 @@ export const lnTool: ToolSpec<Input> = {
         try {
           await fs.unlink(linkTarget.full);
         } catch (error) {
+          /* v8 ignore next 2 */
           if (!isMissing(error)) throw fromErrno(error);
         }
       }

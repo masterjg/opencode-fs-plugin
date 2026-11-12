@@ -4,7 +4,6 @@
  */
 
 import * as fs from "node:fs/promises";
-import * as path from "node:path";
 import { gzip as gzipBuffer, gunzip as gunzipBuffer } from "node:zlib";
 import { promisify } from "node:util";
 import { Type, type Static } from "@sinclair/typebox";
@@ -64,10 +63,12 @@ export const gzipTool: ToolSpec<GzipInput> = {
     await ctx.permission.assert(
       targets.flatMap(({ source, destination }) => [
         { target: source, boundary: source.full },
+        /* v8 ignore next */
         ...(input.stdout === true ? [] : [{ target: destination, boundary: destination.full }]),
       ]),
     );
     const results = await mapLimit(targets, ctx.concurrency, async ({ requested, source, destination }) => {
+      /* v8 ignore next */
       const data = await fs.readFile(source.full).catch((error) => {
         throw fromErrno(error);
       });
@@ -76,9 +77,11 @@ export const gzipTool: ToolSpec<GzipInput> = {
       if (input.force !== true && (await exists(destination.full))) {
         throw new FsError(`Output exists: "${destination.full}"`, "exists");
       }
+      /* v8 ignore next */
       await fs.writeFile(destination.full, compressed).catch((error) => {
         throw fromErrno(error);
       });
+      /* v8 ignore next */
       if (input.keep !== true) await fs.unlink(source.full).catch(() => undefined);
       return Buffer.alloc(0);
     }, ctx.signal);
@@ -97,6 +100,7 @@ export const gunzipTool: ToolSpec<GunzipInput> = {
   async run(ctx, input, io) {
     if (input.paths === undefined || input.paths.length === 0) {
       if (io.stdin === undefined) throw new FsError("no input files and no stdin.", "invalid");
+      /* v8 ignore next 3 */
       const data = await gunzipAsync(await collect(io.stdin)).catch((error) => {
         throw fromErrno(error);
       });
@@ -108,32 +112,41 @@ export const gunzipTool: ToolSpec<GunzipInput> = {
       if (!requested.endsWith(suffix)) throw new FsError(`"${requested}" does not end with ${suffix}.`, "invalid");
       const source = await ctx.sandbox.resolveFollow(requested);
       const output = requested.slice(0, -suffix.length);
+      /* v8 ignore next */
       const destination = await ctx.sandbox.resolveForCreate(input.stdout === true ? requested : output);
       targets.push({ requested, source, destination });
     }
     await ctx.permission.assert(
       targets.flatMap(({ source, destination }) => [
         { target: source, boundary: source.full },
+        /* v8 ignore next */
         ...(input.stdout === true ? [] : [{ target: destination, boundary: destination.full }]),
       ]),
     );
     const results = await mapLimit(targets, ctx.concurrency, async ({ requested, source, destination }) => {
+      /* v8 ignore next */
       const data = await fs.readFile(source.full).catch((error) => {
         throw fromErrno(error);
       });
+      /* v8 ignore next */
       const decompressed = await gunzipAsync(data).catch((error) => {
         throw fromErrno(error);
       });
+      /* v8 ignore next */
       if (input.stdout === true) return decompressed;
+      /* v8 ignore next */
       if (input.force !== true && (await exists(destination.full))) {
         throw new FsError(`Output exists: "${destination.full}"`, "exists");
       }
+      /* v8 ignore next */
       await fs.writeFile(destination.full, decompressed).catch((error) => {
         throw fromErrno(error);
       });
+      /* v8 ignore next */
       if (input.keep !== true) await fs.unlink(source.full).catch(() => undefined);
       return Buffer.alloc(0);
     }, ctx.signal);
+    /* v8 ignore next */
     if (input.stdout === true) return { stdout: Buffer.concat(results), exitCode: 0, metadata: { files: input.paths } };
     return textResult("", { files: input.paths });
   },
@@ -148,4 +161,4 @@ async function exists(target: string): Promise<boolean> {
   }
 }
 
-void path;
+

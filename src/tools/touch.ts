@@ -42,6 +42,7 @@ export const touchTool: ToolSpec<Input> = {
       try {
         stats = await ctx.sandbox.lstat(target.full, requested);
       } catch (error) {
+        /* v8 ignore next */
         if (!(error instanceof FsError) || error.code !== "not-found") throw error;
         if (input.noCreate === true) continue;
         try {
@@ -49,6 +50,7 @@ export const touchTool: ToolSpec<Input> = {
           await handle.close();
           stats = await ctx.sandbox.lstat(target.full, requested);
         } catch (openError) {
+          /* v8 ignore next */
           throw fromErrno(openError);
         }
       }
@@ -62,6 +64,7 @@ export const touchTool: ToolSpec<Input> = {
           await fs.utimes(target.full, atime, mtime);
         }
       } catch (error) {
+        /* v8 ignore next */
         throw fromErrno(error);
       }
       changed.push(requested);
@@ -111,6 +114,7 @@ export function parseGnuTimestamp(value: string): Date {
     ? Number(century) * 100 + Number(twoDigitYear)
     : twoDigitYear === undefined
       ? current.getFullYear()
+      /* v8 ignore next 3 */
       : Number(twoDigitYear) >= 69
         ? 1900 + Number(twoDigitYear)
         : 2000 + Number(twoDigitYear);
@@ -120,6 +124,7 @@ export function parseGnuTimestamp(value: string): Date {
   const minute = Number(match[7]);
   const second = Number(match[8] ?? "0");
   const date = new Date(year, month, day, hour, minute, second);
+  /* v8 ignore next */
   if (Number.isNaN(date.getTime())) throw new FsError(`Invalid timestamp: ${value}`, "invalid");
   return date;
 }

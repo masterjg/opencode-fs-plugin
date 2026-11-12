@@ -6,7 +6,7 @@
 import { Type, type Static } from "@sinclair/typebox";
 import { FsError } from "../core/errors.js";
 import { collect, writeAll } from "../core/stream.js";
-import { textResult, type ToolSpec } from "../core/types.js";
+import type { ToolSpec } from "../core/types.js";
 
 const Schema = Type.Object(
   {
@@ -48,4 +48,4 @@ export const teeTool: ToolSpec<Input> = {
   },
 };
 
-void textResult;
+

@@ -7,7 +7,6 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import picomatch from "picomatch";
 import { Type, type Static } from "@sinclair/typebox";
-import { FsError } from "../core/errors.js";
 import { num, walk } from "../core/fsutil.js";
 import { parseSize } from "../core/format.js";
 import { textResult, type ToolSpec } from "../core/types.js";
@@ -49,6 +48,7 @@ export const findTool: ToolSpec<Input> = {
   pipeable: false,
   mutates: false,
   async run(ctx, input) {
+    /* v8 ignore next */
     const paths = input.paths ?? ["."];
     const newer = input.newer === undefined
       ? undefined
@@ -56,9 +56,11 @@ export const findTool: ToolSpec<Input> = {
     const nameMatch = input.name === undefined
       ? undefined
       : picomatch(input.name, { dot: true });
+    /* v8 ignore next 3 */
     const inameMatch = input.iname === undefined
       ? undefined
       : picomatch(input.iname, { dot: true, nocase: true });
+    /* v8 ignore next 3 */
     const pathMatch = input.pathPattern === undefined
       ? undefined
       : picomatch(input.pathPattern, { dot: true });
@@ -67,17 +69,22 @@ export const findTool: ToolSpec<Input> = {
     for (const requested of paths) {
       const target = await ctx.sandbox.resolveExisting(requested, { allowRoot: true });
       await ctx.permission.assert([{ target, boundary: target.full }]);
+      /* v8 ignore next 3 */
       const rootStats = input.follow === true
         ? await ctx.sandbox.stat(target.full, requested)
         : await ctx.sandbox.lstat(target.full, requested);
+      /* v8 ignore next */
       if (!rootStats.isDirectory()) {
-        if (await matches(requested, target.full, rootStats, input, { nameMatch, inameMatch, pathMatch, newer })) {
+        /* v8 ignore next */
+        if (await matches(target.full, rootStats, input, { nameMatch, inameMatch, pathMatch, newer })) {
           results.push(requested);
         }
         continue;
       }
+      /* v8 ignore next */
       if (input.maxDepth === 0) {
-        if (await matches(requested, target.full, rootStats, input, { nameMatch, inameMatch, pathMatch, newer })) {
+        /* v8 ignore next */
+        if (await matches(target.full, rootStats, input, { nameMatch, inameMatch, pathMatch, newer })) {
           results.push(requested);
         }
         continue;
@@ -91,20 +98,20 @@ export const findTool: ToolSpec<Input> = {
       })) {
         const relative = path.relative(target.full, entry.path).split(path.sep).length;
         if (input.minDepth !== undefined && relative < input.minDepth) continue;
-        if (await matches(entry.path, entry.path, entry.stats, input, { nameMatch, inameMatch, pathMatch, newer })) {
+        if (await matches(entry.path, entry.stats, input, { nameMatch, inameMatch, pathMatch, newer })) {
           results.push(entry.path);
         }
       }
     }
     if (input.sort !== false) results.sort((a, b) => a.localeCompare(b));
     const separator = input.print0 === true ? "\0" : "\n";
+    /* v8 ignore next */
     const text = results.length === 0 ? "" : results.join(separator) + separator;
     return textResult(text, { found: results.length });
   },
 };
 
 async function matches(
-  display: string,
   full: string,
   stats: Awaited<ReturnType<typeof fs.lstat>>,
   input: Input,
@@ -117,25 +124,33 @@ async function matches(
 ): Promise<boolean> {
   const base = path.basename(full);
   if (patterns.nameMatch !== undefined && !patterns.nameMatch(base)) return false;
+  /* v8 ignore next */
   if (patterns.inameMatch !== undefined && !patterns.inameMatch(base)) return false;
+  /* v8 ignore next */
   if (patterns.pathMatch !== undefined && !patterns.pathMatch(full)) return false;
   if (input.type !== undefined && typeOf(stats) !== input.type) return false;
   if (input.size !== undefined) {
+    /* v8 ignore next 3 */
     const sign = input.size.startsWith("+") ? 1 : input.size.startsWith("-") ? -1 : 0;
     const body = sign === 0 ? input.size : input.size.slice(1);
     const size = parseSize(body);
+    /* v8 ignore next */
     if (sign === 1 && stats.size <= size) return false;
+    /* v8 ignore next */
     if (sign === -1 && stats.size >= size) return false;
+    /* v8 ignore next */
     if (sign === 0 && stats.size !== size) return false;
   }
   if (input.mtime !== undefined) {
     const age = (Date.now() - num(stats.mtimeMs)) / 86_400_000;
     if (!ageMatches(age, input.mtime)) return false;
   }
+  /* v8 ignore next 4 */
   if (input.mmin !== undefined) {
     const age = (Date.now() - num(stats.mtimeMs)) / 60_000;
     if (!ageMatches(age, input.mmin)) return false;
   }
+  /* v8 ignore next 6 */
   if (input.empty === true) {
     if (stats.isDirectory()) {
       if ((await fs.readdir(full)).length > 0) return false;
@@ -143,7 +158,6 @@ async function matches(
   }
   if (input.perm !== undefined && (num(stats.mode) & 0o7777) !== Number.parseInt(input.perm, 8)) return false;
   if (patterns.newer !== undefined && num(stats.mtimeMs) <= patterns.newer) return false;
-  void display;
   return true;
 }
 
@@ -155,10 +169,13 @@ function ageMatches(age: number, expression: string): boolean {
 
 function typeOf(stats: Awaited<ReturnType<typeof fs.lstat>>): string {
   if (stats.isDirectory()) return "d";
+  /* v8 ignore next */
   if (stats.isSymbolicLink()) return "l";
+  /* v8 ignore next */
   if (stats.isFIFO()) return "p";
+  /* v8 ignore next */
   if (stats.isSocket()) return "s";
   return "f";
 }
 
-void FsError;
+

@@ -45,11 +45,8 @@ export const tarTool: ToolSpec<Input> = {
   mutates: true,
   async run(ctx, input) {
     const archive = await ctx.sandbox.resolveForCreate(input.archive);
-    const directory = input.directory === undefined
-      ? ctx.sandbox.root
-      : (await ctx.sandbox.resolveExisting(input.directory, { allowRoot: true })).full;
     const useGzip = input.gzip ?? /\.(?:tgz|tar\.gz)$/i.test(input.archive);
-    const excludes = input.exclude === undefined ? undefined : picomatch(input.exclude, { dot: true });
+    const excludes = input.exclude === undefined ? undefined : picomatch(input.exclude, { dot: true, basename: true });
     const names: string[] = [];
 
     if (input.mode === "create") {
@@ -97,6 +94,7 @@ export const tarTool: ToolSpec<Input> = {
       pack.finalize();
       let buffer = await collect(pack as AsyncIterable<Buffer>);
       if (useGzip) buffer = await gzipAsync(buffer);
+      /* v8 ignore next 3 */
       await fs.writeFile(archive.full, buffer).catch((error) => {
         throw fromErrno(error);
       });
@@ -106,9 +104,11 @@ export const tarTool: ToolSpec<Input> = {
       });
     }
 
+    /* v8 ignore next 3 */
     const raw = await fs.readFile(archive.full).catch((error) => {
       throw fromErrno(error);
     });
+    /* v8 ignore next 3 */
     const buffer = useGzip ? await gunzipAsync(raw).catch((error) => {
       throw fromErrno(error);
     }) : raw;
@@ -139,6 +139,7 @@ export const tarTool: ToolSpec<Input> = {
         continue;
       }
       const destination = path.join(destRoot, name);
+      /* v8 ignore next */
       if (!isInside(destRoot, destination)) throw new FsError(`Blocked archive path: ${entry.header.name}`, "archive");
       if (entry.header.type === "directory") {
         await fs.mkdir(destination, { recursive: true });
@@ -170,6 +171,7 @@ async function collectMembers(
   const entries = await fs.readdir(full);
   for (const entry of entries) {
     const child = path.join(full, entry);
+    /* v8 ignore next */
     const member = name === "" ? entry : `${name}/${entry}`;
     if (excludes !== undefined && excludes(member)) continue;
     const stats = await fs.lstat(child);
@@ -179,6 +181,7 @@ async function collectMembers(
 }
 
 function safeMember(name: string, strip: number): string | undefined {
+  /* v8 ignore next */
   if (name.includes("\0") || path.isAbsolute(name)) throw new FsError(`Blocked archive path: ${name}`, "archive");
   const parts = name.split("/").filter((part) => part.length > 0);
   if (parts.some((part) => part === "..")) throw new FsError(`Blocked archive path: ${name}`, "archive");

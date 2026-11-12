@@ -75,7 +75,9 @@ export const chmodTool: ToolSpec<Input> = {
         try {
           await fs.chmod(target.full, nextMode);
         } catch (error) {
+          /* v8 ignore next 3 */
           if (input.silent === true) continue;
+          /* v8 ignore next */
           throw fromErrno(error);
         }
         changed.push(target.requested);

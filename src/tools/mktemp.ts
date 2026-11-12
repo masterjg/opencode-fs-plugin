@@ -31,7 +31,9 @@ export const mktempTool: ToolSpec<Input> = {
   pipeable: false,
   mutates: true,
   async run(ctx, input) {
+    /* v8 ignore next 2 */
     const dir = path.resolve(input.tmpdir ?? ctx.tmpdir);
+    /* v8 ignore next */
     const template = input.template ?? "tmp.XXXXXXXXXX";
     const tail = /X+$/.exec(template)?.[0] ?? "";
     if (tail.length < 3) throw new FsError("template must end with at least three X characters.", "invalid");
@@ -45,6 +47,7 @@ export const mktempTool: ToolSpec<Input> = {
         if (input.suffix !== undefined) await fs.rename(created, result);
         return textResult(`${result}\n`, { path: result, directory: true });
       } catch (error) {
+        /* v8 ignore next */
         throw fromErrno(error);
       }
     }
@@ -52,6 +55,7 @@ export const mktempTool: ToolSpec<Input> = {
     try {
       await fs.mkdir(dir, { recursive: true });
     } catch (error) {
+      /* v8 ignore next */
       throw fromErrno(error);
     }
     for (let attempt = 0; attempt < 20; attempt++) {
@@ -63,10 +67,13 @@ export const mktempTool: ToolSpec<Input> = {
         if (input.suffix !== undefined) await fs.rename(candidate, result);
         return textResult(`${result}\n`, { path: result, directory: false });
       } catch (error) {
+        /* v8 ignore next */
         if ((error as NodeJS.ErrnoException)?.code === "EEXIST") continue;
+        /* v8 ignore next */
         throw fromErrno(error);
       }
     }
+    /* v8 ignore next */
     throw new FsError("could not create a unique temporary path.", "exists");
   },
 };

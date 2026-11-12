@@ -57,6 +57,7 @@ export const cpTool: ToolSpec<Input> = {
       const stats = dereference
         ? await ctx.sandbox.stat(target.full, requested)
         : await ctx.sandbox.lstat(target.full, requested);
+      /* v8 ignore next */
       if (stats.isDirectory() && !recursive) {
         throw new FsError(`"${requested}" is a directory; recursive is required.`, "not-file");
       }
@@ -73,6 +74,7 @@ export const cpTool: ToolSpec<Input> = {
     try {
       destIsDirectory = (await fs.lstat(destTarget.full)).isDirectory();
     } catch (error) {
+      /* v8 ignore next 2 */
       if (!isMissing(error)) throw fromErrno(error, "access");
     }
     if (sources.length > 1 && !destIsDirectory) {

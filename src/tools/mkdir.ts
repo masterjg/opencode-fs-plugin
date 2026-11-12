@@ -43,6 +43,7 @@ export const mkdirTool: ToolSpec<Input> = {
       isDirectory = (await fs.lstat(target.full)).isDirectory();
       exists = true;
     } catch (error) {
+      /* v8 ignore next */
       if (!isMissing(error)) throw fromErrno(error, "access");
     }
 

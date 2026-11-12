@@ -103,6 +103,17 @@ describe("plugin execution", () => {
     expect(result.metadata).toMatchObject({ blocked: true, code: "outside" });
   });
 
+  it("executes a pipe with per-stage permission gates", async () => {
+    const { editor } = await load();
+    const pipe = editor.tools.find((tool) => tool.name === "pipe");
+    const result = (await pipe?.execute(
+      { input: "b\na\n", stages: [{ tool: "sort" }, { tool: "uniq" }] },
+      makeToolContext(),
+    )) as { content: string; metadata: Record<string, unknown> };
+    expect(result.content).toBe("a\nb\n");
+    expect(result.metadata.ok).toBe(true);
+  });
+
   it("propagates permission denials", async () => {
     const root = await makeRoot();
     roots.push(root);

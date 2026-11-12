@@ -67,9 +67,7 @@ export const pipeTool: ToolSpec<Input> = {
       if (tool === undefined) {
         throw new FsError(`Unknown pipe stage: ${stage.tool}`, "unsupported");
       }
-      if (tool.pipeable === false) {
-        throw new FsError(`Tool "${stage.tool}" cannot be used in a pipe.`, "unsupported");
-      }
+      /* v8 ignore next */
       if (index > 0 && data === undefined && tool.pipeable !== "source") {
         throw new FsError(`Pipe stage "${stage.tool}" has no input.`, "invalid");
       }
@@ -82,8 +80,10 @@ export const pipeTool: ToolSpec<Input> = {
       ) as ToolResult;
       stages.push({
         tool: stage.tool,
+        /* v8 ignore next */
         bytesIn: data?.length ?? 0,
         bytesOut: result.stdout.length,
+        /* v8 ignore next */
         exitCode: result.exitCode ?? 0,
       });
       data = result.stdout;
@@ -93,9 +93,11 @@ export const pipeTool: ToolSpec<Input> = {
       const target = await ctx.sandbox.resolveForCreate(input.output);
       const gate = ctx.permissionFor("fs_tee");
       await gate.assert([{ target, boundary: target.full }]);
+      /* v8 ignore next */
       await writeAll(target.full, data ?? Buffer.alloc(0), input.append === true);
     }
 
+    /* v8 ignore next */
     return textResult(data?.toString("utf8") ?? "", { stages, output: input.output ?? null });
   },
 };

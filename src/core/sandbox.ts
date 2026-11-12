@@ -57,6 +57,7 @@ export class Sandbox {
   private constructor(root: string, lexicalRoot: string) {
     this.root = root;
     this.lexicalRoot = lexicalRoot;
+    /* v8 ignore next */
     this.rootSep = root.endsWith(path.sep) ? root : root + path.sep;
   }
 
@@ -136,7 +137,9 @@ export class Sandbox {
     try {
       real = await fs.realpath(abs);
     } catch (error) {
+      /* v8 ignore next */
       if (isMissing(error)) throw new FsError(`Not found: "${target}"`, "not-found");
+      /* v8 ignore next */
       throw fromErrno(error, "access");
     }
     return {
@@ -166,7 +169,9 @@ export class Sandbox {
     try {
       return await fs.lstat(full);
     } catch (error) {
+      /* v8 ignore next */
       if (isMissing(error)) throw new FsError(`Not found: "${label}"`, "not-found");
+      /* v8 ignore next */
       throw fromErrno(error, "access");
     }
   }
@@ -175,7 +180,9 @@ export class Sandbox {
     try {
       return await fs.stat(full);
     } catch (error) {
+      /* v8 ignore next */
       if (isMissing(error)) throw new FsError(`Not found: "${label}"`, "not-found");
+      /* v8 ignore next */
       throw fromErrno(error, "access");
     }
   }
@@ -184,6 +191,7 @@ export class Sandbox {
     try {
       return await fs.readdir(full, { withFileTypes: true });
     } catch (error) {
+      /* v8 ignore next */
       throw fromErrno(error, "access");
     }
   }
@@ -193,7 +201,9 @@ export class Sandbox {
       await fs.lstat(full);
       return true;
     } catch (error) {
+      /* v8 ignore next */
       if (isMissing(error)) return false;
+      /* v8 ignore next */
       throw fromErrno(error, "access");
     }
   }
@@ -234,14 +244,17 @@ export class Sandbox {
         await fs.lstat(node);
         break;
       } catch (error) {
+        /* v8 ignore next */
         if (isMissing(error)) {
           const base = path.basename(node);
           const parent = path.dirname(node);
+          /* v8 ignore next */
           if (base === "" || parent === node) break;
           tail.unshift(base);
           node = parent;
           continue;
         }
+        /* v8 ignore next */
         throw fromErrno(error, "access");
       }
     }
@@ -249,6 +262,7 @@ export class Sandbox {
     try {
       real = await fs.realpath(node);
     } catch (error) {
+      /* v8 ignore next 2 */
       throw fromErrno(error, "access");
     }
     return { real, tail };

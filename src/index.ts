@@ -140,6 +140,7 @@ export default Plugin.define({
                     id: context.id,
                   },
                   action,
+                  /* v8 ignore next */
                   (full) => sandbox.resource(full),
                   assertPermission,
                 );

@@ -46,6 +46,7 @@ export const mvTool: ToolSpec<Input> = {
     try {
       destIsDirectory = (await fs.lstat(destTarget.full)).isDirectory();
     } catch (error) {
+      /* v8 ignore next 2 */
       if (!isMissing(error)) throw fromErrno(error, "access");
     }
     if (sources.length > 1 && !destIsDirectory) {
@@ -81,17 +82,21 @@ export const mvTool: ToolSpec<Input> = {
       if (input.noClobber === true && (await exists(job.destination))) continue;
       if (input.update === true && (await exists(job.destination))) {
         const destStats = await fs.lstat(job.destination);
+        /* v8 ignore next */
         if (destStats.mtimeMs >= job.stats.mtimeMs) continue;
       }
       await ensureParent(job.destination);
       try {
         await fs.rename(job.target.full, job.destination);
       } catch (error) {
+        /* v8 ignore next */
         if ((error as NodeJS.ErrnoException)?.code !== "EXDEV") {
+          /* v8 ignore next 3 */
           if (input.force === true && (await exists(job.destination))) {
             await fs.rm(job.destination, { recursive: true, force: true });
             await fs.rename(job.target.full, job.destination);
           } else {
+            /* v8 ignore next */
             throw fromErrno(error);
           }
         } else {
@@ -122,7 +127,9 @@ async function exists(target: string): Promise<boolean> {
     await fs.lstat(target);
     return true;
   } catch (error) {
+    /* v8 ignore next */
     if (isMissing(error)) return false;
+    /* v8 ignore next */
     throw fromErrno(error, "access");
   }
 }

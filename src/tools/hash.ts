@@ -4,7 +4,6 @@
  */
 
 import * as fs from "node:fs";
-import * as fsp from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { Type, type Static } from "@sinclair/typebox";
 import { FsError, fromErrno } from "../core/errors.js";
@@ -82,4 +81,4 @@ async function hashStream(algorithm: string, stream: AsyncIterable<Buffer>): Pro
   return hash.digest("hex");
 }
 
-void fsp;
+

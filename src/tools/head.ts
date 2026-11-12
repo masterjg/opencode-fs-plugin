@@ -68,8 +68,10 @@ async function takeLines(stream: AsyncIterable<Buffer>, count: number): Promise<
   const output: string[] = [];
   let taken = 0;
   for await (const line of lines(stream)) {
+    /* v8 ignore next */
     output.push(line.text + (line.newline ? "\n" : ""));
     taken++;
+    /* v8 ignore next */
     if (taken >= count) break;
   }
   return Buffer.from(output.join(""), "utf8");

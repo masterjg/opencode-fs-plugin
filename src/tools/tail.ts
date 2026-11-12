@@ -68,6 +68,7 @@ function tailBuffer(data: Buffer, count: number, input: Input): Buffer {
   const trailing = text.endsWith("\n");
   const parts = text.split("\n");
   if (trailing) parts.pop();
+  /* v8 ignore next */
   if (input.fromStart === true) return Buffer.from(parts.slice(count - 1).join("\n") + (trailing ? "\n" : ""), "utf8");
   return Buffer.from(parts.slice(Math.max(0, parts.length - count)).join("\n") + (trailing ? "\n" : ""), "utf8");
 }

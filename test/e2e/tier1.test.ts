@@ -188,6 +188,10 @@ describe("touch and truncate", () => {
     await runSpec(truncateTool, { paths: ["missing"], noCreate: true, size: "1" }, sb);
     expect(await pathExists(path.join(root, "missing"))).toBe(false);
     await expect(runSpec(truncateTool, { paths: ["a"] }, sb)).rejects.toMatchObject({ code: "invalid" });
+    await fs.writeFile(path.join(root, "small"), "x");
+    await expect(runSpec(truncateTool, { paths: ["small"], size: "-2" }, sb)).rejects.toMatchObject({
+      code: "invalid",
+    });
   });
 });
 

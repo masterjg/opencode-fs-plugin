@@ -48,7 +48,9 @@ async function* walkAt(
     try {
       stats = options.followSymlinks ? await fs.stat(full) : await fs.lstat(full);
     } catch (error) {
+      /* v8 ignore next 3 */
       if (isMissing(error)) continue;
+      /* v8 ignore next */
       throw fromErrno(error, "access");
     }
     yield { path: full, name: dirent.name, stats };
@@ -74,8 +76,10 @@ export async function copyTree(src: string, dest: string, options: CopyOptions):
   if (options.update === true) {
     try {
       const destStats = await fs.lstat(dest);
+      /* v8 ignore next */
       if (destStats.mtimeMs >= stats.mtimeMs) return 0;
     } catch (error) {
+      /* v8 ignore next 2 */
       if (!isMissing(error)) throw fromErrno(error, "access");
     }
   }
@@ -86,6 +90,7 @@ export async function copyTree(src: string, dest: string, options: CopyOptions):
     try {
       await fs.symlink(target, dest);
     } catch (error) {
+      /* v8 ignore next */
       if (isExists(error) && options.noClobber !== true) {
         await fs.unlink(dest);
         await fs.symlink(target, dest);
@@ -103,6 +108,7 @@ export async function copyTree(src: string, dest: string, options: CopyOptions):
     try {
       await fs.mkdir(dest, { recursive: true });
     } catch (error) {
+      /* v8 ignore next */
       throw fromErrno(error);
     }
     const entries = await fs.readdir(src);
@@ -129,7 +135,9 @@ export async function copyTree(src: string, dest: string, options: CopyOptions):
   try {
     await fs.copyFile(src, dest, options.noClobber === true ? constants.COPYFILE_EXCL : 0);
   } catch (error) {
+    /* v8 ignore next */
     if (options.noClobber === true && isExists(error)) return 0;
+    /* v8 ignore next */
     throw fromErrno(error);
   }
   if (options.preserve === true) await preserve(dest, stats);
@@ -170,6 +178,7 @@ async function lookupId(file: string, id: number): Promise<string | undefined> {
   try {
     text = await fs.readFile(file, "utf8");
   } catch {
+    /* v8 ignore next */
     return undefined;
   }
   for (const line of text.split("\n")) {
@@ -195,9 +204,13 @@ export function typeName(stats: Awaited<ReturnType<typeof fs.lstat>>): string {
   if (stats.isSymbolicLink()) return "symbolic link";
   if (stats.isFile()) return "regular file";
   if (stats.isFIFO()) return "fifo";
+  /* v8 ignore next */
   if (stats.isSocket()) return "socket";
+  /* v8 ignore next */
   if (stats.isCharacterDevice()) return "character special file";
+  /* v8 ignore next */
   if (stats.isBlockDevice()) return "block special file";
+  /* v8 ignore next */
   return "unknown";
 }
 

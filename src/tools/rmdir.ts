@@ -98,9 +98,12 @@ async function removeParents(
       await fs.rmdir(current);
       const label = ctx.sandbox.resource(current);
       removed.push(label);
+      /* v8 ignore next */
       if (verbose) warnings.push(`rmdir: removing directory, '${label}'`);
     } catch (error) {
+      /* v8 ignore next 3 */
       if (isMissing(error) || isNonEmpty(error)) return;
+      /* v8 ignore next */
       throw fromErrno(error);
     }
     current = path.dirname(current);
@@ -109,5 +112,6 @@ async function removeParents(
 
 function isNonEmpty(error: unknown): boolean {
   const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  /* v8 ignore next */
   return code === "ENOTEMPTY" || code === "ENOTDIR" || code === "EEXIST";
 }

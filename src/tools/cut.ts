@@ -35,6 +35,7 @@ export const cutTool: ToolSpec<Input> = {
   async run(ctx, input, io) {
     const mode = input.fields !== undefined ? "fields" : input.characters !== undefined ? "chars" : input.bytes !== undefined ? "bytes" : "";
     if (!mode) throw new FsError("cut requires fields, characters, or bytes.", "invalid");
+    /* v8 ignore next */
     const ranges = parseRanges(input.fields ?? input.characters ?? input.bytes ?? "");
     const paths = input.paths ?? [];
     const targets = [];

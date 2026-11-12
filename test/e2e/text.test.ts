@@ -44,6 +44,8 @@ describe("cat, head, tail, wc and tee", () => {
     expect(numbered.result.stdout.toString()).not.toContain("\n\n");
     const stdin = await runSpec(catTool, { numberNonBlank: true }, sb, { stdin: bufferStream("a\n\nb") });
     expect(stdin.result.stdout.toString()).toContain("2  b");
+    const squeezed = await runSpec(catTool, { squeezeBlank: true }, sb, { stdin: bufferStream("a\n\n\nb\n") });
+    expect(squeezed.result.stdout.toString()).toBe("a\n\nb\n");
   });
 
   it("takes heads and tails by lines and bytes", async () => {

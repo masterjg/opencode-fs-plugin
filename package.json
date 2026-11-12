@@ -8,7 +8,8 @@
     ".": "./src/index.ts"
   },
   "files": [
-    "src"
+    "src",
+    "SPEC.md"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",

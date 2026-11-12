@@ -41,6 +41,12 @@ describe("gzip and gunzip", () => {
     expect(await fs.readFile(path.join(root, "a"), "utf8")).toBe("hello");
     expect(await pathExists(path.join(root, "a.gz"))).toBe(false);
 
+    await fs.writeFile(path.join(root, "b"), "hello");
+    await runSpec(gzipTool, { paths: ["b"] }, sb);
+    const fileStdout = await runSpec(gunzipTool, { paths: ["b.gz"], stdout: true }, sb);
+    expect(fileStdout.result.stdout.toString()).toBe("hello");
+    await fs.rm(path.join(root, "b.gz"));
+
     const compressed = await runSpec(gzipTool, { stdout: true }, sb, { stdin: bufferStream("hello") });
     expect(compressed.result.stdout.length).toBeGreaterThan(0);
     const decompressed = await runSpec(gunzipTool, { stdout: true }, sb, { stdin: bufferStream(compressed.result.stdout) });

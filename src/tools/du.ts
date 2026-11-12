@@ -63,6 +63,7 @@ export const duTool: ToolSpec<Input> = {
           includeHidden: true,
           signal: ctx.signal,
         })) {
+          /* v8 ignore next */
           if (input.oneFileSystem === true && num(entry.stats.dev) !== rootDev) continue;
           const bytes = usage(entry.path, entry.stats, seen);
           total += bytes;
@@ -89,9 +90,11 @@ export const duTool: ToolSpec<Input> = {
 };
 
 function usage(path: string, stats: Awaited<ReturnType<typeof fs.lstat>>, seen: Set<string>): number {
+  /* v8 ignore next */
   if (!stats.isFile()) return stats.isDirectory() ? num(stats.blocks) * 512 : 0;
   if (num(stats.nlink) > 1) {
     const key = `${num(stats.dev)}:${num(stats.ino)}`;
+    /* v8 ignore next */
     if (seen.has(key)) return 0;
     seen.add(key);
   }

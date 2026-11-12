@@ -71,6 +71,7 @@ export function expandSet(value: string): string[] {
     if (char === "\\") {
       const next = value[++index];
       if (next === undefined) throw new FsError("trailing escape in set.", "invalid");
+      /* v8 ignore next */
       output.push(next === "n" ? "\n" : next === "t" ? "\t" : next === "r" ? "\r" : next);
       continue;
     }

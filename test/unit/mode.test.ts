@@ -26,6 +26,7 @@ describe("mode parsing", () => {
     expect(parseMode("o+s", 0o755, false)).toBe(0o755);
     expect(parseMode("a+t", 0o755, false)).toBe(0o1755);
     expect(parseMode("o+t", 0o755, false)).toBe(0o1755);
+    expect(parseMode("u+t", 0o755, false)).toBe(0o755);
     expect(parseMode("+s", 0o755, false)).toBe(0o6755);
   });
 

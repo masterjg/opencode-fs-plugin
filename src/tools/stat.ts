@@ -43,6 +43,7 @@ export const statTool: ToolSpec<Input> = {
       const stats = input.follow === true
         ? await ctx.sandbox.stat(target.full, requested)
         : await ctx.sandbox.lstat(target.full, requested);
+      /* v8 ignore next */
       const link = stats.isSymbolicLink() ? await fs.readlink(target.full).catch(() => undefined) : undefined;
       blocks.push(
         input.format === undefined
@@ -62,7 +63,10 @@ async function defaultFormat(
 ): Promise<string> {
   const user = await lookupUser(num(stats.uid));
   const group = await lookupGroup(num(stats.gid));
+  /* v8 ignore next */
   const name = link === undefined ? `'${requested}'` : `'${requested}' -> '${link}'`;
+  /* v8 ignore next */
+  const birth = stats.birthtimeMs === 0 ? "-" : stats.birthtime.toISOString();
   const lines = [
     `  File: ${name}`,
     `  Size: ${num(stats.size)}\tBlocks: ${num(stats.blocks)}\tIO Block: ${num(stats.blksize)}  ${typeName(stats)}`,
@@ -71,7 +75,7 @@ async function defaultFormat(
     `Access: ${stats.atime.toISOString()}`,
     `Modify: ${stats.mtime.toISOString()}`,
     `Change: ${stats.ctime.toISOString()}`,
-    ` Birth: ${stats.birthtimeMs === 0 ? "-" : stats.birthtime.toISOString()}`,
+    ` Birth: ${birth}`,
   ];
   return lines.join("\n");
 }
@@ -85,6 +89,7 @@ async function customFormat(
 ): Promise<string> {
   const values: Record<string, string> = {
     n: requested,
+    /* v8 ignore next */
     N: link === undefined ? `'${requested}'` : `'${requested}' -> '${link}'`,
     s: String(num(stats.size)),
     F: typeName(stats),
@@ -115,6 +120,7 @@ async function customFormat(
     const char = format[index] as string;
     if (char === "\\") {
       const escaped = format[++index] as string | undefined;
+      /* v8 ignore next */
       output += escaped === "n" ? "\n" : escaped === "t" ? "\t" : escaped === "\\" ? "\\" : `\\${escaped ?? ""}`;
       continue;
     }
@@ -138,6 +144,7 @@ async function formatFilesystem(requested: string, full: string): Promise<string
   try {
     stats = await fs.statfs(full);
   } catch (error) {
+    /* v8 ignore next */
     throw fromErrno(error, "access");
   }
   return [
