@@ -139,6 +139,8 @@ describe("diff", () => {
     await fs.mkdir(path.join(root, "left"));
     await fs.mkdir(path.join(root, "right"));
     await fs.writeFile(path.join(root, "left/x"), "x");
+    await fs.writeFile(path.join(root, "left/same"), "same\n");
+    await fs.writeFile(path.join(root, "right/same"), "same\n");
     const dirs = await runSpec(diffTool, { left: "left", right: "right", recursive: true }, sb);
     expect(dirs.result.stdout.toString()).toContain("Only in");
     await expect(runSpec(diffTool, { left: "left", right: "a", recursive: true }, sb)).resolves.toBeTruthy();

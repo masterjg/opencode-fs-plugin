@@ -210,6 +210,17 @@ Each call still enforces its own `fs_<tool>` and `external_directory`
 permissions; loops do not bypass them. Code Mode has no timers, so use
 `wait_for` for time-based waits and `background: true` for long jobs.
 
+## Performance
+
+All `fs` I/O is asynchronous. Independent work is parallelized automatically
+within each call, up to `os.availableParallelism()`: tree copies, hashing,
+gzip/gunzip, grep reads, `find`/`du`/`grep -r`/`chmod -R` traversal, `diff -r`,
+and `ls` formatting. Do not add your own concurrency for those.
+
+The limit comes from the plugin `concurrency` option or
+`OPENCODE_FS_CONCURRENCY`. CPU-bound `sort`, `sed`, and text diffing stay
+single-threaded, so very large inputs use one core.
+
 ## Recipes
 
 ```js

@@ -66,6 +66,35 @@ export async function mapLimit<T, R>(
   return results;
 }
 
+/**
+ * Bounds concurrent async work without holding a slot across nested calls.
+ * Useful when a traversal recurses while only its syscalls need limiting.
+ */
+export function createLimiter(limit: number): <T>(fn: () => Promise<T>) => Promise<T> {
+  if (!Number.isInteger(limit) || limit < 1) {
+    throw new FsError("parallel limit must be a positive integer.", "invalid");
+  }
+  let active = 0;
+  const queue: Array<() => void> = [];
+  const release = (): void => {
+    const next = queue.shift();
+    if (next === undefined) active--;
+    else next();
+  };
+  return async <T>(fn: () => Promise<T>): Promise<T> => {
+    if (active < limit) {
+      active++;
+    } else {
+      await new Promise<void>((resolve) => queue.push(resolve));
+    }
+    try {
+      return await fn();
+    } finally {
+      release();
+    }
+  };
+}
+
 export async function forEachLimit<T>(
   items: readonly T[],
   limit: number,

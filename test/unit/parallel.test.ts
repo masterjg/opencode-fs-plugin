@@ -4,10 +4,12 @@
  */
 
 import { afterEach, describe, expect, it } from "vitest";
+import * as os from "node:os";
 import { FsError } from "../../src/core/errors.js";
 import {
   autoConcurrency,
   clampConcurrency,
+  createLimiter,
   forEachLimit,
   mapLimit,
 } from "../../src/core/parallel.js";
@@ -20,6 +22,11 @@ afterEach(() => {
 });
 
 describe("parallel helpers", () => {
+  it("defaults to the available core count", () => {
+    delete process.env.OPENCODE_FS_CONCURRENCY;
+    expect(autoConcurrency()).toBe(Math.max(1, os.availableParallelism()));
+  });
+
   it("reads a valid environment override", () => {
     process.env.OPENCODE_FS_CONCURRENCY = "3";
     expect(autoConcurrency()).toBe(3);
@@ -76,6 +83,33 @@ describe("parallel helpers", () => {
     await expect(
       mapLimit([1, 2], 1, async (value) => value, controller.signal),
     ).rejects.toMatchObject({ code: "interrupted" });
+  });
+
+  it("limits work through a shared gate", async () => {
+    const limit = createLimiter(2);
+    let active = 0;
+    let maximum = 0;
+    await Promise.all(
+      [1, 2, 3, 4, 5, 6].map((value) =>
+        limit(async () => {
+          active++;
+          maximum = Math.max(maximum, active);
+          await new Promise((resolve) => setTimeout(resolve, 2));
+          active--;
+          return value;
+        }),
+      ),
+    );
+    expect(maximum).toBeLessThanOrEqual(2);
+  });
+
+  it("validates the gate limit and releases after failures", async () => {
+    expect(() => createLimiter(0)).toThrow(FsError);
+    const limit = createLimiter(1);
+    await expect(limit(async () => {
+      throw new Error("boom");
+    })).rejects.toThrow("boom");
+    await expect(limit(async () => 1)).resolves.toBe(1);
   });
 
   it("runs forEachLimit", async () => {

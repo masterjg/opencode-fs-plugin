@@ -81,6 +81,30 @@ large downloads prefer `fs.http_request({ output })`, which streams to disk.
 
 There is no shell, redirection operator, nested pipe, or `find -exec`.
 
+## Performance and concurrency
+
+All I/O is asynchronous; the plugin never calls a synchronous `fs` API.
+
+The concurrency limit defaults to `os.availableParallelism()`. Override it with
+the plugin option `concurrency` or the `OPENCODE_FS_CONCURRENCY` environment
+variable (the option wins). It bounds every parallel path, so a large tree cannot
+start unbounded work:
+
+- `cp`/`mv` tree copies
+- `hash`, `gzip`, and `gunzip` over multiple files
+- `grep` file reads
+- `find`, `du`, `grep -r`, and `chmod -R` traversal, including directory
+  recursion and per-entry stats
+- `diff -r` file comparisons
+- `ls` long-format rendering
+
+`gzip`/`gunzip` also use the libuv thread pool for compression; raise
+`UV_THREADPOOL_SIZE` if compression dominates.
+
+CPU-bound JavaScript stages (`sort`, `sed`, `diff` text patching) stay
+single-threaded. Splitting them would need worker threads and is a deliberate
+gap; their input/output cost is dominated by the async I/O above.
+
 ## Background jobs
 
 Every `fs.*` tool accepts `background: true`. The call returns immediately with
@@ -142,18 +166,18 @@ Add the registry package directly to the plugin list:
 
 ```jsonc
 {
-  "plugins": ["opencode-fs-plugin@1.3.2"]
+  "plugins": ["opencode-fs-plugin@1.4.0"]
 }
 ```
 
-`opencode plugin add opencode-fs-plugin@1.3.2` installs it and writes the config
+`opencode plugin add opencode-fs-plugin@1.4.0` installs it and writes the config
 entry. A bare `opencode-fs-plugin` follows the `latest` tag.
 
 OpenCode manages the package under its cache, so the path is not stable. If you
 also want the packaged skill, install it into a project instead:
 
 ```bash
-npm install opencode-fs-plugin@1.3.2
+npm install opencode-fs-plugin@1.4.0
 ```
 
 ```jsonc
@@ -168,7 +192,7 @@ npm install opencode-fs-plugin@1.3.2
 Download the release tarball, then install it as a normal npm package:
 
 ```bash
-VERSION=1.3.2
+VERSION=1.4.0
 curl -L -o "opencode-fs-plugin-${VERSION}.tgz" \
   "https://github.com/masterjg/opencode-fs-plugin/releases/download/v${VERSION}/opencode-fs-plugin-${VERSION}.tgz"
 npm install "./opencode-fs-plugin-${VERSION}.tgz"
@@ -197,20 +221,20 @@ OpenCode installs it from Git:
 
 ```jsonc
 {
-  "plugins": ["github:masterjg/opencode-fs-plugin#v1.3.2"]
+  "plugins": ["github:masterjg/opencode-fs-plugin#v1.4.0"]
 }
 ```
 
-`opencode plugin add 'github:masterjg/opencode-fs-plugin#v1.3.2'` installs the
+`opencode plugin add 'github:masterjg/opencode-fs-plugin#v1.4.0'` installs the
 same spec and writes the config entry. The equivalent full URL is
-`git+https://github.com/masterjg/opencode-fs-plugin.git#v1.3.2`. A tag is
+`git+https://github.com/masterjg/opencode-fs-plugin.git#v1.4.0`. A tag is
 checked for updates; use a full commit hash to pin it.
 
 Git plugins are installed under OpenCode's cache, so their package path is not
 stable. If you also want the packaged skill, install with npm instead:
 
 ```bash
-npm install "github:masterjg/opencode-fs-plugin#v1.3.2"
+npm install "github:masterjg/opencode-fs-plugin#v1.4.0"
 ```
 
 Then use `./node_modules/opencode-fs-plugin` in `plugins` and

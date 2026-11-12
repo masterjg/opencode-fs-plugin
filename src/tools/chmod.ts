@@ -6,7 +6,7 @@
 import * as fs from "node:fs/promises";
 import { Type, type Static } from "@sinclair/typebox";
 import { FsError, fromErrno } from "../core/errors.js";
-import { num, walk } from "../core/fsutil.js";
+import { num, walkAll } from "../core/fsutil.js";
 import { parseMode } from "../core/mode.js";
 import { textResult, type ToolSpec } from "../core/types.js";
 
@@ -51,7 +51,11 @@ export const chmodTool: ToolSpec<Input> = {
       if (input.recursive === true) {
         const rootStats = await ctx.sandbox.lstat(root.full, requested);
         if (rootStats.isDirectory()) {
-          for await (const entry of walk(root.full, { recursive: true, signal: ctx.signal })) {
+          for (const entry of await walkAll(root.full, {
+            recursive: true,
+            signal: ctx.signal,
+            concurrency: ctx.concurrency,
+          })) {
             targets.push({
               full: entry.path,
               outside: root.outside,

@@ -6,7 +6,14 @@ the `fs` namespace (`tools.fs.cp`, direct `fs_cp`).
 
 ## Principles
 
-- Every tool is async and uses `fs/promises`.
+- Every tool is async and uses `fs/promises`; no synchronous filesystem calls.
+- Independent I/O runs with bounded parallelism. The limit defaults to
+  `os.availableParallelism()` and can be set with the plugin `concurrency`
+  option or `OPENCODE_FS_CONCURRENCY`.
+- Parallel paths: `cp`/`mv` trees, `hash`, `gzip`/`gunzip`, `grep` reads,
+  `find`/`du`/`grep -r`/`chmod -R` traversal, `diff -r`, and `ls` formatting.
+- CPU-bound JS (`sort`, `sed`, text diffing) stays single-threaded; worker
+  threads are a deliberate gap.
 - Every mutating tool asserts `fs_<tool>` permission before touching the disk.
 - External targets require `external_directory` first.
 - Output is native-style text plus structured metadata; errors are `ERROR:` or
@@ -56,6 +63,8 @@ These are not implemented:
 - curl protocols beyond HTTP(S), cookie jars, client certificates, proxies,
   multipart uploads, and resumable/range downloads
 - true streaming through pipe stages; `http_request` buffers unless `output` is set
+- worker threads for CPU-bound stages (`sort`, `sed`, text diffing)
+- parallel member reads inside a single `tar`/`zip` archive; member order is fixed
 
 ## Format details
 

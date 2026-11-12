@@ -8,6 +8,7 @@ import * as path from "node:path";
 import { constants } from "node:fs";
 import { FsError, fromErrno, isMissing } from "./errors.js";
 import { formatMode } from "./mode.js";
+import { createLimiter, mapLimit } from "./parallel.js";
 
 export interface WalkEntry {
   readonly path: string;
@@ -21,6 +22,8 @@ export interface WalkOptions {
   readonly maxDepth?: number;
   readonly includeHidden?: boolean;
   readonly signal?: AbortSignal;
+  /** Parallel entry stats per directory. Default: 1 (sequential). */
+  readonly concurrency?: number;
 }
 
 export async function* walk(root: string, options: WalkOptions = {}): AsyncGenerator<WalkEntry> {
@@ -41,23 +44,93 @@ async function* walkAt(
   } catch (error) {
     throw fromErrno(error, "access");
   }
-  for (const dirent of entries) {
-    if (!options.includeHidden && dirent.name.startsWith(".")) continue;
-    const full = path.join(current, dirent.name);
-    let stats;
-    try {
-      stats = options.followSymlinks ? await fs.stat(full) : await fs.lstat(full);
-    } catch (error) {
-      /* v8 ignore next 3 */
-      if (isMissing(error)) continue;
-      /* v8 ignore next */
-      throw fromErrno(error, "access");
-    }
-    yield { path: full, name: dirent.name, stats };
-    if (depth + 1 < maxDepth && stats.isDirectory()) {
-      yield* walkAt(full, depth + 1, maxDepth, options);
+  const visible = options.includeHidden ? entries : entries.filter((dirent) => !dirent.name.startsWith("."));
+  const resolved = await mapLimit(
+    visible,
+    Math.max(1, options.concurrency ?? 1),
+    async (dirent): Promise<WalkEntry | undefined> => {
+      const full = path.join(current, dirent.name);
+      try {
+        const stats = options.followSymlinks ? await fs.stat(full) : await fs.lstat(full);
+        return { path: full, name: dirent.name, stats };
+      } catch (error) {
+        /* v8 ignore next 3 */
+        if (isMissing(error)) return undefined;
+        /* v8 ignore next */
+        throw fromErrno(error, "access");
+      }
+    },
+    options.signal,
+  );
+
+  for (const entry of resolved) {
+    /* v8 ignore next */
+    if (entry === undefined) continue;
+    yield entry;
+    if (depth + 1 < maxDepth && entry.stats.isDirectory()) {
+      yield* walkAt(entry.path, depth + 1, maxDepth, options);
     }
   }
+}
+
+/**
+ * Collect a tree with directory stats and subtree recursion running
+ * concurrently. Syscalls share one limit, and results keep depth-first order.
+ */
+export async function walkAll(root: string, options: WalkOptions = {}): Promise<WalkEntry[]> {
+  const maxDepth = options.maxDepth ?? (options.recursive === false ? 0 : Infinity);
+  const gate = createLimiter(Math.max(1, options.concurrency ?? 1));
+  return walkDir(root, 0, maxDepth, options, gate);
+}
+
+async function walkDir(
+  current: string,
+  depth: number,
+  maxDepth: number,
+  options: WalkOptions,
+  gate: <T>(fn: () => Promise<T>) => Promise<T>,
+): Promise<WalkEntry[]> {
+  if (options.signal?.aborted) throw new FsError("Operation interrupted.", "interrupted");
+  let entries;
+  try {
+    entries = await gate(() => fs.readdir(current, { withFileTypes: true }));
+  } catch (error) {
+    throw fromErrno(error, "access");
+  }
+  const visible = options.includeHidden ? entries : entries.filter((dirent) => !dirent.name.startsWith("."));
+  const resolved = await Promise.all(
+    visible.map(async (dirent): Promise<WalkEntry | undefined> => {
+      const full = path.join(current, dirent.name);
+      try {
+        const stats = await gate(() => (options.followSymlinks ? fs.stat(full) : fs.lstat(full)));
+        return { path: full, name: dirent.name, stats };
+      } catch (error) {
+        /* v8 ignore next 3 */
+        if (isMissing(error)) return undefined;
+        /* v8 ignore next */
+        throw fromErrno(error, "access");
+      }
+    }),
+  );
+  const subtrees = await Promise.all(
+    resolved.map((entry) =>
+      entry === undefined || depth + 1 >= maxDepth || !entry.stats.isDirectory()
+        ? Promise.resolve(undefined)
+        : walkDir(entry.path, depth + 1, maxDepth, options, gate),
+    ),
+  );
+
+  const output: WalkEntry[] = [];
+  for (let index = 0; index < resolved.length; index++) {
+    const entry = resolved[index];
+    /* v8 ignore next */
+    if (entry === undefined) continue;
+    output.push(entry);
+    const subtree = subtrees[index];
+    /* v8 ignore next */
+    if (subtree !== undefined) output.push(...subtree);
+  }
+  return output;
 }
 
 export interface CopyOptions {
@@ -173,19 +246,26 @@ export async function lookupGroup(gid: number): Promise<string> {
   return (await lookupId("/etc/group", gid)) ?? String(gid);
 }
 
+const idCaches = new Map<string, Map<number, string>>();
+
 async function lookupId(file: string, id: number): Promise<string | undefined> {
-  let text: string;
-  try {
-    text = await fs.readFile(file, "utf8");
-  } catch {
-    /* v8 ignore next */
-    return undefined;
+  let cache = idCaches.get(file);
+  if (cache === undefined) {
+    cache = new Map();
+    let text: string;
+    try {
+      text = await fs.readFile(file, "utf8");
+    } catch {
+      /* v8 ignore next */
+      return undefined;
+    }
+    for (const line of text.split("\n")) {
+      const fields = line.split(":");
+      if (fields.length >= 3) cache.set(Number(fields[2]), fields[0] as string);
+    }
+    idCaches.set(file, cache);
   }
-  for (const line of text.split("\n")) {
-    const fields = line.split(":");
-    if (fields.length >= 3 && Number(fields[2]) === id) return fields[0] as string;
-  }
-  return undefined;
+  return cache.get(id);
 }
 
 export function formatDate(date: Date, now = new Date()): string {

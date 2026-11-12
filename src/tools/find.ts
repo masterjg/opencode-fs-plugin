@@ -8,7 +8,7 @@ import * as path from "node:path";
 import picomatch from "picomatch";
 import { Type, type Static } from "@sinclair/typebox";
 import { FsError } from "../core/errors.js";
-import { lookupGroup, lookupUser, modeString, num, typeName, walk } from "../core/fsutil.js";
+import { lookupGroup, lookupUser, modeString, num, typeName, walkAll } from "../core/fsutil.js";
 import { textResult, type ToolSpec } from "../core/types.js";
 
 const Schema = Type.Object(
@@ -161,12 +161,13 @@ export const findTool: ToolSpec<Input> = {
         }
         continue;
       }
-      for await (const entry of walk(target.full, {
+      for (const entry of await walkAll(target.full, {
         recursive: true,
         followSymlinks: input.follow === true,
         ...(input.maxDepth === undefined ? {} : { maxDepth: input.maxDepth }),
         includeHidden: true,
         signal: ctx.signal,
+        concurrency: ctx.concurrency,
       })) {
         const relative = path.relative(target.full, entry.path);
         const depth = relative.split(path.sep).length;

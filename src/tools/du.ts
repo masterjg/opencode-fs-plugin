@@ -5,7 +5,7 @@
 
 import * as fs from "node:fs/promises";
 import { Type, type Static } from "@sinclair/typebox";
-import { num, walk } from "../core/fsutil.js";
+import { num, walkAll } from "../core/fsutil.js";
 import { humanSize } from "../core/format.js";
 import { textResult, type ToolSpec } from "../core/types.js";
 
@@ -56,12 +56,13 @@ export const duTool: ToolSpec<Input> = {
         local.push({ path: requested, bytes: total });
       }
       if (rootStats.isDirectory()) {
-        for await (const entry of walk(target.full, {
+        for (const entry of await walkAll(target.full, {
           recursive: true,
           followSymlinks: input.follow === true,
           ...(input.maxDepth === undefined ? {} : { maxDepth: input.maxDepth }),
           includeHidden: true,
           signal: ctx.signal,
+          concurrency: ctx.concurrency,
         })) {
           /* v8 ignore next */
           if (input.oneFileSystem === true && num(entry.stats.dev) !== rootDev) continue;

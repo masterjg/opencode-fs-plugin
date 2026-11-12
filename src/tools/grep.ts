@@ -7,7 +7,8 @@ import * as fs from "node:fs/promises";
 import picomatch from "picomatch";
 import { Type, type Static } from "@sinclair/typebox";
 import { FsError, fromErrno } from "../core/errors.js";
-import { walk } from "../core/fsutil.js";
+import { walkAll } from "../core/fsutil.js";
+import { mapLimit } from "../core/parallel.js";
 import { collect, inputStream, lines } from "../core/stream.js";
 import { textResult, type ToolSpec } from "../core/types.js";
 
@@ -57,6 +58,13 @@ export const grepTool: ToolSpec<Input> = {
   mutates: false,
   async run(ctx, input, io) {
     const regex = buildRegex(input);
+    const include = input.include?.length ? picomatch(input.include, { dot: true, basename: true }) : undefined;
+    const exclude = input.exclude?.length ? picomatch(input.exclude, { dot: true, basename: true }) : undefined;
+    const isIncluded = (file: string): boolean => {
+      if (include !== undefined && !include(file)) return false;
+      if (exclude !== undefined && exclude(file)) return false;
+      return true;
+    };
     const paths = input.paths ?? [];
     const targets: Target[] = [];
     if (paths.length > 0) {
@@ -76,19 +84,20 @@ export const grepTool: ToolSpec<Input> = {
           if (input.recursive !== true) {
             throw new FsError(`"${requested}" is a directory; recursive is required.`, "not-file");
           }
-          for await (const entry of walk(target.full, {
+          for (const entry of await walkAll(target.full, {
             recursive: true,
             includeHidden: true,
             signal: ctx.signal,
+            concurrency: ctx.concurrency,
           })) {
             /* v8 ignore next */
             if (!entry.stats.isFile()) continue;
             const resource = entry.path;
-            if (!included(resource, input)) continue;
+            if (!isIncluded(resource)) continue;
             targets.push({ requested: resource, full: entry.path });
           }
         /* v8 ignore next */
-        } else if (included(target.full, input)) {
+        } else if (isIncluded(target.full)) {
           targets.push({ requested, full: target.full });
         }
       }
@@ -105,18 +114,27 @@ export const grepTool: ToolSpec<Input> = {
       output.push(...result.lines);
       matchedAny = result.matched;
     } else {
-      for (const target of targets) {
-        let data: Buffer;
-        try {
-          data = await fs.readFile(target.full);
-        } catch (error) {
-          /* v8 ignore next 3 */
-          if (input.noMessages === true) continue;
-          /* v8 ignore next */
-          throw fromErrno(error);
-        }
-        const showName = input.noFilename !== true && (input.withFilename === true || targets.length > 1 || input.recursive === true);
-        const result = search(target.requested, data, regex, input, showName);
+      const showName = input.noFilename !== true && (input.withFilename === true || targets.length > 1 || input.recursive === true);
+      const results = await mapLimit(
+        targets,
+        ctx.concurrency,
+        async (target) => {
+          let data: Buffer;
+          try {
+            data = await fs.readFile(target.full);
+          } catch (error) {
+            /* v8 ignore next 3 */
+            if (input.noMessages === true) return undefined;
+            /* v8 ignore next */
+            throw fromErrno(error);
+          }
+          return search(target.requested, data, regex, input, showName);
+        },
+        ctx.signal,
+      );
+      for (const result of results) {
+        /* v8 ignore next */
+        if (result === undefined) continue;
         output.push(...result.lines);
         matchedAny ||= result.matched;
       }
@@ -134,14 +152,6 @@ function buildRegex(input: Input): RegExp {
   } catch (error) {
     throw new FsError(`Invalid pattern: ${(error as Error).message}`, "invalid");
   }
-}
-
-function included(file: string, input: Input): boolean {
-  const include = input.include?.length ? picomatch(input.include, { dot: true, basename: true }) : undefined;
-  const exclude = input.exclude?.length ? picomatch(input.exclude, { dot: true, basename: true }) : undefined;
-  if (include !== undefined && !include(file)) return false;
-  if (exclude !== undefined && exclude(file)) return false;
-  return true;
 }
 
 function search(

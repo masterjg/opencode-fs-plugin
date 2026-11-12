@@ -10,6 +10,7 @@ import { Type, type Static } from "@sinclair/typebox";
 import { FsError, fromErrno } from "../core/errors.js";
 import { formatDate, lookupGroup, lookupUser, modeString, num, typeName } from "../core/fsutil.js";
 import { humanSize } from "../core/format.js";
+import { mapLimit } from "../core/parallel.js";
 import { textResult, type ToolSpec } from "../core/types.js";
 
 const Schema = Type.Object(
@@ -105,7 +106,7 @@ async function collect(
       const total = entries.reduce((sum, entry) => sum + num(entry.stats.blocks), 0);
       lines.push(`total ${total}`);
     }
-    lines.push(...(await formatEntries(entries, input)));
+    lines.push(...(await formatEntries(entries, input, ctx.concurrency)));
     if (recursive) {
       for (const entry of entries) {
         if (entry.name === "." || entry.name === ".." || !entry.stats.isDirectory()) continue;
@@ -206,8 +207,8 @@ function versionCompare(left: string, right: string): number {
   return 0;
 }
 
-async function formatEntries(entries: Entry[], input: Input): Promise<string[]> {
-  return Promise.all(entries.map((entry) => formatEntry(entry, input)));
+async function formatEntries(entries: Entry[], input: Input, concurrency: number): Promise<string[]> {
+  return mapLimit(entries, Math.max(1, concurrency), (entry) => formatEntry(entry, input));
 }
 
 async function formatEntry(entry: Entry, input: Input): Promise<string> {

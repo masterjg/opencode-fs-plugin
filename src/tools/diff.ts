@@ -8,6 +8,7 @@ import * as path from "node:path";
 import { createTwoFilesPatch } from "diff";
 import { Type, type Static } from "@sinclair/typebox";
 import { fromErrno } from "../core/errors.js";
+import { mapLimit } from "../core/parallel.js";
 import { textResult, type ToolSpec } from "../core/types.js";
 
 const Schema = Type.Object(
@@ -50,7 +51,7 @@ export const diffTool: ToolSpec<Input> = {
       if (input.recursive !== true) {
         return textResult(`Common subdirectories: ${input.left} and ${input.right}\n`, {}, 1);
       }
-      const lines = await diffDirs(left.full, right.full, input);
+      const lines = await diffDirs(left.full, right.full, input, ctx.concurrency);
       return textResult(lines.join(""), { differences: lines.length > 0 }, lines.length > 0 ? 1 : 0);
     }
 
@@ -87,7 +88,49 @@ export const diffTool: ToolSpec<Input> = {
   },
 };
 
-async function diffDirs(left: string, right: string, input: Input): Promise<string[]> {
+type DiffItem =
+  | { readonly kind: "text"; readonly text: string }
+  | { readonly kind: "file"; readonly left: string; readonly right: string };
+
+async function diffDirs(
+  left: string,
+  right: string,
+  input: Input,
+  concurrency: number,
+): Promise<string[]> {
+  const items: DiffItem[] = [];
+  await planDir(left, right, input, items);
+
+  const files = items.filter((item): item is Extract<DiffItem, { kind: "file" }> => item.kind === "file");
+  const patches = await mapLimit(files, Math.max(1, concurrency), async (item) => {
+    const [leftData, rightData] = await Promise.all([fs.readFile(item.left), fs.readFile(item.right)]);
+    /* v8 ignore next */
+    if (leftData.equals(rightData)) return undefined;
+    return createTwoFilesPatch(
+      item.left,
+      item.right,
+      leftData.toString("utf8"),
+      rightData.toString("utf8"),
+      "",
+      "",
+      { context: input.unified ?? 3 },
+    );
+  });
+
+  const output: string[] = [];
+  let index = 0;
+  for (const item of items) {
+    if (item.kind === "text") {
+      output.push(item.text);
+      continue;
+    }
+    const patch = patches[index++];
+    if (patch !== undefined) output.push(patch);
+  }
+  return output;
+}
+
+async function planDir(left: string, right: string, input: Input, items: DiffItem[]): Promise<void> {
   const names = new Set<string>();
   for (const dir of [left, right]) {
     for (const name of await fs.readdir(dir)) {
@@ -95,7 +138,6 @@ async function diffDirs(left: string, right: string, input: Input): Promise<stri
       names.add(name);
     }
   }
-  const output: string[] = [];
   for (const name of [...names].sort()) {
     const leftPath = path.join(left, name);
     const rightPath = path.join(right, name);
@@ -103,27 +145,21 @@ async function diffDirs(left: string, right: string, input: Input): Promise<stri
     const rightExists = await exists(rightPath);
     if (!leftExists || !rightExists) {
       /* v8 ignore next */
-      output.push(`Only in ${leftExists ? left : right}: ${name}\n`);
+      items.push({ kind: "text", text: `Only in ${leftExists ? left : right}: ${name}\n` });
       continue;
     }
     const leftStats = await fs.lstat(leftPath);
     const rightStats = await fs.lstat(rightPath);
     if (leftStats.isDirectory() && rightStats.isDirectory()) {
-      output.push(...(await diffDirs(leftPath, rightPath, input)));
+      await planDir(leftPath, rightPath, input, items);
     /* v8 ignore next 4 */
     } else if (leftStats.isDirectory() !== rightStats.isDirectory()) {
       /* v8 ignore next */
-      output.push(`File ${leftPath} is a directory while file ${rightPath} is not\n`);
+      items.push({ kind: "text", text: `File ${leftPath} is a directory while file ${rightPath} is not\n` });
     } else {
-      const leftData = await fs.readFile(leftPath);
-      const rightData = await fs.readFile(rightPath);
-      /* v8 ignore next */
-      if (!leftData.equals(rightData)) {
-        output.push(createTwoFilesPatch(leftPath, rightPath, leftData.toString("utf8"), rightData.toString("utf8"), "", "", { context: input.unified ?? 3 }));
-      }
+      items.push({ kind: "file", left: leftPath, right: rightPath });
     }
   }
-  return output;
 }
 
 async function exists(target: string): Promise<boolean> {

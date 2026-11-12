@@ -23,6 +23,7 @@ import {
   preserve,
   typeName,
   walk,
+  walkAll,
 } from "../../src/core/fsutil.js";
 import { makeRoot } from "../helpers.js";
 
@@ -75,6 +76,53 @@ describe("fsutil walk and copy", () => {
     const controller = new AbortController();
     controller.abort();
     await expect(collectWalk(path.join(root, "dir"), controller.signal)).rejects.toMatchObject({ code: "interrupted" });
+  });
+
+  it("collects trees concurrently in depth-first order", async () => {
+    const root = await setup();
+    await fs.mkdir(path.join(root, "dir/sub/deep"), { recursive: true });
+    await fs.writeFile(path.join(root, "dir/a"), "a");
+    await fs.writeFile(path.join(root, "dir/.hidden"), "h");
+    await fs.writeFile(path.join(root, "dir/sub/deep/file"), "d");
+
+    const sequential: string[] = [];
+    for await (const entry of walk(path.join(root, "dir"), { recursive: true, includeHidden: true })) {
+      sequential.push(entry.path);
+    }
+    const concurrent = await walkAll(path.join(root, "dir"), {
+      recursive: true,
+      includeHidden: true,
+      concurrency: 4,
+    });
+    expect(concurrent.map((entry) => entry.path)).toEqual(sequential);
+
+    const shallow = await walkAll(path.join(root, "dir"), { recursive: true, maxDepth: 1, concurrency: 2 });
+    expect(shallow.map((entry) => entry.name)).not.toContain("deep");
+    const flat = await walkAll(path.join(root, "dir"), { recursive: false, concurrency: 2 });
+    expect(flat.map((entry) => entry.name)).toContain("a");
+    expect(flat.map((entry) => entry.name)).toContain("sub");
+    expect(flat.map((entry) => entry.name)).not.toContain("deep");
+  });
+
+  it("skips unreadable symlink targets while walking concurrently", async () => {
+    const root = await setup();
+    await fs.mkdir(path.join(root, "dir"));
+    await fs.symlink("missing", path.join(root, "dir/dangling"));
+    const followed = await walkAll(path.join(root, "dir"), {
+      recursive: true,
+      followSymlinks: true,
+      concurrency: 2,
+    });
+    expect(followed.map((entry) => entry.name)).not.toContain("dangling");
+    const plain = await walkAll(path.join(root, "dir"), { recursive: true, concurrency: 2 });
+    expect(plain.map((entry) => entry.name)).toContain("dangling");
+
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      walkAll(path.join(root, "dir"), { recursive: true, signal: controller.signal }),
+    ).rejects.toMatchObject({ code: "interrupted" });
+    await expect(walkAll(path.join(root, "missing"))).rejects.toBeInstanceOf(FsError);
   });
 
   it("copies files, directories, symlinks and skips newer targets", async () => {
