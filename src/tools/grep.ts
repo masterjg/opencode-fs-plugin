@@ -9,7 +9,7 @@ import { Type, type Static } from "@sinclair/typebox";
 import { FsError, fromErrno } from "../core/errors.js";
 import { walkAll } from "../core/fsutil.js";
 import { mapLimit } from "../core/parallel.js";
-import { collect, inputStream, lines } from "../core/stream.js";
+import { collect, inputStream } from "../core/stream.js";
 import { textResult, type ToolSpec } from "../core/types.js";
 
 const Schema = Type.Object(

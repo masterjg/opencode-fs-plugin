@@ -67,7 +67,7 @@ export const gzipTool: ToolSpec<GzipInput> = {
         ...(input.stdout === true ? [] : [{ target: destination, boundary: destination.full }]),
       ]),
     );
-    const results = await mapLimit(targets, ctx.concurrency, async ({ requested, source, destination }) => {
+    const results = await mapLimit(targets, ctx.concurrency, async ({ source, destination }) => {
       /* v8 ignore next */
       const data = await fs.readFile(source.full).catch((error) => {
         throw fromErrno(error);
@@ -123,7 +123,7 @@ export const gunzipTool: ToolSpec<GunzipInput> = {
         ...(input.stdout === true ? [] : [{ target: destination, boundary: destination.full }]),
       ]),
     );
-    const results = await mapLimit(targets, ctx.concurrency, async ({ requested, source, destination }) => {
+    const results = await mapLimit(targets, ctx.concurrency, async ({ source, destination }) => {
       /* v8 ignore next */
       const data = await fs.readFile(source.full).catch((error) => {
         throw fromErrno(error);

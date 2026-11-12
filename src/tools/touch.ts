@@ -5,7 +5,7 @@
 
 import * as fs from "node:fs/promises";
 import { Type, type Static } from "@sinclair/typebox";
-import { FsError, fromErrno, isMissing } from "../core/errors.js";
+import { FsError, fromErrno } from "../core/errors.js";
 import { textResult, type ToolSpec } from "../core/types.js";
 
 const Schema = Type.Object(

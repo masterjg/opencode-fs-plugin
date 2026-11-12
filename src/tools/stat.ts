@@ -51,7 +51,7 @@ export const statTool: ToolSpec<Input> = {
         input.format === undefined
           ? input.terse === true
             ? await terseFormat(requested, stats)
-            : await defaultFormat(requested, target.full, stats, link)
+            : await defaultFormat(requested, stats, link)
           : await customFormat(input.format, requested, target.full, stats, link),
       );
     }
@@ -61,7 +61,6 @@ export const statTool: ToolSpec<Input> = {
 
 async function defaultFormat(
   requested: string,
-  full: string,
   stats: Awaited<ReturnType<typeof fs.lstat>>,
   link: string | undefined,
 ): Promise<string> {
