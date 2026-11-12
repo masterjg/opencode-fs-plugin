@@ -29,6 +29,8 @@ const Schema = Type.Object(
     stripComponents: Type.Optional(Type.Integer({ minimum: 0, description: "Strip leading path components (`--strip-components`)." })),
     exclude: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { description: "Exclude globs." })),
     verbose: Type.Optional(Type.Boolean({ description: "List processed members (`-v`)." })),
+    input: Type.Optional(Type.String({ description: "Text data to archive when paths are omitted." })),
+    member: Type.Optional(Type.String({ description: "Archive member name for stream input." })),
   },
   { additionalProperties: false },
 );
@@ -41,16 +43,53 @@ export const tarTool: ToolSpec<Input> = {
     "Create, list or extract tar archives with common `tar` semantics (`-c`, `-x`, `-t`, `-f`, " +
     "`-z`, `-C`, `--strip-components`, `--exclude`). Extraction rejects path escapes.",
   schema: Schema,
-  pipeable: false,
+  pipeable: "sink",
   mutates: true,
-  async run(ctx, input) {
+  async run(ctx, input, io) {
     const archive = await ctx.sandbox.resolveForCreate(input.archive);
     const useGzip = input.gzip ?? /\.(?:tgz|tar\.gz)$/i.test(input.archive);
     const excludes = input.exclude === undefined ? undefined : picomatch(input.exclude, { dot: true, basename: true });
     const names: string[] = [];
 
     if (input.mode === "create") {
-      if (input.paths === undefined || input.paths.length === 0) throw new FsError("create requires paths.", "invalid");
+      if (input.paths === undefined || input.paths.length === 0) {
+        if (input.input === undefined && io.stdin === undefined) {
+          throw new FsError("create requires paths, input, or stdin.", "invalid");
+        }
+        const data = io.stdin === undefined
+          ? Buffer.from(input.input as string, "utf8")
+          : await collect(io.stdin);
+        const name = safeMember(input.member ?? "stdin", 0);
+        if (name === undefined) throw new FsError("member must not be empty.", "invalid");
+        await ctx.permission.assert([{ target: archive, boundary: archive.full }]);
+        const pack = tar.pack();
+        const header: tar.Header = {
+          name: name.split(path.sep).join("/"),
+          size: data.length,
+          mode: 0o644,
+          mtime: new Date(),
+          type: "file",
+          linkname: "",
+          uid: 0,
+          gid: 0,
+          uname: "",
+          gname: "",
+          devmajor: 0,
+          devminor: 0,
+        };
+        pack.entry(header, data);
+        pack.finalize();
+        let buffer = await collect(pack as AsyncIterable<Buffer>);
+        if (useGzip) buffer = await gzipAsync(buffer);
+        /* v8 ignore next 3 */
+        await fs.writeFile(archive.full, buffer).catch((error) => {
+          throw fromErrno(error);
+        });
+        return textResult(input.verbose === true ? `${header.name}\n` : "", {
+          archive: input.archive,
+          members: [header.name],
+        });
+      }
       const members: Array<{ name: string; full: string; stats: Awaited<ReturnType<typeof fs.lstat>> }> = [];
       for (const requested of input.paths) {
         const target = await ctx.sandbox.resolveExisting(requested, { allowRoot: true });

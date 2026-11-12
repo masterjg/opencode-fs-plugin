@@ -17,10 +17,12 @@ import { headTool } from "./head.js";
 import { sedTool } from "./sed.js";
 import { sortTool } from "./sort.js";
 import { tailTool } from "./tail.js";
+import { tarTool } from "./tar.js";
 import { teeTool } from "./tee.js";
 import { trTool } from "./tr.js";
 import { uniqTool } from "./uniq.js";
 import { wcTool } from "./wc.js";
+import { zipTool } from "./zip.js";
 
 const Stage = Type.Object(
   {
@@ -44,9 +46,10 @@ type Input = Static<typeof Schema>;
 type AnyTool = ToolSpec<any>;
 
 const REGISTRY: ReadonlyMap<string, AnyTool> = new Map(
-  [catTool, headTool, tailTool, grepTool, sedTool, sortTool, uniqTool, cutTool, trTool, wcTool, teeTool, hashTool, gzipTool, gunzipTool].map(
-    (tool) => [tool.name, tool],
-  ),
+  [
+    catTool, headTool, tailTool, grepTool, sedTool, sortTool, uniqTool, cutTool,
+    trTool, wcTool, teeTool, hashTool, gzipTool, gunzipTool, tarTool, zipTool,
+  ].map((tool) => [tool.name, tool]),
 );
 
 export const pipeTool: ToolSpec<Input> = {
