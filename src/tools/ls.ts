@@ -134,7 +134,11 @@ async function readEntries(full: string, input: Input): Promise<Entry[]> {
   }
   if (input.all === true) names = [".", "..", ...names];
   else if (input.almostAll !== true) names = names.filter((name) => !name.startsWith("."));
-  names = names.filter((name) => !matchesAny(name, input.hide) && !matchesAny(name, input.ignore));
+  const hidden = input.hide?.map((pattern) => picomatch(pattern, { dot: true }));
+  const ignored = input.ignore?.map((pattern) => picomatch(pattern, { dot: true }));
+  names = names.filter((name) =>
+    hidden?.some((match) => match(name)) !== true &&
+    ignored?.some((match) => match(name)) !== true);
   const entries: Entry[] = [];
   for (const name of names) {
     const target = path.join(full, name);
@@ -174,11 +178,6 @@ function sortEntries(entries: Entry[], input: Input): Entry[] {
     entries.sort((a, b) => Number(b.stats.isDirectory()) - Number(a.stats.isDirectory()));
   }
   return entries;
-}
-
-function matchesAny(name: string, patterns: readonly string[] | undefined): boolean {
-  if (patterns === undefined || patterns.length === 0) return false;
-  return patterns.some((pattern) => picomatch(pattern, { dot: true })(name));
 }
 
 function versionCompare(left: string, right: string): number {
