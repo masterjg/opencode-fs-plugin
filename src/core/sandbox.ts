@@ -84,12 +84,21 @@ export class Sandbox {
     return (rel === "" ? "." : rel).split(path.sep).join("/");
   }
 
-  /** Resolve a path that is about to be created. */
+  /**
+   * Resolve a path that is about to be created. Only the parent chain is
+   * followed; an existing final symlink is left as the link itself so callers
+   * can replace it (for example `ln -f`) instead of silently touching its
+   * target.
+   */
   async resolveForCreate(target: string): Promise<ResolvedTarget> {
     this.assertTarget(target);
     const abs = path.resolve(this.root, target);
-    const { real, tail } = await this.deepestExistingAncestor(abs);
-    const full = tail.length > 0 ? path.join(real, ...tail) : real;
+    if (abs === this.root) {
+      return { full: this.root, outside: false, requested: target, realAncestor: this.root };
+    }
+    const parentAbs = path.dirname(abs);
+    const { real, tail } = await this.deepestExistingAncestor(parentAbs);
+    const full = path.join(real, ...tail, path.basename(abs));
     return {
       full,
       outside: !this.isWithin(real),

@@ -18,6 +18,7 @@ export interface RunSpecOptions {
   signal?: AbortSignal;
   tmpdir?: string;
   maxOutputBytes?: number;
+  stdin?: AsyncIterable<Buffer>;
 }
 
 export interface RunSpecResult<I> {
@@ -58,13 +59,23 @@ export async function runSpec<I>(
     {
       sandbox,
       permission: gate,
+      permissionFor: (action) =>
+        new PermissionGate(
+          { sessionID: "ses_test", agent: "worker", messageID: "msg_test", id: "call_test" },
+          action,
+          (full) => sandbox.resource(full),
+          async (request) => {
+            requests.push(request);
+            if (options.deny === true) throw new Error("permission denied by test");
+          },
+        ),
       concurrency: options.concurrency ?? 4,
       signal: options.signal ?? new AbortController().signal,
       tmpdir: options.tmpdir ?? os.tmpdir(),
       maxOutputBytes: options.maxOutputBytes ?? 1024 * 1024,
     },
     input,
-    {},
+    options.stdin === undefined ? {} : { stdin: options.stdin },
   );
   return { input, result, requests };
 }
@@ -144,6 +155,10 @@ export function makePluginHarness(root: string, options: Record<string, unknown>
     },
   };
   return { context, editor, permissionRequests };
+}
+
+export async function* bufferStream(data: string | Buffer): AsyncGenerator<Buffer> {
+  yield typeof data === "string" ? Buffer.from(data, "utf8") : data;
 }
 
 export function makeToolContext(): FakeToolContext {

@@ -34,6 +34,9 @@ describe("format helpers", () => {
     expect(text.content).toContain("[stderr]\nwarn");
     expect(text.metadata).toMatchObject({ ok: true, exitCode: 0, stderr: "warn" });
 
+    const textWithoutNewline = renderResult({ stdout: Buffer.from("hello"), stderr: "warn" }, 100);
+    expect(textWithoutNewline.content).toContain("hello\n[stderr]\nwarn");
+
     const binary = renderResult({ stdout: Buffer.from([1, 0, 2]) }, 100);
     expect(binary.metadata.encoding).toBe("base64");
 
@@ -86,6 +89,7 @@ describe("error helpers", () => {
     expect(errorMessage("x")).toBe("x");
     expect(isMissing(errno)).toBe(true);
     expect(isPermission(Object.assign(new Error("no"), { code: "EACCES" }))).toBe(true);
+    expect(isPermission(Object.assign(new Error("no"), { code: "EPERM" }))).toBe(true);
   });
 
   it("maps errno failures", () => {
@@ -93,6 +97,7 @@ describe("error helpers", () => {
       ["ENOENT", "not-found"],
       ["ENOTDIR", "not-found"],
       ["EACCES", "access"],
+      ["EPERM", "access"],
       ["EPERM", "access"],
       ["EEXIST", "exists"],
       ["ENOTEMPTY", "not-empty"],
@@ -116,5 +121,6 @@ describe("schema parsing", () => {
   it("rejects invalid input with a useful label", () => {
     expect(() => parseSchema(schema, { name: 1 }, "tool input")).toThrow(/Invalid tool input/);
     expect(() => parseSchema(schema, {}, "tool input")).toThrow(FsError);
+    expect(() => parseSchema(schema, { name: "x", extra: true }, "tool input")).toThrow(/Unexpected property/);
   });
 });

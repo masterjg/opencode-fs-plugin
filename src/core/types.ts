@@ -24,6 +24,7 @@ export interface ToolResult {
 export interface RunContext {
   readonly sandbox: Sandbox;
   readonly permission: PermissionGate;
+  readonly permissionFor: (action: string) => PermissionGate;
   readonly concurrency: number;
   readonly signal: AbortSignal;
   readonly tmpdir: string;
@@ -47,6 +48,4 @@ export function textResult(
   return { stdout: Buffer.from(text, "utf8"), exitCode, metadata };
 }
 
-export function emptyResult(metadata: Record<string, unknown> = {}): ToolResult {
-  return { stdout: Buffer.alloc(0), exitCode: 0, metadata };
-}
+

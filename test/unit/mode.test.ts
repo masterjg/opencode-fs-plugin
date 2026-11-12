@@ -23,6 +23,10 @@ describe("mode parsing", () => {
     expect(parseMode("a+X", 0o644, true)).toBe(0o755);
     expect(parseMode("a+X", 0o644, false)).toBe(0o644);
     expect(parseMode("u+s,g+s,+t", 0o755, false)).toBe(0o7755);
+    expect(parseMode("o+s", 0o755, false)).toBe(0o755);
+    expect(parseMode("a+t", 0o755, false)).toBe(0o1755);
+    expect(parseMode("o+t", 0o755, false)).toBe(0o1755);
+    expect(parseMode("+s", 0o755, false)).toBe(0o6755);
   });
 
   it("applies the umask when who is omitted", () => {

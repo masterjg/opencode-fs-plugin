@@ -82,7 +82,7 @@ export function parseSize(value: string): number {
   if (!match) throw new FsError(`Invalid size: ${value}`, "invalid");
   const sign = match[1] === "-" ? -1 : 1;
   const number = Number(match[2]);
-  const suffix = (match[3] ?? "").toUpperCase();
+  const suffix = (match[3] as string).toUpperCase();
   const exponent = suffix === "" ? 0 : "KMGTPE".indexOf(suffix) + 1;
   const multiplier = exponent === 0 ? 1 : 1024 ** exponent;
   return sign * Math.round(number * multiplier);

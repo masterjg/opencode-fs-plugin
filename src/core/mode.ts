@@ -17,8 +17,6 @@ const PERM = {
   w: 0o222,
   x: 0o111,
   X: 0o111,
-  s: 0o6000,
-  t: 0o1000,
 } as const;
 
 export function parseMode(
@@ -31,45 +29,34 @@ export function parseMode(
     throw new FsError("mode is empty.", "invalid");
   }
   if (/^[0-7]{3,4}$/.test(mode)) {
-    const parsed = Number.parseInt(mode, 8);
-    if (parsed > 0o7777) throw new FsError(`Invalid mode: ${mode}`, "invalid");
-    return parsed;
+    return Number.parseInt(mode, 8);
   }
 
   let result = base & 0o7777;
   for (const clause of mode.split(",")) {
-    if (clause.length === 0) throw new FsError(`Invalid mode: ${mode}`, "invalid");
-    let who = "";
-    let index = 0;
-    while (index < clause.length && "ugoa".includes(clause[index] ?? "")) {
-      who += clause[index];
-      index++;
-    }
-    const op = clause[index];
-    if (op !== "+" && op !== "-" && op !== "=") {
-      throw new FsError(`Invalid mode: ${mode}`, "invalid");
-    }
-    index++;
+    const match = /^([ugoa]*)([+\-=])(.*)$/.exec(clause);
+    if (match === null) throw new FsError(`Invalid mode: ${mode}`, "invalid");
+    const who = match[1] as string;
+    const op = match[2] as string;
+    const permissions = match[3] as string;
+    if (permissions.length === 0 && op !== "=") continue;
     const whoMask =
       who.length > 0
         ? [...who].reduce((mask, ch) => mask | WHO[ch as keyof typeof WHO], 0)
         : ~umask & 0o777;
     let bits = 0;
-    while (index < clause.length) {
-      const ch = clause[index] as keyof typeof PERM;
-      if (!(ch in PERM)) throw new FsError(`Invalid mode: ${mode}`, "invalid");
+    for (const ch of permissions) {
       if (ch === "X") {
         if (isDirectory || (result & 0o111) !== 0) bits |= PERM.X & whoMask;
       } else if (ch === "s") {
-        if (who.length === 0) bits |= 0o6000;
-        else if (who.includes("u")) bits |= 0o4000;
-        else if (who.includes("g")) bits |= 0o2000;
+        bits |= ((who === "" || who.includes("u")) ? 0o4000 : 0) | ((who === "" || who.includes("g")) ? 0o2000 : 0);
       } else if (ch === "t") {
-        if (who.length === 0 || who.includes("o") || who.includes("a")) bits |= 0o1000;
+        bits |= who === "" || who.includes("o") || who.includes("a") ? 0o1000 : 0;
+      } else if (ch in PERM) {
+        bits |= PERM[ch as keyof typeof PERM] & whoMask;
       } else {
-        bits |= PERM[ch] & whoMask;
+        throw new FsError(`Invalid mode: ${mode}`, "invalid");
       }
-      index++;
     }
     if (op === "+") result |= bits;
     if (op === "-") result &= ~bits;
@@ -79,8 +66,7 @@ export function parseMode(
 }
 
 export function formatMode(mode: number): string {
-  const type = fileType(mode);
-  return `${type}${triplet(mode, 6, 0o4000, "s")}${triplet(mode, 3, 0o2000, "s")}${triplet(
+  return `${fileType(mode)}${triplet(mode, 6, 0o4000, "s")}${triplet(mode, 3, 0o2000, "s")}${triplet(
     mode,
     0,
     0o1000,

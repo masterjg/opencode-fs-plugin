@@ -12,13 +12,81 @@ import { clampConcurrency } from "./core/parallel.js";
 import { Sandbox } from "./core/sandbox.js";
 import { parseSchema } from "./core/schema.js";
 import type { ToolSpec } from "./core/types.js";
+import { catTool } from "./tools/cat.js";
+import { chmodTool } from "./tools/chmod.js";
+import { cpTool } from "./tools/cp.js";
+import { cutTool } from "./tools/cut.js";
+import { dfTool } from "./tools/df.js";
+import { diffTool } from "./tools/diff.js";
+import { duTool } from "./tools/du.js";
+import { findTool } from "./tools/find.js";
+import { grepTool } from "./tools/grep.js";
+import { gunzipTool, gzipTool } from "./tools/gzip.js";
+import { hashTool } from "./tools/hash.js";
+import { headTool } from "./tools/head.js";
+import { lnTool } from "./tools/ln.js";
+import { lsTool } from "./tools/ls.js";
 import { mkdirTool } from "./tools/mkdir.js";
-import { rmdirTool } from "./tools/rmdir.js";
+import { mktempTool } from "./tools/mktemp.js";
+import { mvTool } from "./tools/mv.js";
+import { pipeTool } from "./tools/pipe.js";
+import { readlinkTool } from "./tools/readlink.js";
 import { rmTool } from "./tools/rm.js";
+import { rmdirTool } from "./tools/rmdir.js";
+import { sedTool } from "./tools/sed.js";
+import { sortTool } from "./tools/sort.js";
+import { statTool } from "./tools/stat.js";
+import { tailTool } from "./tools/tail.js";
+import { tarTool } from "./tools/tar.js";
+import { teeTool } from "./tools/tee.js";
+import { touchTool } from "./tools/touch.js";
+import { trTool } from "./tools/tr.js";
+import { trashTool } from "./tools/trash.js";
+import { truncateTool } from "./tools/truncate.js";
+import { uniqTool } from "./tools/uniq.js";
+import { wcTool } from "./tools/wc.js";
+import { unzipTool, zipTool } from "./tools/zip.js";
 
 type AnyTool = ToolSpec<any>;
 
-const TOOLS: readonly AnyTool[] = [mkdirTool, rmdirTool, rmTool];
+const TOOLS: readonly AnyTool[] = [
+  mkdirTool,
+  rmdirTool,
+  rmTool,
+  cpTool,
+  mvTool,
+  lsTool,
+  statTool,
+  touchTool,
+  truncateTool,
+  lnTool,
+  readlinkTool,
+  chmodTool,
+  hashTool,
+  duTool,
+  dfTool,
+  findTool,
+  mktempTool,
+  trashTool,
+  gzipTool,
+  gunzipTool,
+  tarTool,
+  zipTool,
+  unzipTool,
+  diffTool,
+  catTool,
+  headTool,
+  tailTool,
+  teeTool,
+  wcTool,
+  sortTool,
+  uniqTool,
+  cutTool,
+  trTool,
+  sedTool,
+  grepTool,
+  pipeTool,
+];
 
 const DEFAULT_MAX_OUTPUT = 1024 * 1024;
 
@@ -63,21 +131,23 @@ export default Plugin.define({
                   request as unknown as Parameters<typeof ctx.permission.assert>[0],
                 );
               };
-              const gate = new PermissionGate(
-                {
-                  sessionID: context.sessionID,
-                  agent: context.agent,
-                  messageID: context.messageID,
-                  id: context.id,
-                },
-                `fs_${spec.name}`,
-                (full) => sandbox.resource(full),
-                assertPermission,
-              );
+              const permissionFor = (action: string) =>
+                new PermissionGate(
+                  {
+                    sessionID: context.sessionID,
+                    agent: context.agent,
+                    messageID: context.messageID,
+                    id: context.id,
+                  },
+                  action,
+                  (full) => sandbox.resource(full),
+                  assertPermission,
+                );
               const result = await spec.run(
                 {
                   sandbox,
-                  permission: gate,
+                  permission: permissionFor(`fs_${spec.name}`),
+                  permissionFor,
                   concurrency,
                   signal: context.signal,
                   tmpdir: os.tmpdir(),

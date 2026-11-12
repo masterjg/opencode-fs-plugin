@@ -111,4 +111,23 @@ describe("PermissionGate", () => {
     await gate.assert([]);
     expect(requests[0]).toMatchObject({ action: "fs_pipe", resources: ["*"] });
   });
+
+  it("asserts trusted tool paths without an external gate", async () => {
+    const root = await makeRoot();
+    roots.push(root);
+    const sb = await Sandbox.create(root);
+    const requests: unknown[] = [];
+    const gate = new PermissionGate(
+      { sessionID: "s", agent: "a", messageID: "m", id: "i" },
+      "fs_mktemp",
+      (full) => sb.resource(full),
+      async (request) => {
+        requests.push(request);
+      },
+    );
+    await gate.assertTrusted(["/tmp/opencode/*"]);
+    expect(requests[0]).toMatchObject({ action: "fs_mktemp", resources: ["/tmp/opencode/*"] });
+    await gate.assertTrusted([]);
+    expect(requests[1]).toMatchObject({ resources: ["*"] });
+  });
 });

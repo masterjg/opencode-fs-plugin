@@ -9,9 +9,8 @@ import { FsError } from "./errors.js";
 
 export function parseSchema<T>(schema: TSchema, input: unknown, label = "input"): T {
   if (!Value.Check(schema, input)) {
-    const first = Value.Errors(schema, input).First();
-    const detail = first ? `${first.path || "/"}: ${first.message}` : "invalid value";
-    throw new FsError(`Invalid ${label}: ${detail}`, "invalid");
+    const first = Value.Errors(schema, input).First() as { path: string; message: string };
+    throw new FsError(`Invalid ${label}: ${first.path}: ${first.message}`, "invalid");
   }
   return input as T;
 }

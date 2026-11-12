@@ -27,7 +27,9 @@ describe("plugin registration", () => {
   it("registers the fs namespace and native tools", async () => {
     const { editor } = await load();
     expect(editor.namespaceValue).toMatchObject({ name: "fs" });
-    expect(editor.tools.map((tool) => tool.name)).toEqual(["mkdir", "rmdir", "rm"]);
+    expect(editor.tools.map((tool) => tool.name)).toEqual(
+      expect.arrayContaining(["mkdir", "rmdir", "rm", "cp", "mv", "pipe"]),
+    );
     expect(editor.tools[0]?.options).toMatchObject({
       namespace: "fs",
       permission: "fs_mkdir",

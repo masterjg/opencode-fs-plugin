@@ -46,6 +46,11 @@ export class PermissionGate {
     private readonly assertPermission: PermissionAssert,
   ) {}
 
+  /** Assert an action on trusted tool-owned paths without an external gate. */
+  async assertTrusted(resources: readonly string[]): Promise<void> {
+    await this.assertAction(resources.length === 0 ? ["*"] : [...resources], ["*"]);
+  }
+
   async assert(entries: readonly PermissionEntry[]): Promise<void> {
     if (entries.length === 0) {
       await this.assertAction(["*"], ["*"]);
