@@ -14,6 +14,17 @@ the `fs` namespace (`tools.fs.cp`, direct `fs_cp`).
 - Unsupported options fail with `unsupported` rather than being ignored.
 - No tool invokes a shell or `child_process`.
 
+## Background jobs
+
+- Every tool accepts `background: true`; it returns a job id and an atomic
+  status-file path instead of waiting.
+- `fs.job` exposes `status`, `wait`, `cancel`, and `list`.
+- Jobs are process-local and are lost on server restart. Status files live under
+  `/tmp/opencode/fs-jobs/<server-pid>/`; finished jobs are cleaned after one hour.
+- At most eight jobs run concurrently. Excess starts fail with `busy`.
+- Results stay in memory and are returned by `fs.job`; status files contain only
+  state and metadata. Permission checks still apply to background work.
+
 ## Deliberate gaps
 
 These are not implemented:

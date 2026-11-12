@@ -121,7 +121,11 @@ export interface FakeToolContext {
 export interface FakePluginContext {
   options: Record<string, unknown>;
   location: { project: { canonical: string }; directory: string };
-  tool: { transform: (callback: (editor: FakeEditor) => void) => Promise<void> };
+  tool: {
+    transform: (
+      callback: (editor: FakeEditor) => void,
+    ) => Promise<{ dispose: () => Promise<void> }>;
+  };
   permission: { assert: (request: PermissionAssertInput) => Promise<void> };
 }
 
@@ -146,6 +150,7 @@ export function makePluginHarness(root: string, options: Record<string, unknown>
     tool: {
       transform: async (callback) => {
         callback(editor);
+        return { dispose: async () => {} };
       },
     },
     permission: {

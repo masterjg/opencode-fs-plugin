@@ -18,6 +18,7 @@ export type FsErrorCode =
   | "archive"
   | "checksum"
   | "interrupted"
+  | "busy"
   | "io";
 
 /**

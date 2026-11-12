@@ -66,6 +66,61 @@ await tools.fs.pipe({
 
 There is no shell, redirection operator, nested pipe, or `find -exec`.
 
+## Background jobs
+
+Every `fs.*` tool accepts `background: true`. The call returns immediately with
+a job id and a status-file path:
+
+```js
+const started = JSON.parse(
+  await tools.fs.cp({
+    sources: ["large-tree"],
+    destination: "backup",
+    recursive: true,
+    background: true,
+  }),
+)
+```
+
+Wait for it with `fs.job`, or let the agent continue and check later:
+
+```js
+const result = await tools.fs.job({
+  id: started.jobId,
+  wait: true,
+  timeoutMs: 600000,
+})
+```
+
+`fs.job` also supports `status`, `cancel`, and `list`:
+
+```js
+await tools.fs.job({ id: started.jobId })              // current status
+await tools.fs.job({ id: started.jobId, cancel: true }) // abort
+await tools.fs.job({ list: true })                     // newest first
+```
+
+The status file lets the `wait` plugin observe a job without coupling the two
+plugins:
+
+```js
+await tools.wait.for({
+  condition: {
+    type: "file_contains",
+    path: started.statusPath,
+    pattern: '"state":"completed"',
+  },
+  timeoutMs: 600000,
+})
+```
+
+Jobs are process-local: they are lost on an OpenCode server restart, and their
+status files may remain under `/tmp/opencode/fs-jobs/<server-pid>/`. The manager
+allows 8 concurrent jobs and cleans up finished jobs after one hour. Results
+stay in memory and are returned by `fs.job`; the status file contains only the
+job state and metadata. Background permission prompts can appear after the
+starting call returns, and a denied permission fails the job.
+
 ## Installing from npm
 
 Add the registry package directly to the plugin list:

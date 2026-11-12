@@ -1,6 +1,6 @@
 ---
 name: Filesystem
-description: Use when a task needs Linux-style filesystem or text operations beyond OpenCode's built-ins - copy, move, metadata, touch, truncate, symlinks, chmod, hashes, disk usage, find, archives, diff, trash, or composing filters through a pipe. Covers the fs namespace, argument shapes, native options, permissions, limits, and verification.
+description: Use when a task needs Linux-style filesystem or text operations beyond OpenCode's built-ins - copy, move, metadata, touch, truncate, symlinks, chmod, hashes, disk usage, find, archives, diff, trash, background jobs, or composing filters through a pipe. Covers the fs namespace, argument shapes, native options, permissions, limits, and verification.
 ---
 
 # Filesystem
@@ -45,6 +45,7 @@ operations the built-ins do not cover, and for composable text/archive work.
 | Temp and trash | `fs.mktemp`, `fs.trash` |
 | Text filters | `fs.cat`, `fs.head`, `fs.tail`, `fs.grep`, `fs.sed`, `fs.sort`, `fs.uniq`, `fs.cut`, `fs.tr`, `fs.wc`, `fs.tee` |
 | Compose filters | `fs.pipe` |
+| Background jobs | `background: true`, then `fs.job` |
 
 ## Argument shapes
 
@@ -81,6 +82,43 @@ await tools.fs.pipe({
 native names (`cat`, `grep`, `sort`), not `fs.cat`. There is no shell,
 redirection operator, nested pipe, or `find -exec`. A filter stage needs
 `input` or a preceding source stage.
+
+## Background jobs
+
+Every tool accepts `background: true`. It returns immediately with a job id and
+an atomic status-file path; use it for long copies, searches, archives, or
+hashes, then keep working and collect the result later.
+
+```js
+const job = JSON.parse(
+  await tools.fs.cp({
+    sources: ["large-tree"],
+    destination: "backup",
+    recursive: true,
+    background: true,
+  }),
+)
+// { jobId, tool, state: "running", statusPath }
+
+await tools.fs.job({ id: job.jobId, wait: true, timeoutMs: 600000 }) // blocks
+await tools.fs.job({ id: job.jobId })               // current status
+await tools.fs.job({ id: job.jobId, cancel: true }) // abort
+await tools.fs.job({ list: true })                  // newest first
+```
+
+`wait` returns the original tool result once the job completes; on timeout it
+returns the status with `timedOut: true`. Jobs are process-local and lost on
+server restart. Status files live under `/tmp/opencode/fs-jobs/<server-pid>/`;
+eight jobs may run at once and finished jobs are cleaned after one hour.
+
+To wait without blocking the session, combine the status file with `wait_for`:
+
+```js
+await tools.wait.for({
+  condition: { type: "file_contains", path: job.statusPath, pattern: '"state":"completed"' },
+  timeoutMs: 600000,
+})
+```
 
 ## Recipes
 

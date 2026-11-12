@@ -4,9 +4,11 @@
  */
 
 import * as os from "node:os";
+import { Type, type TSchema } from "@sinclair/typebox";
 import { Plugin } from "@opencode/plugin";
 import { FsError } from "./core/errors.js";
 import { renderError, renderResult } from "./core/format.js";
+import { JobManager } from "./core/jobs.js";
 import { PermissionGate, type PermissionAssert } from "./core/permissions.js";
 import { clampConcurrency } from "./core/parallel.js";
 import { Sandbox } from "./core/sandbox.js";
@@ -90,6 +92,40 @@ const TOOLS: readonly AnyTool[] = [
 
 const DEFAULT_MAX_OUTPUT = 1024 * 1024;
 
+function withBackground(schema: TSchema): TSchema {
+  return Type.Composite(
+    [
+      schema,
+      Type.Object({
+        background: Type.Optional(
+          Type.Boolean({
+            description:
+              "Run this operation as a background job and return a job id immediately. Use fs.job to wait, inspect, cancel, or list jobs.",
+          }),
+        ),
+      }),
+    ],
+    { additionalProperties: false },
+  );
+}
+
+const JOB_SCHEMA = Type.Object(
+  {
+    id: Type.Optional(Type.String({ description: "Background job id." })),
+    wait: Type.Optional(Type.Boolean({ description: "Wait for the job to finish." })),
+    cancel: Type.Optional(Type.Boolean({ description: "Abort a running job." })),
+    list: Type.Optional(Type.Boolean({ description: "List all jobs, newest first." })),
+    timeoutMs: Type.Optional(
+      Type.Integer({
+        minimum: 1,
+        maximum: 600000,
+        description: "Maximum wait in milliseconds. Default 600000.",
+      }),
+    ),
+  },
+  { additionalProperties: false },
+);
+
 export default Plugin.define({
   id: "opencode-fs-plugin",
   async setup(ctx) {
@@ -110,22 +146,26 @@ export default Plugin.define({
       typeof ctx.options?.maxOutputBytes === "number" && ctx.options.maxOutputBytes > 0
         ? Math.trunc(ctx.options.maxOutputBytes)
         : DEFAULT_MAX_OUTPUT;
+    const jobs = new JobManager(
+      typeof ctx.options?.jobDir === "string" ? { dir: ctx.options.jobDir } : {},
+    );
 
-    await ctx.tool.transform((editor) => {
+    const registration = await ctx.tool.transform((editor) => {
       editor.namespace({
         name: "fs",
         description: "Linux-style filesystem and text tools with native command semantics.",
       });
 
       for (const spec of TOOLS) {
+        const schema = withBackground(spec.schema);
         editor.add({
           name: spec.name,
           description: spec.description,
-          input: spec.schema,
+          input: schema,
           options: { namespace: "fs", permission: `fs_${spec.name}` },
           execute: async (input, context) => {
             try {
-              const parsed = parseSchema<unknown>(spec.schema, input, `${spec.name} input`);
+              const parsed = parseSchema<unknown>(schema, input, `${spec.name} input`);
               const assertPermission: PermissionAssert = async (request) => {
                 await ctx.permission.assert(
                   request as unknown as Parameters<typeof ctx.permission.assert>[0],
@@ -144,20 +184,46 @@ export default Plugin.define({
                   (full) => sandbox.resource(full),
                   assertPermission,
                 );
-              const result = await spec.run(
-                {
-                  sandbox,
-                  permission: permissionFor(`fs_${spec.name}`),
-                  permissionFor,
-                  concurrency,
-                  signal: context.signal,
-                  tmpdir: os.tmpdir(),
-                  maxOutputBytes,
-                },
-                parsed,
-                {},
-              );
-              return renderResult(result, maxOutputBytes);
+              const runSpec = async (signal: AbortSignal) => {
+                const result = await spec.run(
+                  {
+                    sandbox,
+                    permission: permissionFor(`fs_${spec.name}`),
+                    permissionFor,
+                    concurrency,
+                    signal,
+                    tmpdir: os.tmpdir(),
+                    maxOutputBytes,
+                  },
+                  parsed,
+                  {},
+                );
+                return renderResult(result, maxOutputBytes);
+              };
+
+              if ((parsed as { background?: unknown }).background === true) {
+                const job = await jobs.start(spec.name, runSpec);
+                return {
+                  content: JSON.stringify(
+                    {
+                      jobId: job.id,
+                      tool: job.tool,
+                      state: job.state,
+                      statusPath: job.statusPath,
+                    },
+                    null,
+                    2,
+                  ),
+                  metadata: {
+                    ok: true,
+                    background: true,
+                    jobId: job.id,
+                    statusPath: job.statusPath,
+                  },
+                };
+              }
+
+              return await runSpec(context.signal);
             } catch (error) {
               if (error instanceof FsError) {
                 return renderError(error, error.code === "outside");
@@ -167,6 +233,86 @@ export default Plugin.define({
           },
         });
       }
+
+      editor.add({
+        name: "job",
+        description:
+          "Inspect, wait for, cancel, or list background fs jobs. Jobs are created by passing background: true to any fs tool. wait returns the original tool result when the job completes; a timeout returns the current status.",
+        input: JOB_SCHEMA,
+        options: { namespace: "fs", permission: "fs_job" },
+        execute: async (input, _context) => {
+          try {
+            const parsed = parseSchema<{
+              id?: string;
+              wait?: boolean;
+              cancel?: boolean;
+              list?: boolean;
+              timeoutMs?: number;
+            }>(JOB_SCHEMA, input, "job input");
+
+            if (parsed.list === true) {
+              if (parsed.id !== undefined || parsed.wait === true || parsed.cancel === true) {
+                throw new FsError("list cannot be combined with id, wait, or cancel.", "invalid");
+              }
+              return {
+                content: JSON.stringify({ jobs: jobs.list() }, null, 2),
+                metadata: { ok: true },
+              };
+            }
+
+            if (!parsed.id) throw new FsError("job requires id or list.", "invalid");
+
+            if (parsed.cancel === true) {
+              if (parsed.wait === true) {
+                throw new FsError("cancel and wait are mutually exclusive.", "invalid");
+              }
+              const status = jobs.cancel(parsed.id);
+              return {
+                content: JSON.stringify(status, null, 2),
+                metadata: { ok: true, jobId: status.id, state: status.state },
+              };
+            }
+
+            if (parsed.wait === true) {
+              const waited = await jobs.wait(parsed.id, parsed.timeoutMs ?? 600000);
+              if (waited.result) {
+                return {
+                  content: waited.result.content,
+                  metadata: {
+                    ...waited.result.metadata,
+                    jobId: waited.status.id,
+                    state: waited.status.state,
+                    timedOut: waited.timedOut,
+                  },
+                };
+              }
+              return {
+                content: JSON.stringify({ ...waited.status, timedOut: waited.timedOut }, null, 2),
+                metadata: {
+                  ok: false,
+                  jobId: waited.status.id,
+                  state: waited.status.state,
+                  timedOut: waited.timedOut,
+                },
+              };
+            }
+
+            const status = jobs.status(parsed.id);
+            return {
+              content: JSON.stringify(status, null, 2),
+              metadata: { ok: true, jobId: status.id, state: status.state },
+            };
+          } catch (error) {
+            if (error instanceof FsError) return renderError(error, error.code === "outside");
+            throw error;
+          }
+        },
+      });
     });
+
+    return () => {
+      jobs.dispose();
+      void registration.dispose();
+    };
   },
 });
