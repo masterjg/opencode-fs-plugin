@@ -4,6 +4,7 @@
  */
 
 import { Type, type Static } from "@sinclair/typebox";
+import { FsError } from "../core/errors.js";
 import { inputStream } from "../core/stream.js";
 import { textResult, type ToolSpec } from "../core/types.js";
 
@@ -24,6 +25,11 @@ const Schema = Type.Object(
     check: Type.Optional(Type.Boolean({ description: "Check whether input is sorted (`-c`)." })),
     checkQuiet: Type.Optional(Type.Boolean({ description: "Check sortedness without output (`-C`)." })),
     zeroTerminated: Type.Optional(Type.Boolean({ description: "NUL-separated records (`-z`)." })),
+    keys: Type.Optional(
+      Type.Array(Type.String({ minLength: 1 }), {
+        description: "Sort keys in GNU -k syntax, e.g. 2,2n or 1,1 2.2,2.4.",
+      }),
+    ),
     field: Type.Optional(Type.Integer({ minimum: 1, description: "Sort by this 1-based field (`-k`)." })),
     separator: Type.Optional(Type.String({ description: "Field separator (`-t`). Default: whitespace." })),
   },
@@ -41,6 +47,7 @@ export const sortTool: ToolSpec<Input> = {
   pipeable: "filter",
   mutates: false,
   async run(ctx, input, io) {
+    const keys = input.keys === undefined ? undefined : input.keys.map(parseKey);
     const paths = input.paths ?? [];
     const targets = [];
     for (const requested of paths) {
@@ -58,7 +65,7 @@ export const sortTool: ToolSpec<Input> = {
 
     if (input.check === true || input.checkQuiet === true) {
       for (let index = 1; index < rows.length; index++) {
-        if (compare(rows[index - 1] as string, rows[index] as string, input) > 0) {
+        if (compare(rows[index - 1] as string, rows[index] as string, input, keys) > 0) {
           return textResult(
             input.checkQuiet === true ? "" : `sort: disorder at line ${index + 1}\n`,
             { checked: false, line: index + 1 },
@@ -69,7 +76,7 @@ export const sortTool: ToolSpec<Input> = {
       return textResult("", { checked: true });
     }
 
-    rows.sort((a, b) => compare(a, b, input));
+    rows.sort((a, b) => compare(a, b, input, keys));
     const result = input.unique === true ? [...new Set(rows)] : rows;
     return textResult(
       result.map((record) => `${record}${separator}`).join(""),
@@ -95,27 +102,81 @@ async function* records(
   if (buffer.length > 0) yield buffer;
 }
 
-function compare(a: string, b: string, input: Input): number {
-  const left = key(a, input);
-  const right = key(b, input);
-  let result: number;
+interface KeySpec {
+  startField: number;
+  startChar?: number;
+  endField?: number;
+  endChar?: number;
+  modifiers: Set<string>;
+}
 
-  if (input.version === true) {
-    result = versionCompare(left, right);
-  } else if (input.generalNumeric === true) {
-    result = numeric(left) - numeric(right);
-  } else if (input.humanNumeric === true) {
-    result = humanNumeric(left) - humanNumeric(right);
-  } else if (input.numeric === true) {
-    result = numeric(left) - numeric(right);
+function parseKey(value: string): KeySpec {
+  const match = /^(\d+)(?:\.(\d+))?(?:,(\d+)(?:\.(\d+))?)?([bdfghiMnrV]*)$/.exec(value);
+  if (match === null) throw new FsError(`invalid sort key: ${value}`, "invalid");
+  return {
+    startField: Number(match[1]),
+    ...(match[2] === undefined ? {} : { startChar: Number(match[2]) }),
+    ...(match[3] === undefined ? {} : { endField: Number(match[3]) }),
+    ...(match[4] === undefined ? {} : { endChar: Number(match[4]) }),
+    modifiers: new Set((match[5] as string).split("")),
+  };
+}
+
+function compare(a: string, b: string, input: Input, keys?: KeySpec[]): number {
+  if (keys !== undefined && keys.length > 0) {
+    for (const spec of keys) {
+      const result = compareKey(a, b, spec, input);
+      if (result !== 0) return result;
+    }
   } else {
-    const leftText = normalizeText(left, input);
-    const rightText = normalizeText(right, input);
-    result = leftText.localeCompare(rightText);
+    const result = compareValue(key(a, input), key(b, input), input);
+    if (result !== 0) return input.reverse === true ? -result : result;
   }
 
-  if (result === 0 && input.stable !== true) result = a.localeCompare(b);
-  return input.reverse === true ? -result : result;
+  if (input.stable !== true) {
+    const result = a.localeCompare(b);
+    return result === 0 ? 0 : input.reverse === true ? -result : result;
+  }
+  return 0;
+}
+
+function compareKey(a: string, b: string, spec: KeySpec, input: Input): number {
+  const left = keyText(a, spec, input);
+  const right = keyText(b, spec, input);
+  const result = compareValue(left, right, input, spec);
+  if (result === 0) return 0;
+  const reverse = spec.modifiers.has("r") ? !(input.reverse === true) : input.reverse === true;
+  return reverse ? -result : result;
+}
+
+function keyText(value: string, spec: KeySpec, input: Input): string {
+  const fields = input.separator === undefined ? value.split(/\s+/) : value.split(input.separator);
+  const joined = fields
+    .slice(spec.startField - 1, spec.endField ?? fields.length)
+    .join(input.separator ?? " ");
+  let text = joined;
+  if (spec.startChar !== undefined) text = text.slice(Math.max(0, spec.startChar - 1));
+  if (spec.endChar !== undefined) text = text.slice(0, Math.max(0, spec.endChar));
+  if (spec.modifiers.has("b") || input.ignoreLeadingBlanks === true) text = text.trimStart();
+  return text;
+}
+
+function compareValue(left: string, right: string, input: Input, spec?: KeySpec): number {
+  if (spec?.modifiers.has("V") === true || input.version === true) {
+    return versionCompare(left, right);
+  }
+  if (spec?.modifiers.has("g") === true || input.generalNumeric === true) {
+    return numeric(left) - numeric(right);
+  }
+  if (spec?.modifiers.has("h") === true || input.humanNumeric === true) {
+    return humanNumeric(left) - humanNumeric(right);
+  }
+  if (spec?.modifiers.has("n") === true || input.numeric === true) {
+    return numeric(left) - numeric(right);
+  }
+  const leftText = normalizeText(left, input, spec);
+  const rightText = normalizeText(right, input, spec);
+  return leftText.localeCompare(rightText);
 }
 
 function key(value: string, input: Input): string {
@@ -128,11 +189,17 @@ function key(value: string, input: Input): string {
   return text;
 }
 
-function normalizeText(value: string, input: Input): string {
+function normalizeText(value: string, input: Input, spec?: KeySpec): string {
   let text = value;
-  if (input.ignoreNonPrinting === true) text = text.replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "");
-  if (input.dictionary === true) text = text.replace(/[^A-Za-z0-9\s]/g, "");
-  if (input.ignoreCase === true) text = text.toLowerCase();
+  if (spec?.modifiers.has("i") === true || input.ignoreNonPrinting === true) {
+    text = text.replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "");
+  }
+  if (spec?.modifiers.has("d") === true || input.dictionary === true) {
+    text = text.replace(/[^A-Za-z0-9\s]/g, "");
+  }
+  if (spec?.modifiers.has("f") === true || input.ignoreCase === true) {
+    text = text.toLowerCase();
+  }
   return text;
 }
 

@@ -63,6 +63,34 @@ describe("sort parity flags", () => {
     expect(stable.result.stdout.toString()).toBe("a:2\na:1\n");
   });
 
+  it("supports GNU key ranges and modifiers", async () => {
+    const numeric = await run({ keys: ["2,2n"] }, "x 10\ny 2\n");
+    expect(numeric.result.stdout.toString()).toBe("y 2\nx 10\n");
+
+    const reverse = await run({ keys: ["2,2nr"] }, "x 10\ny 2\n");
+    expect(reverse.result.stdout.toString()).toBe("x 10\ny 2\n");
+
+    const chars = await run({ keys: ["2.1,2.2"] }, "x ac\ny ab\n");
+    expect(chars.result.stdout.toString()).toBe("y ab\nx ac\n");
+
+    const multiple = await run({ keys: ["1,1", "2,2n"] }, "b 1\na 2\na 1\n");
+    expect(multiple.result.stdout.toString()).toBe("a 1\na 2\nb 1\n");
+
+    const toEnd = await run({ keys: ["2"] }, "x 2\ny 10\n");
+    expect(toEnd.result.stdout.toString()).toBe("y 10\nx 2\n");
+
+    const blanks = await run({ keys: ["2b"] }, "x  b\ny a\n");
+    expect(blanks.result.stdout.toString()).toBe("y a\nx  b\n");
+
+    const separated = await run({ keys: ["2,2n"], separator: ":" }, "x:10\ny:2\n");
+    expect(separated.result.stdout.toString()).toBe("y:2\nx:10\n");
+
+    const tieReverse = await run({ ignoreCase: true, reverse: true }, "A\na\n");
+    expect(tieReverse.result.stdout.toString().trim().split("\n").sort()).toEqual(["A", "a"]);
+
+    await expect(run({ keys: ["bad"] }, "a\n")).rejects.toMatchObject({ code: "invalid" });
+  });
+
   it("supports NUL-separated input and output", async () => {
     const result = await run({ zeroTerminated: true }, "b\0a");
     expect(result.result.stdout.toString()).toBe("a\0b\0");
