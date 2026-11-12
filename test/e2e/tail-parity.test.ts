@@ -86,6 +86,21 @@ describe("bounded tail follow", () => {
     expect(result.result.stdout.length).toBe(0);
   });
 
+  it("stops a long interval when aborted", async () => {
+    const { root, sb } = await setup();
+    const file = path.join(root, "abort.log");
+    await fs.writeFile(file, "start\n");
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 100);
+    const result = await runSpec(
+      tailTool,
+      { paths: ["abort.log"], follow: true, timeoutMs: 5_000, intervalMs: 1_000 },
+      sb,
+      { signal: controller.signal },
+    );
+    expect(result.result.stdout.toString()).toContain("start");
+  });
+
   it("supports verbose headers and an already-aborted signal", async () => {
     const { root, sb } = await setup();
     await fs.writeFile(path.join(root, "verbose.log"), "start\n");

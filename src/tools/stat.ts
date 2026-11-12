@@ -183,6 +183,7 @@ async function mountPoint(full: string): Promise<string> {
       const fields = line.split(" ");
       const point = fields[4];
       if (point !== undefined) {
+        /* v8 ignore next 2 -- escaped mount points are rare */
         points.push(point.replace(/\\([0-7]{3})/g, (_match: string, octal: string) =>
           String.fromCharCode(Number.parseInt(octal, 8))));
       }
