@@ -1,6 +1,6 @@
 ---
 name: Filesystem
-description: Use when a task needs Linux-style filesystem or text operations beyond OpenCode's built-ins - copy, move, metadata, touch, truncate, symlinks, chmod, hashes, disk usage, find, archives, diff, HTTP(S) requests and downloads, trash, background jobs, or composing filters through a pipe. Covers the fs namespace, argument shapes, native options, permissions, limits, and verification.
+description: Use when a task needs Linux-style filesystem, text, or network operations beyond OpenCode's built-ins - copy, move, metadata, touch, truncate, symlinks, chmod, hashes, disk usage, find, archives, diff, HTTP(S) requests, API calls, or file downloads (curl replacement), trash, background jobs, or composing filters through a pipe. Covers the fs namespace, argument shapes, native options, permissions, limits, and verification.
 ---
 
 # Filesystem
