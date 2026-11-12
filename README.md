@@ -66,12 +66,39 @@ await tools.fs.pipe({
 
 There is no shell, redirection operator, nested pipe, or `find -exec`.
 
+## Installing from npm
+
+Add the registry package directly to the plugin list:
+
+```jsonc
+{
+  "plugins": ["opencode-fs-plugin@1.0.1"]
+}
+```
+
+`opencode plugin add opencode-fs-plugin@1.0.1` installs it and writes the config
+entry. A bare `opencode-fs-plugin` follows the `latest` tag.
+
+OpenCode manages the package under its cache, so the path is not stable. If you
+also want the packaged skill, install it into a project instead:
+
+```bash
+npm install opencode-fs-plugin@1.0.1
+```
+
+```jsonc
+{
+  "plugins": ["./node_modules/opencode-fs-plugin"],
+  "skills": ["./node_modules/opencode-fs-plugin/skills"]
+}
+```
+
 ## Installing from a release
 
 Download the release tarball, then install it as a normal npm package:
 
 ```bash
-VERSION=1.0.0
+VERSION=1.0.1
 curl -L -o "opencode-fs-plugin-${VERSION}.tgz" \
   "https://github.com/masterjg/opencode-fs-plugin/releases/download/v${VERSION}/opencode-fs-plugin-${VERSION}.tgz"
 npm install "./opencode-fs-plugin-${VERSION}.tgz"
@@ -100,20 +127,20 @@ OpenCode installs it from Git:
 
 ```jsonc
 {
-  "plugins": ["github:masterjg/opencode-fs-plugin#v1.0.0"]
+  "plugins": ["github:masterjg/opencode-fs-plugin#v1.0.1"]
 }
 ```
 
-`opencode plugin add 'github:masterjg/opencode-fs-plugin#v1.0.0'` installs the
+`opencode plugin add 'github:masterjg/opencode-fs-plugin#v1.0.1'` installs the
 same spec and writes the config entry. The equivalent full URL is
-`git+https://github.com/masterjg/opencode-fs-plugin.git#v1.0.0`. A tag is
+`git+https://github.com/masterjg/opencode-fs-plugin.git#v1.0.1`. A tag is
 checked for updates; use a full commit hash to pin it.
 
 Git plugins are installed under OpenCode's cache, so their package path is not
 stable. If you also want the packaged skill, install with npm instead:
 
 ```bash
-npm install "github:masterjg/opencode-fs-plugin#v1.0.0"
+npm install "github:masterjg/opencode-fs-plugin#v1.0.1"
 ```
 
 Then use `./node_modules/opencode-fs-plugin` in `plugins` and
@@ -144,8 +171,9 @@ plugin package automatically, so register the directory once:
 }
 ```
 
-If the plugin was installed from the release tarball or with `npm install` from
-a Git tag into a project's `node_modules`, point at the packaged skill instead:
+If the plugin was installed from the release tarball, the npm registry, or with
+`npm install` from a Git tag into a project's `node_modules`, point at the
+packaged skill instead:
 
 ```jsonc
 {
@@ -225,10 +253,13 @@ paths are exercised.
 
 Every push to `main` runs `.github/workflows/release.yml`. It reads the version
 from `package.json`, runs typecheck and the 100% coverage gate, packs the npm
-tarball, uploads it as a workflow artifact, and creates a GitHub release tagged
-`v<version>` when that release does not exist yet. Bump the version in
-`package.json` to publish a new release; an unchanged version is skipped with a
-notice.
+tarball, uploads it as a workflow artifact, publishes it to npm with provenance
+when the version is new, and creates a GitHub release tagged `v<version>` when
+that release does not exist yet. Bump the version in `package.json` to publish a
+new release; an unchanged version is skipped with a notice.
+
+The npm step reads the `NPM_TOKEN` repository secret, which must be an npm
+automation token with publish access to `opencode-fs-plugin`.
 
 ## License
 

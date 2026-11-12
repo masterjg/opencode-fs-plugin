@@ -1,9 +1,19 @@
 {
   "name": "opencode-fs-plugin",
-  "version": "1.0.0",
-  "private": true,
+  "version": "1.0.1",
   "type": "module",
   "description": "OpenCode 2 plugin: Linux-style filesystem and text tools under the fs namespace.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/masterjg/opencode-fs-plugin.git"
+  },
+  "homepage": "https://github.com/masterjg/opencode-fs-plugin#readme",
+  "bugs": {
+    "url": "https://github.com/masterjg/opencode-fs-plugin/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "exports": {
     ".": "./src/index.ts"
   },
