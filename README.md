@@ -142,6 +142,15 @@ A small number of OS-error branches are marked with `/* v8 ignore next */` when
 they cannot be produced deterministically; all tool logic and normal error
 paths are exercised.
 
+## Releases
+
+Every push to `main` runs `.github/workflows/release.yml`. It reads the version
+from `package.json`, runs typecheck and the 100% coverage gate, packs the npm
+tarball, uploads it as a workflow artifact, and creates a GitHub release tagged
+`v<version>` when that release does not exist yet. Bump the version in
+`package.json` to publish a new release; an unchanged version is skipped with a
+notice.
+
 ## License
 
 EPL-2.0. The original project and this fork remain under the same license.
