@@ -79,6 +79,25 @@ There is no shell, redirection operator, nested pipe, or `find -exec`.
 Packages can also be loaded by name or Git URL. The plugin exports TypeScript
 source directly and targets Node 22+.
 
+## Skill discovery
+
+The plugin ships `skills/filesystem/SKILL.md`. OpenCode does not search inside a
+plugin package automatically, so register the directory once:
+
+```jsonc
+{
+  "skills": [
+    "~/.config/opencode/repos/opencode-fs-plugin/skills"
+  ]
+}
+```
+
+Alternatively, symlink `skills/filesystem` into `~/.config/opencode/skills`,
+which OpenCode discovers automatically. See [INSTALL.md](INSTALL.md) for both
+options, verification, and an agent-ready installation prompt.
+
+The skill ID is `filesystem`; `@filesystem` loads it explicitly.
+
 ## Permissions
 
 Every tool asserts an action named after the tool (`fs_cp`, `fs_rm`,

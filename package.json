@@ -9,7 +9,9 @@
   },
   "files": [
     "src",
-    "SPEC.md"
+    "skills",
+    "SPEC.md",
+    "INSTALL.md"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
