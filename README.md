@@ -66,7 +66,57 @@ await tools.fs.pipe({
 
 There is no shell, redirection operator, nested pipe, or `find -exec`.
 
-## Loading
+## Installing from a release
+
+Download the release tarball, then install it as a normal npm package:
+
+```bash
+VERSION=1.0.0
+curl -L -o "opencode-fs-plugin-${VERSION}.tgz" \
+  "https://github.com/masterjg/opencode-fs-plugin/releases/download/v${VERSION}/opencode-fs-plugin-${VERSION}.tgz"
+npm install "./opencode-fs-plugin-${VERSION}.tgz"
+```
+
+Point OpenCode at the installed directory:
+
+```jsonc
+{
+  "plugins": ["./node_modules/opencode-fs-plugin"]
+}
+```
+
+Relative paths resolve from the config file that contains them, so use an
+absolute path in the global config. The tarball contains `src/`, `skills/`,
+`SPEC.md` and `INSTALL.md`; npm installs its runtime dependencies. Do not unpack
+it by hand.
+
+## Installing from a Git tag
+
+Every release is tagged `v<version>`. Add the tag directly to the plugin list;
+OpenCode installs it from Git:
+
+```jsonc
+{
+  "plugins": ["github:masterjg/opencode-fs-plugin#v1.0.0"]
+}
+```
+
+`opencode plugin add 'github:masterjg/opencode-fs-plugin#v1.0.0'` installs the
+same spec and writes the config entry. The equivalent full URL is
+`git+https://github.com/masterjg/opencode-fs-plugin.git#v1.0.0`. A tag is
+checked for updates; use a full commit hash to pin it.
+
+Git plugins are installed under OpenCode's cache, so their package path is not
+stable. If you also want the packaged skill, install with npm instead:
+
+```bash
+npm install "github:masterjg/opencode-fs-plugin#v1.0.0"
+```
+
+Then use `./node_modules/opencode-fs-plugin` in `plugins` and
+`./node_modules/opencode-fs-plugin/skills` in `skills`.
+
+## Loading from a checkout
 
 ```jsonc
 {
@@ -76,8 +126,7 @@ There is no shell, redirection operator, nested pipe, or `find -exec`.
 }
 ```
 
-Packages can also be loaded by name or Git URL. The plugin exports TypeScript
-source directly and targets Node 22+.
+The plugin exports TypeScript source directly and targets Node 22+.
 
 ## Skill discovery
 
@@ -92,9 +141,22 @@ plugin package automatically, so register the directory once:
 }
 ```
 
-Alternatively, symlink `skills/filesystem` into `~/.config/opencode/skills`,
-which OpenCode discovers automatically. See [INSTALL.md](INSTALL.md) for both
-options, verification, and an agent-ready installation prompt.
+If the plugin was installed from the release tarball or with `npm install` from
+a Git tag into a project's `node_modules`, point at the packaged skill instead:
+
+```jsonc
+{
+  "skills": [
+    "./node_modules/opencode-fs-plugin/skills"
+  ]
+}
+```
+
+Relative skill paths resolve from the active working directory, not the config
+file; use an absolute path for a global install. Alternatively, symlink
+`skills/filesystem` into `~/.config/opencode/skills`; OpenCode discovers that
+directory automatically. See [INSTALL.md](INSTALL.md) for all options,
+verification, and an agent-ready installation prompt.
 
 The skill ID is `filesystem`; `@filesystem` loads it explicitly.
 
