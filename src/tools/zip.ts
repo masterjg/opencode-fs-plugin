@@ -15,8 +15,10 @@ import { textResult, type ToolSpec } from "../core/types.js";
 const ZipSchema = Type.Object(
   {
     archive: Type.String({ minLength: 1, description: "ZIP archive to create." }),
-    paths: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+    paths: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })),
     level: Type.Optional(Type.Integer({ minimum: 0, maximum: 9, description: "Compression level." })),
+    input: Type.Optional(Type.String({ description: "Text data to archive when paths are omitted." })),
+    member: Type.Optional(Type.String({ description: "Archive member name for stream input." })),
   },
   { additionalProperties: false },
 );
@@ -41,12 +43,39 @@ export const zipTool: ToolSpec<ZipInput> = {
   name: "zip",
   description: "Create ZIP archives with common `zip` semantics (`-r` is implicit, compression level 0-9).",
   schema: ZipSchema,
-  pipeable: false,
+  pipeable: "sink",
   mutates: true,
-  async run(ctx, input) {
+  async run(ctx, input, io) {
     const archive = await ctx.sandbox.resolveForCreate(input.archive);
+    const requestedPaths = input.paths ?? [];
+    if (requestedPaths.length === 0) {
+      if (input.input === undefined && io.stdin === undefined) {
+        throw new FsError("create requires paths, input, or stdin.", "invalid");
+      }
+      const data = io.stdin === undefined
+        ? Buffer.from(input.input as string, "utf8")
+        : await collect(io.stdin);
+      const name = safeName(input.member ?? "stdin");
+      if (name === undefined) throw new FsError("member must not be empty.", "invalid");
+      await ctx.permission.assert([{ target: archive, boundary: archive.full }]);
+      const writer = new ZipWriter();
+      writer.addBuffer(data, name.split(path.sep).join("/"), {
+        mtime: new Date(),
+        mode: 0o644,
+        compress: (input.level ?? 6) !== 0,
+        compressionLevel: input.level ?? 6,
+      });
+      writer.end();
+      const streamed = await collect(writer.outputStream as AsyncIterable<Buffer>);
+      /* v8 ignore next */
+      await fs.writeFile(archive.full, streamed).catch((error) => {
+        throw fromErrno(error);
+      });
+      return textResult("", { archive: input.archive, members: 1 });
+    }
+
     const members: Array<{ name: string; full: string; stats: Awaited<ReturnType<typeof fs.lstat>> }> = [];
-    for (const requested of input.paths) {
+    for (const requested of requestedPaths) {
       const target = await ctx.sandbox.resolveExisting(requested, { allowRoot: true });
       const stats = await ctx.sandbox.lstat(target.full, requested);
       const base = path.basename(path.resolve(requested));
