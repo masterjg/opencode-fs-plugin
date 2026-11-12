@@ -63,14 +63,7 @@ jobs:
 
       - name: Publish to npm
         if: steps.npm.outputs.exists == 'false'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          if [ -z "${NODE_AUTH_TOKEN}" ]; then
-            echo "::error title=NPM_TOKEN missing::Add an npm automation token as the NPM_TOKEN repository secret."
-            exit 1
-          fi
-          npm publish "./dist/opencode-fs-plugin-${{ steps.version.outputs.version }}.tgz" --access public --provenance
+        run: npm publish "./dist/opencode-fs-plugin-${{ steps.version.outputs.version }}.tgz" --access public --provenance
 
       - name: Skip npm publish
         if: steps.npm.outputs.exists == 'true'
