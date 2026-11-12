@@ -30,23 +30,27 @@ the `fs` namespace (`tools.fs.cp`, direct `fs_cp`).
 These are not implemented:
 
 - `xz`, `zstd`, `7z`, `rar`
-- `awk`, full `sed` command language, `find -exec`, `tail -f`
+- `awk`, full `sed` command language, `find -exec`
 - `chown`, `chgrp`, `chattr`, `dd`, `rsync`
 - ACL and xattr preservation in `cp -a`
-- full GNU edge-flag parity for `ls`, `stat`, `sort`, `find`
+- remaining GNU edge-flag parity for `ls`, `stat`, `sort`, `find`
 - symlink-race-proof sandboxing
-- `tar`/`zip` creation from arbitrary streams; archives are file-backed
+- unbounded `tail -f`; use bounded `follow` or the wait plugin
+- archive extraction from arbitrary streams; create accepts text/stdin stream input
 - cross-filesystem `trash`; use `rm` or a mount-trash helper
 
 ## Format details
 
-- `stat` supports `%n %N %s %F %a %A %u %U %g %G %d %i %h %b %B %o %x %X %y
-  %Y %z %Z %t %T %L`, plus `\n`, `\t`, `\\` and `%%`.
+- `stat` supports `%n %N %s %F %a %A %f %u %U %g %G %d %i %h %b %B %o %m %r
+  %x %X %y %Y %z %Z %w %W %t %T %C %L`, plus `\n`, `\t`, `\\` and `%%`.
+  `%C` returns `?` because Node does not expose the SELinux file context.
 - `chmod` supports octal modes and symbolic `[ugoa]*[-+=][rwxXst]*` clauses.
 - `find -size` uses binary suffixes (`K`, `M`, `G`, ...); `-mtime`/`-mmin`
-  accept `+N` (older), `-N` (newer), and exact `N`.
+  accept `+N` (older), `-N` (newer), and exact `N`. `newerXY` uses `XY:path`.
+- `sort -k` accepts field/character ranges with modifiers `bdfghiMnrV`.
 - `tar`/`zip` extraction rejects path traversal and escaping links.
-- `pipe` passes raw bytes and only accepts registered pipeable stages.
+- `pipe` passes raw bytes and only accepts registered pipeable stages; `tar` and
+  `zip` are sink stages.
 
 ## Coverage policy
 

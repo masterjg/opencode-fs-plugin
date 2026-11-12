@@ -15,8 +15,8 @@ unit, end-to-end and coverage tests.
 | `rm` | `fs.rm` | `recursive`, `force`, `dir`, `verbose` |
 | `cp` | `fs.cp` | `recursive`, `archive`, `force`, `noClobber`, `update`, `preserve`, `dereference`, `verbose` |
 | `mv` | `fs.mv` | `force`, `noClobber`, `update`, `verbose` |
-| `ls` | `fs.ls` | `all`, `almostAll`, `long`, `human`, `recursive`, `directory`, `inode`, `classify`, `sortBy`, `reverse`, `onePerLine` |
-| `stat` | `fs.stat` | `follow`, `format`, `filesystem` |
+| `ls` | `fs.ls` | `all`, `almostAll`, `long`, `human`, `recursive`, `directory`, `inode`, `classify`, `size`, `numericIds`, `noGroup`, `noOwner`, `slash`, `quote`, `versionSort`, `extensionSort`, `fullTime`, `timeStyle`, `hide`, `ignore`, `groupDirectoriesFirst`, `sortBy`, `reverse`, `onePerLine` |
+| `stat` | `fs.stat` | `follow`, `format`, `terse`, `filesystem` |
 | `touch` | `fs.touch` | `accessOnly`, `modifyOnly`, `noCreate`, `date`, `timestamp`, `reference`, `noDereference` |
 | `truncate` | `fs.truncate` | `size`, `reference`, `noCreate`, `noDereference` |
 | `ln` | `fs.ln` | `symbolic`, `force`, `noDereference`, `relative`, `verbose` |
@@ -25,20 +25,20 @@ unit, end-to-end and coverage tests.
 | `sha256sum`/`md5sum` | `fs.hash` | `algorithm`, `tag`; hashes files or stdin |
 | `du` | `fs.du` | `summarize`, `all`, `human`, `total`, `maxDepth`, `follow`, `oneFileSystem` |
 | `df` | `fs.df` | `human`, `inodes`, `printType`, `all` |
-| `find` | `fs.find` | `name`, `iname`, `pathPattern`, `type`, `size`, `mtime`, `mmin`, `maxDepth`, `minDepth`, `empty`, `perm`, `newer`, `follow`, `print0`, `sort` |
+| `find` | `fs.find` | `name`, `iname`, `pathPattern`, `lname`, `ilname`, `regex`, `iregex`, `type`, `size`, `mtime`, `mmin`, `maxDepth`, `minDepth`, `empty`, `perm`, `uid`, `gid`, `user`, `group`, `links`, `inum`, `samefile`, `fstype`, `newer`, `newerXY`, `printf`, `follow`, `print0`, `sort` |
 | `cat` | `fs.cat` | `number`, `numberNonBlank`, `squeezeBlank`, `showEnds`, `showTabs`, `showNonPrinting` |
 | `head` | `fs.head` | `lines`, `bytes`, `quiet`, `verbose` |
-| `tail` | `fs.tail` | `lines`, `bytes`, `fromStart`, `quiet`, `verbose` |
+| `tail` | `fs.tail` | `lines`, `bytes`, `fromStart`, `quiet`, `verbose`, `follow`, `timeoutMs`, `intervalMs`, `maxBytes` |
 | `tee` | `fs.tee` | `append`, `content` |
 | `wc` | `fs.wc` | `lines`, `words`, `bytes`, `chars`, `maxLineLength` |
-| `sort` | `fs.sort` | `numeric`, `reverse`, `unique`, `ignoreCase`, `ignoreLeadingBlanks`, `field`, `separator` |
+| `sort` | `fs.sort` | `numeric`, `generalNumeric`, `humanNumeric`, `version`, `reverse`, `unique`, `ignoreCase`, `dictionary`, `ignoreNonPrinting`, `ignoreLeadingBlanks`, `stable`, `check`, `checkQuiet`, `zeroTerminated`, `keys`, `field`, `separator` |
 | `uniq` | `fs.uniq` | `count`, `repeated`, `uniqueOnly`, `ignoreCase`, `skipFields`, `skipChars` |
 | `cut` | `fs.cut` | `fields`, `characters`, `bytes`, `delimiter`, `outputDelimiter`, `complement`, `onlyDelimited` |
 | `tr` | `fs.tr` | `set1`, `set2`, `delete`, `squeeze`, `complement`; ranges and classes |
 | `sed` | `fs.sed` | `script`, `expressions`, `inPlace`, `extendedRegexp`, `quiet`; `s///` subset |
 | `grep` | `fs.grep` | `recursive`, `include`, `exclude`, `ignoreCase`, `invert`, `lineNumbers`, `withFilename`, `noFilename`, `filesWithMatches`, `filesWithoutMatch`, `count`, `onlyMatching`, `word`, `line`, `fixed`, `context`, `before`, `after`, `maxCount`, `noMessages` |
-| `tar` | `fs.tar` | `create`/`extract`/`list`, `gzip`, `directory`, `stripComponents`, `exclude`, `verbose` |
-| `zip` | `fs.zip` | `archive`, `paths`, `level` |
+| `tar` | `fs.tar` | `create`/`extract`/`list`, `gzip`, `directory`, `stripComponents`, `exclude`, `verbose`, `input`, `member` |
+| `zip` | `fs.zip` | `archive`, `paths`, `level`, `input`, `member` |
 | `unzip` | `fs.unzip` | `extract`/`list`, `directory`, `overwrite`, `noOverwrite` |
 | `gzip` | `fs.gzip` | `keep`, `force`, `stdout`, `level` |
 | `gunzip` | `fs.gunzip` | `keep`, `force`, `stdout`, `suffix` |
@@ -127,18 +127,18 @@ Add the registry package directly to the plugin list:
 
 ```jsonc
 {
-  "plugins": ["opencode-fs-plugin@1.1.1"]
+  "plugins": ["opencode-fs-plugin@1.2.0"]
 }
 ```
 
-`opencode plugin add opencode-fs-plugin@1.1.1` installs it and writes the config
+`opencode plugin add opencode-fs-plugin@1.2.0` installs it and writes the config
 entry. A bare `opencode-fs-plugin` follows the `latest` tag.
 
 OpenCode manages the package under its cache, so the path is not stable. If you
 also want the packaged skill, install it into a project instead:
 
 ```bash
-npm install opencode-fs-plugin@1.1.1
+npm install opencode-fs-plugin@1.2.0
 ```
 
 ```jsonc
@@ -153,7 +153,7 @@ npm install opencode-fs-plugin@1.1.1
 Download the release tarball, then install it as a normal npm package:
 
 ```bash
-VERSION=1.1.1
+VERSION=1.2.0
 curl -L -o "opencode-fs-plugin-${VERSION}.tgz" \
   "https://github.com/masterjg/opencode-fs-plugin/releases/download/v${VERSION}/opencode-fs-plugin-${VERSION}.tgz"
 npm install "./opencode-fs-plugin-${VERSION}.tgz"
@@ -182,20 +182,20 @@ OpenCode installs it from Git:
 
 ```jsonc
 {
-  "plugins": ["github:masterjg/opencode-fs-plugin#v1.1.1"]
+  "plugins": ["github:masterjg/opencode-fs-plugin#v1.2.0"]
 }
 ```
 
-`opencode plugin add 'github:masterjg/opencode-fs-plugin#v1.1.1'` installs the
+`opencode plugin add 'github:masterjg/opencode-fs-plugin#v1.2.0'` installs the
 same spec and writes the config entry. The equivalent full URL is
-`git+https://github.com/masterjg/opencode-fs-plugin.git#v1.1.1`. A tag is
+`git+https://github.com/masterjg/opencode-fs-plugin.git#v1.2.0`. A tag is
 checked for updates; use a full commit hash to pin it.
 
 Git plugins are installed under OpenCode's cache, so their package path is not
 stable. If you also want the packaged skill, install with npm instead:
 
 ```bash
-npm install "github:masterjg/opencode-fs-plugin#v1.1.1"
+npm install "github:masterjg/opencode-fs-plugin#v1.2.0"
 ```
 
 Then use `./node_modules/opencode-fs-plugin` in `plugins` and
