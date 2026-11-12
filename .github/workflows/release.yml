@@ -1,0 +1,79 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run coverage
+
+      - name: Read package version
+        id: version
+        run: |
+          version="$(npm pkg get version | tr -d '"')"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Build npm tarball
+        run: |
+          mkdir -p dist
+          npm pack --pack-destination dist
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: opencode-fs-plugin-${{ steps.version.outputs.version }}
+          path: dist/opencode-fs-plugin-*.tgz
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Check for existing release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub release
+        if: steps.release.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.version.outputs.tag }}" \
+            dist/opencode-fs-plugin-*.tgz \
+            --title "${{ steps.version.outputs.tag }}" \
+            --generate-notes \
+            --target "$GITHUB_SHA"
+
+      - name: Skip existing release
+        if: steps.release.outputs.exists == 'true'
+        run: |
+          echo "::notice title=Release skipped::Tag ${{ steps.version.outputs.tag }} already exists. Bump package.json version to create a new release."
