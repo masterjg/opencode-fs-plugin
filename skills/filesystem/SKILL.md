@@ -1,6 +1,6 @@
 ---
 name: Filesystem
-description: Use when a task needs Linux-style filesystem, text, or network operations beyond OpenCode's built-ins - copy, move, metadata, permissions, touch, truncate, symlinks, chmod, hashes, disk usage, find, archives, comparing files or directories, HTTP(S) requests, API calls, or file downloads (curl replacement), trash, background jobs, or composing filters through a pipe. Covers the fs namespace, argument shapes, native options, permissions, limits, and verification.
+description: Use when a task needs Linux-style filesystem, text, network, process, or system operations beyond OpenCode's built-ins - copy, move, metadata, permissions, ownership, touch, truncate, symlinks, chmod/chown, hashes, disk usage, find, archives (tar/zip/cpio/ar), comparing files or directories, process listing and signals, system info, binary inspection, text primitives, HTTP(S) requests, API calls, or file downloads (curl replacement), trash, background jobs, or composing filters through a pipe. Covers the fs namespace, argument shapes, native options, permissions, limits, and verification.
 ---
 
 # Filesystem
@@ -46,12 +46,18 @@ what `fs.stat`, `fs.ls`, `fs.hash`, `fs.diff`, or `fs.cat` can confirm.
 | Links and modes | `fs.ln`, `fs.readlink`, `fs.chmod` |
 | Hash, usage | `fs.hash`, `fs.du`, `fs.df` |
 | Predicate search | `fs.find` (`name`, `type`, `size`, `mtime`, `maxDepth`) |
-| Archives | `fs.tar` (`create`/`extract`/`list`), `fs.zip`, `fs.unzip` (`extract`/`list`), `fs.gzip`, `fs.gunzip` |
+| Archives | `fs.tar` (`create`/`extract`/`list`), `fs.zip`, `fs.unzip` (`extract`/`list`), `fs.cpio`, `fs.ar`, `fs.gzip`, `fs.gunzip` |
 | Compare | `fs.diff` |
 | Temp and trash | `fs.mktemp`, `fs.trash` |
-| Text filters | `fs.cat`, `fs.head`, `fs.tail`, `fs.grep`, `fs.sed`, `fs.sort`, `fs.uniq`, `fs.cut`, `fs.tr`, `fs.wc`, `fs.tee` |
+| Text filters | `fs.cat`, `fs.head`, `fs.tail`, `fs.grep`, `fs.sed`, `fs.sort`, `fs.uniq`, `fs.cut`, `fs.tr`, `fs.wc`, `fs.tee`, `fs.tac`, `fs.rev`, `fs.nl`, `fs.paste`, `fs.comm`, `fs.split`, `fs.shuf`, `fs.fold` |
 | Compose filters | `fs.pipe` |
 | HTTP(S) | `fs.http_request` (`output`, `checksum`, `maxBytes`, `json`) |
+| Processes | `fs.ps`, `fs.pgrep`, `fs.kill` (`dryRun` available) |
+| System info | `fs.id`, `fs.uname`, `fs.uptime`, `fs.date`, `fs.findmnt`, `fs.mountpoint` |
+| Binary inspection | `fs.file`, `fs.base64`, `fs.od`, `fs.strings` |
+| Ownership | `fs.chown` (names or ids, `recursive`) |
+| Block I/O | `fs.dd` (`blockSize`, `count`, `skip`, `seek`, `status`), `fs.sync` |
+| cpio / ar | `fs.cpio`, `fs.ar` (`create`/`list`/`extract`) |
 | Background jobs | `background: true`, then `fs.job` |
 
 Recent parity additions:
@@ -75,11 +81,14 @@ the tool run with defaults (often `.`), not fail.
 |---|---|
 | `path` | `fs.mkdir` |
 | `sources` + `destination` | `fs.cp`, `fs.mv`, `fs.ln` |
-| `paths` | `fs.stat`, `fs.ls`, `fs.find`, `fs.rm`, `fs.rmdir`, `fs.touch`, `fs.truncate`, `fs.chmod`, `fs.readlink`, `fs.du`, `fs.df`, `fs.cat`, `fs.head`, `fs.tail`, `fs.tee`, `fs.wc`, `fs.sort`, `fs.uniq`, `fs.cut`, `fs.tr`, `fs.grep`, `fs.sed`, `fs.gzip`, `fs.gunzip`, `fs.trash` |
+| `paths` | `fs.stat`, `fs.ls`, `fs.find`, `fs.rm`, `fs.rmdir`, `fs.touch`, `fs.truncate`, `fs.chmod`, `fs.chown`, `fs.readlink`, `fs.du`, `fs.df`, `fs.cat`, `fs.head`, `fs.tail`, `fs.tee`, `fs.wc`, `fs.sort`, `fs.uniq`, `fs.cut`, `fs.tr`, `fs.grep`, `fs.sed`, `fs.gzip`, `fs.gunzip`, `fs.trash`, `fs.file`, `fs.base64`, `fs.od`, `fs.strings`, `fs.sync`, `fs.mountpoint`, `fs.tac`, `fs.rev`, `fs.nl`, `fs.fold`, `fs.shuf` |
+| `pids` | `fs.ps`, `fs.kill` |
+| `pattern` | `fs.pgrep` |
 | `files` | `fs.hash` |
-| `left` + `right` | `fs.diff` |
-| `archive` + `paths` | `fs.tar` create, `fs.zip` create |
-| `archive` + `mode` | `fs.tar` (`create`/`extract`/`list`), `fs.unzip` (`extract`/`list`) |
+| `left` + `right` | `fs.diff`, `fs.comm` |
+| `archive` + `paths` | `fs.tar` create, `fs.zip` create, `fs.cpio` create, `fs.ar` create |
+| `archive` + `mode` | `fs.tar`, `fs.cpio`, `fs.ar` (`create`/`extract`/`list`), `fs.unzip` (`extract`/`list`) |
+| `input` + `output` | `fs.dd` (`blockSize`, `count`, `skip`, `seek`) |
 | `content` | `fs.tee` when there is no stdin |
 | `paths` + optional `keep`/`force`/`stdout`/`level`/`suffix` | `fs.gzip`, `fs.gunzip` |
 | `url` + optional `output` | `fs.http_request` |
@@ -106,6 +115,9 @@ native names (`cat`, `grep`, `sort`), not `fs.cat`. There is no shell,
 redirection operator, nested pipe, or `find -exec`. A filter stage needs
 `input` or a preceding source stage. Set `grep.noFilename: true` in a pipe when
 later stages need bare lines instead of `path:line`.
+
+New filter stages: `tac`, `rev`, `nl`, `paste`, `shuf`, `fold`, `base64`, `od`,
+and `strings`. `dd` and `cpio` are source/sink stages.
 
 `http_request` is a source stage. Pipe stages exchange whole buffers, so set
 `maxBytes` for large responses; use `output` for real streaming to disk.
@@ -217,8 +229,9 @@ permissions; loops do not bypass them. Code Mode has no timers, so use
 
 All `fs` I/O is asynchronous. Independent work is parallelized automatically
 within each call, up to `os.availableParallelism()`: tree copies, hashing,
-gzip/gunzip, grep reads, `find`/`du`/`grep -r`/`chmod -R` traversal, `diff -r`,
-and `ls` formatting. Do not add your own concurrency for those.
+gzip/gunzip, grep reads, `find`/`du`/`grep -r`/`chmod -R`/`chown -R` traversal,
+`diff -r`, `ls` formatting, `ps` /proc scans, and `split` writes. Do not add
+your own concurrency for those.
 
 The limit comes from the plugin `concurrency` option or
 `OPENCODE_FS_CONCURRENCY`. CPU-bound `sort`, `sed`, and text diffing stay
@@ -247,6 +260,12 @@ await tools.fs.unzip({ archive: "bundle.zip", mode: "list" })
 // compare two files
 await tools.fs.diff({ left: "old.txt", right: "new.txt", unified: 3 })
 
+// processes, binaries and archives
+await tools.fs.ps({ command: "node", sortBy: "rss", limit: 5 })
+await tools.fs.file({ paths: ["dist/app"] })
+await tools.fs.cpio({ mode: "create", archive: "bundle.cpio", paths: ["dist"] })
+await tools.fs.ar({ mode: "list", archive: "lib.a" })
+
 // API call, then a verified download
 await tools.fs.http_request({ url: "https://api.github.com/repos/owner/repo/releases/latest" })
 await tools.fs.http_request({
@@ -270,6 +289,12 @@ await tools.fs.http_request({
 - `fs.tar`/`fs.zip` create from `input` or stdin; extraction is file-backed.
 - `fs.http_request` is HTTP(S) only: no FTP/SFTP, cookie jars, client
   certificates, proxies, multipart uploads, or resumable downloads.
+- No process can be started or wrapped: `nohup`, `setsid`, and `timeout` are
+  unavailable, and `fs.kill` rejects pid 0, pid 1, and process groups.
+- No ICMP ping; use `fs.http_request` or a TCP port check. No ACL, xattr, or
+  `chattr` support. `rsync`/`scp` are out of scope; use the SSH MCP.
+- `fs.comm` expects sorted input. `fs.ar` uses GNU short names (16 bytes max);
+  `fs.cpio` reads and writes newc only. `fs.dd` has no conversion flags.
 - `fs.tar` resolves `paths` even when `directory` is set; pass absolute sources
   with `directory` or the member path may not be found.
 - `fs.du` reports allocated blocks like `du`; use `fs.stat` with `%s` for

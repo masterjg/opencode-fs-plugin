@@ -5,6 +5,7 @@
 
 import { afterEach, describe, expect, it } from "vitest";
 import * as fs from "node:fs/promises";
+import * as os from "node:os";
 import * as path from "node:path";
 import * as net from "node:net";
 import { execFile } from "node:child_process";
@@ -18,6 +19,8 @@ import {
   isSubpath,
   lookupGroup,
   lookupUser,
+  resolveGid,
+  resolveUid,
   modeString,
   num,
   preserve,
@@ -161,6 +164,18 @@ describe("fsutil walk and copy", () => {
     await fs.writeFile(path.join(root, "file"), "x");
     await expect(ensureParent(path.join(root, "file/child"))).rejects.toBeInstanceOf(FsError);
     await expect(preserve(path.join(root, "missing"), await fs.lstat(path.join(root, "file")))).rejects.toBeInstanceOf(FsError);
+  });
+});
+
+describe("fsutil id resolution", () => {
+  it("resolves numeric and named ids", async () => {
+    expect(await resolveUid("1000")).toBe(1000);
+    expect(await resolveGid("1000")).toBe(1000);
+    expect(await resolveUid(os.userInfo().username)).toBe(os.userInfo().uid);
+    expect(await resolveGid(String(os.userInfo().gid))).toBe(os.userInfo().gid);
+    expect(await resolveGid(await lookupGroup(os.userInfo().gid))).toBe(os.userInfo().gid);
+    await expect(resolveUid("definitely-not-a-user")).rejects.toMatchObject({ code: "invalid" });
+    await expect(resolveGid("definitely-not-a-group")).rejects.toMatchObject({ code: "invalid" });
   });
 });
 

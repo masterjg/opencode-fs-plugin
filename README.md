@@ -45,6 +45,32 @@ unit, end-to-end and coverage tests.
 | `mktemp` | `fs.mktemp` | `template`, `directory`, `tmpdir`, `suffix` |
 | `trash` | `fs.trash` | XDG home trash |
 | `diff` | `fs.diff` | `unified`, `brief`, `recursive`, `ignoreWhitespace`, `ignoreCase`, `exclude` |
+| `chown` | `fs.chown` | `user`/`uid`, `group`/`gid`, `recursive`, `noDereference` |
+| `ps` | `fs.ps` | `pids`, `user`, `command`, `sortBy`, `limit`, `noHeader`, `format` |
+| `pgrep` | `fs.pgrep` | `pattern`, `full`, `ignoreCase`, `user`, `newest`, `oldest`, `count`, `delimiter` |
+| `kill` | `fs.kill` | `pids`, `signal`, `dryRun`; pid 0/1 and groups rejected |
+| `file` | `fs.file` | `paths`, `mime`; content magic detection |
+| `base64` | `fs.base64` | `decode`, `wrap`, `ignoreGarbage` |
+| `od` | `fs.od` | `offset`, `length`, `width` |
+| `strings` | `fs.strings` | `minLength` |
+| `id` | `fs.id` | `only` (`user`, `group`, `groups`) |
+| `uname` | `fs.uname` | `kernel`, `nodename`, `release`, `version`, `machine` |
+| `uptime` | `fs.uptime` | `pretty`, `loadAverage` |
+| `date` | `fs.date` | `value`, `utc`, `format` (`iso`, `unix`, `rfc`, `date`) |
+| `findmnt` | `fs.findmnt` | `paths`, `fsType`, `noHeader` |
+| `mountpoint` | `fs.mountpoint` | `paths`, `quiet` |
+| `tac` | `fs.tac` | reverse lines |
+| `rev` | `fs.rev` | reverse characters per line |
+| `nl` | `fs.nl` | `all`, `start`, `width`, `separator` |
+| `paste` | `fs.paste` | `delimiters`, `serial` |
+| `comm` | `fs.comm` | `suppress1`/`2`/`3`, `outputDelimiter` |
+| `split` | `fs.split` | `lines`/`bytes`, `prefix`, `suffixLength`, `numeric`, `additionalSuffix` |
+| `shuf` | `fs.shuf` | `headCount`, `zeroTerminated` |
+| `fold` | `fs.fold` | `width`, `spaces` |
+| `sync` | `fs.sync` | `paths`; file/directory fsync |
+| `dd` | `fs.dd` | `input`, `output`, `blockSize`, `count`, `skip`, `seek`, `status` |
+| `cpio` | `fs.cpio` | `create`/`list`/`extract` (newc), `directory`, `members`, `input`, `member`, `verbose` |
+| `ar` | `fs.ar` | `create`/`list`/`extract`, `directory`, `members` |
 | HTTP(S) | `fs.http_request` | `url`, `method`, `headers`, `body`, `json`, `output`, `checksum`, `maxBytes`, `timeoutMs`, `failOnError`, `followRedirects`, `maxRedirects` |
 | shell pipe | `fs.pipe` | `stages`, `input`, `output`, `append` |
 
@@ -64,6 +90,9 @@ await tools.fs.pipe({
   output: "errors.txt",
 })
 ```
+
+New filter stages: `tac`, `rev`, `nl`, `paste`, `shuf`, `fold`, `base64`, `od`,
+and `strings`; `dd` and `cpio` are source/sink stages like `tar`.
 
 `fs.http_request` is a pipe source, so network data can feed the same stages:
 
@@ -166,18 +195,18 @@ Add the registry package directly to the plugin list:
 
 ```jsonc
 {
-  "plugins": ["opencode-fs-plugin@1.4.3"]
+  "plugins": ["opencode-fs-plugin@1.5.0"]
 }
 ```
 
-`opencode plugin add opencode-fs-plugin@1.4.3` installs it and writes the config
+`opencode plugin add opencode-fs-plugin@1.5.0` installs it and writes the config
 entry. A bare `opencode-fs-plugin` follows the `latest` tag.
 
 OpenCode manages the package under its cache, so the path is not stable. If you
 also want the packaged skill, install it into a project instead:
 
 ```bash
-npm install opencode-fs-plugin@1.4.3
+npm install opencode-fs-plugin@1.5.0
 ```
 
 ```jsonc
@@ -192,7 +221,7 @@ npm install opencode-fs-plugin@1.4.3
 Download the release tarball, then install it as a normal npm package:
 
 ```bash
-VERSION=1.4.3
+VERSION=1.5.0
 curl -L -o "opencode-fs-plugin-${VERSION}.tgz" \
   "https://github.com/masterjg/opencode-fs-plugin/releases/download/v${VERSION}/opencode-fs-plugin-${VERSION}.tgz"
 npm install "./opencode-fs-plugin-${VERSION}.tgz"
@@ -221,20 +250,20 @@ OpenCode installs it from Git:
 
 ```jsonc
 {
-  "plugins": ["github:masterjg/opencode-fs-plugin#v1.4.3"]
+  "plugins": ["github:masterjg/opencode-fs-plugin#v1.5.0"]
 }
 ```
 
-`opencode plugin add 'github:masterjg/opencode-fs-plugin#v1.4.3'` installs the
+`opencode plugin add 'github:masterjg/opencode-fs-plugin#v1.5.0'` installs the
 same spec and writes the config entry. The equivalent full URL is
-`git+https://github.com/masterjg/opencode-fs-plugin.git#v1.4.3`. A tag is
+`git+https://github.com/masterjg/opencode-fs-plugin.git#v1.5.0`. A tag is
 checked for updates; use a full commit hash to pin it.
 
 Git plugins are installed under OpenCode's cache, so their package path is not
 stable. If you also want the packaged skill, install with npm instead:
 
 ```bash
-npm install "github:masterjg/opencode-fs-plugin#v1.4.3"
+npm install "github:masterjg/opencode-fs-plugin#v1.5.0"
 ```
 
 Then use `./node_modules/opencode-fs-plugin` in `plugins` and

@@ -60,7 +60,7 @@ export function isPermission(error: unknown): boolean {
 export function fromErrno(error: unknown, fallback: FsErrorCode = "io"): FsError {
   const code = errnoCode(error);
   const message = errorMessage(error);
-  if (code === "ENOENT" || code === "ENOTDIR") {
+  if (code === "ENOENT" || code === "ENOTDIR" || code === "ESRCH") {
     return new FsError(message, "not-found");
   }
   if (code === "EACCES" || code === "EPERM") {

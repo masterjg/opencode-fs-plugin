@@ -14,31 +14,55 @@ import { clampConcurrency } from "./core/parallel.js";
 import { Sandbox } from "./core/sandbox.js";
 import { parseSchema } from "./core/schema.js";
 import type { ToolSpec } from "./core/types.js";
+import { arTool } from "./tools/ar.js";
+import { base64Tool } from "./tools/base64.js";
 import { catTool } from "./tools/cat.js";
 import { chmodTool } from "./tools/chmod.js";
+import { chownTool } from "./tools/chown.js";
+import { commTool } from "./tools/comm.js";
 import { cpTool } from "./tools/cp.js";
+import { cpioTool } from "./tools/cpio.js";
 import { cutTool } from "./tools/cut.js";
+import { dateTool } from "./tools/date.js";
+import { ddTool } from "./tools/dd.js";
 import { dfTool } from "./tools/df.js";
 import { diffTool } from "./tools/diff.js";
 import { duTool } from "./tools/du.js";
+import { fileTool } from "./tools/file.js";
 import { findTool } from "./tools/find.js";
+import { findmntTool } from "./tools/findmnt.js";
+import { foldTool } from "./tools/fold.js";
 import { grepTool } from "./tools/grep.js";
 import { gunzipTool, gzipTool } from "./tools/gzip.js";
 import { hashTool } from "./tools/hash.js";
 import { headTool } from "./tools/head.js";
 import { httpRequestTool } from "./tools/http_request.js";
+import { idTool } from "./tools/id.js";
+import { killTool } from "./tools/kill.js";
 import { lnTool } from "./tools/ln.js";
 import { lsTool } from "./tools/ls.js";
 import { mkdirTool } from "./tools/mkdir.js";
 import { mktempTool } from "./tools/mktemp.js";
+import { mountpointTool } from "./tools/mountpoint.js";
 import { mvTool } from "./tools/mv.js";
+import { nlTool } from "./tools/nl.js";
+import { odTool } from "./tools/od.js";
+import { pasteTool } from "./tools/paste.js";
+import { pgrepTool } from "./tools/pgrep.js";
 import { pipeTool } from "./tools/pipe.js";
+import { psTool } from "./tools/ps.js";
 import { readlinkTool } from "./tools/readlink.js";
+import { revTool } from "./tools/rev.js";
 import { rmTool } from "./tools/rm.js";
 import { rmdirTool } from "./tools/rmdir.js";
 import { sedTool } from "./tools/sed.js";
+import { shufTool } from "./tools/shuf.js";
 import { sortTool } from "./tools/sort.js";
+import { splitTool } from "./tools/split.js";
 import { statTool } from "./tools/stat.js";
+import { stringsTool } from "./tools/strings.js";
+import { syncTool } from "./tools/sync.js";
+import { tacTool } from "./tools/tac.js";
 import { tailTool } from "./tools/tail.js";
 import { tarTool } from "./tools/tar.js";
 import { teeTool } from "./tools/tee.js";
@@ -46,7 +70,9 @@ import { touchTool } from "./tools/touch.js";
 import { trTool } from "./tools/tr.js";
 import { trashTool } from "./tools/trash.js";
 import { truncateTool } from "./tools/truncate.js";
+import { unameTool } from "./tools/uname.js";
 import { uniqTool } from "./tools/uniq.js";
+import { uptimeTool } from "./tools/uptime.js";
 import { wcTool } from "./tools/wc.js";
 import { unzipTool, zipTool } from "./tools/zip.js";
 
@@ -82,6 +108,32 @@ const TOOLS: readonly AnyTool[] = [
   tailTool,
   teeTool,
   httpRequestTool,
+  psTool,
+  pgrepTool,
+  killTool,
+  fileTool,
+  base64Tool,
+  odTool,
+  stringsTool,
+  idTool,
+  unameTool,
+  uptimeTool,
+  dateTool,
+  findmntTool,
+  mountpointTool,
+  tacTool,
+  revTool,
+  nlTool,
+  pasteTool,
+  commTool,
+  splitTool,
+  shufTool,
+  foldTool,
+  chownTool,
+  syncTool,
+  ddTool,
+  cpioTool,
+  arTool,
   wcTool,
   sortTool,
   uniqTool,
