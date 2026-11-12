@@ -1,6 +1,6 @@
 {
   "name": "opencode-fs-plugin",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "type": "module",
   "description": "OpenCode 2 plugin: Linux-style filesystem and text tools under the fs namespace.",
   "repository": {

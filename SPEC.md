@@ -45,8 +45,9 @@ These are not implemented:
   %x %X %y %Y %z %Z %w %W %t %T %C %L`, plus `\n`, `\t`, `\\` and `%%`.
   `%C` returns `?` because Node does not expose the SELinux file context.
 - `chmod` supports octal modes and symbolic `[ugoa]*[-+=][rwxXst]*` clauses.
-- `find -size` uses binary suffixes (`K`, `M`, `G`, ...); `-mtime`/`-mmin`
-  accept `+N` (older), `-N` (newer), and exact `N`. `newerXY` uses `XY:path`.
+- `find -size` accepts `c` (bytes), `w` (2-byte words), `b` (512-byte blocks),
+  and binary `K`/`M`/`G`/... suffixes; `-mtime`/`-mmin` accept `+N` (older),
+  `-N` (newer), and exact `N`. `newerXY` uses `XY:path`.
 - `sort -k` accepts field/character ranges with modifiers `bdfghiMnrV`.
 - `tar`/`zip` extraction rejects path traversal and escaping links.
 - `pipe` passes raw bytes and only accepts registered pipeable stages; `tar` and
