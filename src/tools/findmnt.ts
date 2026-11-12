@@ -59,7 +59,7 @@ export const findmntTool: ToolSpec<Input> = {
   },
 };
 
-function parseMount(line: string): Mount {
+export function parseMount(line: string): Mount {
   const fields = line.split(" ");
   const separator = fields.indexOf("-");
   const decode = (value: string): string =>
