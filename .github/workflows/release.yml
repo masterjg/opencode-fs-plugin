@@ -61,6 +61,8 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # Direct publish; keep "Allow npm publish" enabled on the npm trusted
+      # publisher. npm stage publish would require manual approval per version.
       - name: Publish to npm
         if: steps.npm.outputs.exists == 'false'
         run: npm publish "./dist/opencode-fs-plugin-${{ steps.version.outputs.version }}.tgz" --access public --provenance

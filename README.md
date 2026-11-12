@@ -260,7 +260,9 @@ new release; an unchanged version is skipped with a notice.
 
 The npm step uses trusted publishing (OIDC); no npm token is stored. The
 package's trusted publisher must authorize workflow `release.yml` in
-`masterjg/opencode-fs-plugin`.
+`masterjg/opencode-fs-plugin`. Keep **Allow npm publish** enabled on that
+connection: the workflow uses `npm publish`, not `npm stage publish`, so
+releases publish directly without per-version approval.
 
 ## License
 
