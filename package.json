@@ -1,9 +1,9 @@
 {
   "name": "opencode-fs-plugin",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "OpenCode 2 plugin: sandboxed mkdir, rmdir and rm tools (symlink-escape safe).",
+  "description": "OpenCode 2 plugin: Linux-style filesystem and text tools under the fs namespace.",
   "exports": {
     ".": "./src/index.ts"
   },
@@ -12,10 +12,20 @@
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node test/sandbox.test.ts"
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@sinclair/typebox": "^0.34.52",
+    "diff": "^9.0.0",
+    "picomatch": "^4.0.7",
+    "tar-stream": "^3.2.2",
+    "yauzl": "^3.4.0",
+    "yazl": "^3.3.1"
   },
   "peerDependencies": {
-    "@opencode/plugin": "^2.2.2"
+    "@opencode/plugin": "^2.2.7"
   },
   "peerDependenciesMeta": {
     "@opencode/plugin": {
@@ -23,9 +33,14 @@
     }
   },
   "devDependencies": {
-    "@opencode/plugin": "^2.2.2",
+    "@opencode/plugin": "^2.2.7",
     "@types/node": "^24.0.0",
-    "typescript": "^5.6.0"
+    "@types/picomatch": "^4.0.2",
+    "@types/yauzl": "^2.10.3",
+    "@types/yazl": "^3.3.0",
+    "@vitest/coverage-v8": "^5.1.0",
+    "typescript": "^5.9.0",
+    "vitest": "^5.1.0"
   },
   "license": "EPL-2.0",
   "license-wizard": {
