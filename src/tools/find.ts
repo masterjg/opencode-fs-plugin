@@ -9,7 +9,6 @@ import picomatch from "picomatch";
 import { Type, type Static } from "@sinclair/typebox";
 import { FsError } from "../core/errors.js";
 import { lookupGroup, lookupUser, modeString, num, typeName, walk } from "../core/fsutil.js";
-import { parseSize } from "../core/format.js";
 import { textResult, type ToolSpec } from "../core/types.js";
 
 const Schema = Type.Object(
@@ -117,7 +116,10 @@ export const findTool: ToolSpec<Input> = {
     const patterns: Patterns = {
       nameMatch: input.name === undefined ? undefined : picomatch(input.name, { dot: true }),
       inameMatch: input.iname === undefined ? undefined : picomatch(input.iname, { dot: true, nocase: true }),
-      pathMatch: input.pathPattern === undefined ? undefined : picomatch(input.pathPattern, { dot: true }),
+      // GNU find lets `*` cross path separators in `-path`.
+      pathMatch: input.pathPattern === undefined
+        ? undefined
+        : picomatch(input.pathPattern, { dot: true, bash: true }),
       lnameMatch: input.lname === undefined ? undefined : picomatch(input.lname, { dot: true }),
       ilnameMatch: input.ilname === undefined ? undefined : picomatch(input.ilname, { dot: true, nocase: true }),
       regex: input.regex === undefined ? undefined : new RegExp(input.regex),
@@ -202,7 +204,7 @@ async function matches(
   if (input.size !== undefined) {
     const sign = input.size.startsWith("+") ? 1 : input.size.startsWith("-") ? -1 : 0;
     const body = sign === 0 ? input.size : input.size.slice(1);
-    const size = parseSize(body);
+    const size = parseFindSize(body);
     if (sign === 1 && stats.size <= size) return false;
     if (sign === -1 && stats.size >= size) return false;
     if (sign === 0 && stats.size !== size) return false;
@@ -413,6 +415,23 @@ async function printf(
     output += values[next] ?? `%${next}`;
   }
   return output;
+}
+
+function parseFindSize(value: string): number {
+  const match = /^(\d+(?:\.\d+)?)([cwbkMGTPE]?)$/.exec(value);
+  if (match === null) throw new FsError(`Invalid size: ${value}`, "invalid");
+  const units: Record<string, number> = {
+    c: 1,
+    w: 2,
+    b: 512,
+    k: 1024,
+    M: 1024 ** 2,
+    G: 1024 ** 3,
+    T: 1024 ** 4,
+    P: 1024 ** 5,
+    E: 1024 ** 6,
+  };
+  return Math.ceil(Number(match[1]) * (units[match[2] as string] ?? 1));
 }
 
 function countMatches(value: number, expression: string): boolean {

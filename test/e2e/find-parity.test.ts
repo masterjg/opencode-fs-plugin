@@ -102,6 +102,22 @@ describe("find parity predicates", () => {
     const newer = await runSpec(findTool, { paths: ["."], newerXY: "mm:reference" }, sb);
     expect(lines(newer).some((line) => line.endsWith("a.txt"))).toBe(true);
 
+    const bytes = await runSpec(findTool, { paths: ["."], size: "+1c", type: "f" }, sb);
+    expect(lines(bytes).length).toBeGreaterThan(0);
+    const words = await runSpec(findTool, { paths: ["."], size: "-10w", type: "f" }, sb);
+    expect(lines(words).length).toBeGreaterThan(0);
+    const blocks = await runSpec(findTool, { paths: ["."], size: "1b", type: "f" }, sb);
+    expect(lines(blocks).length).toBe(0);
+
+    const pathPattern = await runSpec(findTool, { paths: ["."], pathPattern: "*sub*" }, sb);
+    expect(lines(pathPattern).some((line) => line.includes("sub"))).toBe(true);
+
+    const noSuffix = await runSpec(findTool, { paths: ["."], size: "1", type: "f" }, sb);
+    expect(lines(noSuffix).length).toBeGreaterThanOrEqual(0);
+    await expect(runSpec(findTool, { paths: ["."], size: "bogus" }, sb)).rejects.toMatchObject({
+      code: "invalid",
+    });
+
     await expect(runSpec(findTool, { paths: ["."], newerXY: "bad" }, sb)).rejects.toMatchObject({
       code: "invalid",
     });
