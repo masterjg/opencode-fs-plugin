@@ -14,6 +14,7 @@ const Schema = Type.Object(
     paths: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
     follow: Type.Optional(Type.Boolean({ description: "Follow symlinks (`-L`)." })),
     format: Type.Optional(Type.String({ description: "printf-style format string (`-c`, `--printf`)." })),
+    terse: Type.Optional(Type.Boolean({ description: "Terse single-line output (`-t`)." })),
     filesystem: Type.Optional(Type.Boolean({ description: "Show filesystem status (`-f`)." })),
   },
   { additionalProperties: false },
@@ -47,7 +48,9 @@ export const statTool: ToolSpec<Input> = {
       const link = stats.isSymbolicLink() ? await fs.readlink(target.full).catch(() => undefined) : undefined;
       blocks.push(
         input.format === undefined
-          ? await defaultFormat(requested, target.full, stats, link)
+          ? input.terse === true
+            ? await terseFormat(requested, stats)
+            : await defaultFormat(requested, target.full, stats, link)
           : await customFormat(input.format, requested, target.full, stats, link),
       );
     }
@@ -95,6 +98,7 @@ async function customFormat(
     F: typeName(stats),
     a: (num(stats.mode) & 0o7777).toString(8),
     A: modeString(stats),
+    f: num(stats.mode).toString(16),
     u: String(num(stats.uid)),
     U: await lookupUser(num(stats.uid)),
     g: String(num(stats.gid)),
@@ -105,14 +109,20 @@ async function customFormat(
     b: String(num(stats.blocks)),
     B: String(num(stats.blksize)),
     o: String(num(stats.blksize)),
+    m: await mountPoint(full),
+    r: num(stats.rdev).toString(16),
     x: stats.atime.toISOString(),
     X: String(Math.floor(num(stats.atimeMs) / 1000)),
     y: stats.mtime.toISOString(),
     Y: String(Math.floor(num(stats.mtimeMs) / 1000)),
     z: stats.ctime.toISOString(),
     Z: String(Math.floor(num(stats.ctimeMs) / 1000)),
+    /* v8 ignore next -- some filesystems do not expose a birth time */
+    w: stats.birthtimeMs === 0 ? "-" : stats.birthtime.toISOString(),
+    W: String(Math.floor(num(stats.birthtimeMs) / 1000)),
     t: Math.floor(num(stats.rdev) / 256).toString(16),
     T: (num(stats.rdev) % 256).toString(16),
+    C: "?",
     L: full,
   };
   let output = "";
@@ -137,6 +147,55 @@ async function customFormat(
     else output += values[next] ?? `%${next}`;
   }
   return output;
+}
+
+async function terseFormat(
+  requested: string,
+  stats: Awaited<ReturnType<typeof fs.lstat>>,
+): Promise<string> {
+  return [
+    requested,
+    num(stats.size),
+    num(stats.blocks),
+    num(stats.mode).toString(16),
+    num(stats.uid),
+    num(stats.gid),
+    num(stats.dev),
+    num(stats.ino),
+    num(stats.nlink),
+    num(stats.rdev).toString(16),
+    Math.floor(num(stats.atimeMs) / 1000),
+    Math.floor(num(stats.mtimeMs) / 1000),
+    Math.floor(num(stats.ctimeMs) / 1000),
+    Math.floor(num(stats.birthtimeMs) / 1000),
+    num(stats.blksize),
+  ].join(" ");
+}
+
+let mountPoints: string[] | undefined;
+
+async function mountPoint(full: string): Promise<string> {
+  if (mountPoints === undefined) {
+    const points: string[] = [];
+    /* v8 ignore next -- /proc/self/mountinfo exists on Linux */
+    const text = await fs.readFile("/proc/self/mountinfo", "utf8").catch(() => "");
+    for (const line of text.split("\n")) {
+      const fields = line.split(" ");
+      const point = fields[4];
+      if (point !== undefined) {
+        points.push(point.replace(/\\([0-7]{3})/g, (_match: string, octal: string) =>
+          String.fromCharCode(Number.parseInt(octal, 8))));
+      }
+    }
+    mountPoints = points;
+  }
+  let best = "/";
+  for (const point of mountPoints) {
+    if (full === point || full.startsWith(point === "/" ? "/" : `${point}/`)) {
+      if (point.length > best.length) best = point;
+    }
+  }
+  return best;
 }
 
 async function formatFilesystem(requested: string, full: string): Promise<string> {
