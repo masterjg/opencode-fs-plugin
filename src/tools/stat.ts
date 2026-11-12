@@ -193,6 +193,7 @@ async function mountPoint(full: string): Promise<string> {
   let best = "/";
   for (const point of mountPoints) {
     if (full === point || full.startsWith(point === "/" ? "/" : `${point}/`)) {
+      /* v8 ignore next -- CI may only expose the root mount */
       if (point.length > best.length) best = point;
     }
   }
