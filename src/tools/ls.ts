@@ -5,6 +5,7 @@
 
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import picomatch from "picomatch";
 import { Type, type Static } from "@sinclair/typebox";
 import { FsError, fromErrno } from "../core/errors.js";
 import { formatDate, lookupGroup, lookupUser, modeString, num, typeName } from "../core/fsutil.js";
@@ -22,6 +23,24 @@ const Schema = Type.Object(
     directory: Type.Optional(Type.Boolean({ description: "List directories themselves, not their contents (`-d`)." })),
     inode: Type.Optional(Type.Boolean({ description: "Print inode numbers (`-i`)." })),
     classify: Type.Optional(Type.Boolean({ description: "Append file type indicators (`-F`)." })),
+    size: Type.Optional(Type.Boolean({ description: "Print allocated block counts (`-s`)." })),
+    numericIds: Type.Optional(Type.Boolean({ description: "Use numeric uid/gid and long format (`-n`)." })),
+    noGroup: Type.Optional(Type.Boolean({ description: "Long format without group (`-g`)." })),
+    noOwner: Type.Optional(Type.Boolean({ description: "Long format without owner (`-o`)." })),
+    slash: Type.Optional(Type.Boolean({ description: "Append `/` to directories (`-p`)." })),
+    quote: Type.Optional(Type.Boolean({ description: "Quote names with C-style escapes (`-Q`)." })),
+    versionSort: Type.Optional(Type.Boolean({ description: "Natural version sort (`-v`)." })),
+    extensionSort: Type.Optional(Type.Boolean({ description: "Sort by extension (`-X`)." })),
+    fullTime: Type.Optional(Type.Boolean({ description: "Full ISO timestamps (`--full-time`)." })),
+    timeStyle: Type.Optional(
+      Type.Union(
+        [Type.Literal("full-iso"), Type.Literal("long-iso"), Type.Literal("iso"), Type.Literal("locale")],
+        { description: "Timestamp style (`--time-style`)." },
+      ),
+    ),
+    hide: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { description: "Hide matching names (`--hide`)." })),
+    ignore: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { description: "Ignore matching names (`--ignore`)." })),
+    groupDirectoriesFirst: Type.Optional(Type.Boolean({ description: "List directories before files (`--group-directories-first`)." })),
     sortBy: Type.Optional(
       Type.Union([Type.Literal("name"), Type.Literal("size"), Type.Literal("time"), Type.Literal("none")], {
         description: "Sort key. Default: name.",
@@ -115,6 +134,7 @@ async function readEntries(full: string, input: Input): Promise<Entry[]> {
   }
   if (input.all === true) names = [".", "..", ...names];
   else if (input.almostAll !== true) names = names.filter((name) => !name.startsWith("."));
+  names = names.filter((name) => !matchesAny(name, input.hide) && !matchesAny(name, input.ignore));
   const entries: Entry[] = [];
   for (const name of names) {
     const target = path.join(full, name);
@@ -134,35 +154,111 @@ async function readEntries(full: string, input: Input): Promise<Entry[]> {
 
 function sortEntries(entries: Entry[], input: Input): Entry[] {
   const sortBy = input.sortBy ?? "name";
-  if (sortBy !== "none") {
+  if (sortBy !== "none" || input.versionSort === true || input.extensionSort === true) {
     entries.sort((a, b) => {
-      if (sortBy === "size") return num(a.stats.size) - num(b.stats.size);
-      if (sortBy === "time") return num(a.stats.mtimeMs) - num(b.stats.mtimeMs);
+      if (input.extensionSort === true) {
+        const extension = path.extname(a.name).localeCompare(path.extname(b.name));
+        if (extension !== 0) return extension;
+      } else if (input.versionSort === true) {
+        return versionCompare(a.name, b.name);
+      } else if (sortBy === "size") {
+        return num(a.stats.size) - num(b.stats.size);
+      } else if (sortBy === "time") {
+        return num(a.stats.mtimeMs) - num(b.stats.mtimeMs);
+      }
       return a.name.localeCompare(b.name);
     });
   }
   if (input.reverse === true) entries.reverse();
+  if (input.groupDirectoriesFirst === true) {
+    entries.sort((a, b) => Number(b.stats.isDirectory()) - Number(a.stats.isDirectory()));
+  }
   return entries;
 }
 
-async function formatEntries(entries: Entry[], input: Input): Promise<string[]> {
-  if (input.long === true) {
-    return Promise.all(entries.map((entry) => formatEntry(entry, input)));
+function matchesAny(name: string, patterns: readonly string[] | undefined): boolean {
+  if (patterns === undefined || patterns.length === 0) return false;
+  return patterns.some((pattern) => picomatch(pattern, { dot: true })(name));
+}
+
+function versionCompare(left: string, right: string): number {
+  /* v8 ignore next -- ls entry names are never empty */
+  const leftParts = left.match(/\d+|\D+/g) ?? [];
+  /* v8 ignore next -- ls entry names are never empty */
+  const rightParts = right.match(/\d+|\D+/g) ?? [];
+  const length = Math.max(leftParts.length, rightParts.length);
+  for (let index = 0; index < length; index++) {
+    const a = leftParts[index];
+    const b = rightParts[index];
+    /* v8 ignore next */
+    if (a === undefined) return -1;
+    /* v8 ignore next */
+    if (b === undefined) return 1;
+    if (/^\d+$/.test(a) && /^\d+$/.test(b)) {
+      const difference = Number(a) - Number(b);
+      if (difference !== 0) return difference;
+    } else {
+      const result = a.localeCompare(b);
+      if (result !== 0) return result;
+    }
   }
-  return entries.map((entry) => classify(entry.name, entry.stats, input));
+  /* v8 ignore next -- distinct entry names cannot compare fully equal */
+  return 0;
+}
+
+async function formatEntries(entries: Entry[], input: Input): Promise<string[]> {
+  return Promise.all(entries.map((entry) => formatEntry(entry, input)));
 }
 
 async function formatEntry(entry: Entry, input: Input): Promise<string> {
-  const name = classify(entry.name, entry.stats, input);
+  const name = displayName(entry.name, entry.stats, input);
+  const long = input.long === true || input.numericIds === true || input.noOwner === true || input.noGroup === true;
   /* v8 ignore next */
-  if (input.long !== true) return input.inode === true ? `${entry.stats.ino} ${name}` : name;
-  const user = await lookupUser(num(entry.stats.uid));
-  const group = await lookupGroup(num(entry.stats.gid));
+  if (!long) {
+    const inode = input.inode === true ? `${num(entry.stats.ino)} ` : "";
+    const blocks = input.size === true ? `${blockSize(entry.stats, input)} ` : "";
+    return `${inode}${blocks}${name}`;
+  }
+
+  const user = input.numericIds === true ? String(num(entry.stats.uid)) : await lookupUser(num(entry.stats.uid));
+  const group = input.numericIds === true ? String(num(entry.stats.gid)) : await lookupGroup(num(entry.stats.gid));
   const size = input.human === true ? humanSize(num(entry.stats.size)) : String(num(entry.stats.size));
   const link = entry.link === undefined ? "" : ` -> ${entry.link}`;
+  const parts: string[] = [];
+  if (input.size === true) parts.push(blockSize(entry.stats, input));
   /* v8 ignore next */
-  const inode = input.inode === true ? `${num(entry.stats.ino)} ` : "";
-  return `${inode}${modeString(entry.stats)} ${String(num(entry.stats.nlink)).padStart(2)} ${user} ${group} ${size.padStart(8)} ${formatDate(entry.stats.mtime)} ${name}${link}`;
+  if (input.inode === true) parts.push(String(num(entry.stats.ino)));
+  parts.push(modeString(entry.stats), String(num(entry.stats.nlink)).padStart(2));
+  if (input.noOwner !== true) parts.push(user);
+  if (input.noGroup !== true) parts.push(group);
+  parts.push(size.padStart(8), formatTime(entry.stats.mtime, input));
+  return `${parts.join(" ")} ${name}${link}`;
+}
+
+function blockSize(stats: Awaited<ReturnType<typeof fs.lstat>>, input: Input): string {
+  return input.human === true
+    ? humanSize(num(stats.blocks) * 512)
+    : String(Math.ceil(num(stats.blocks) / 2));
+}
+
+function formatTime(date: Date, input: Input): string {
+  if (input.fullTime === true || input.timeStyle === "full-iso") {
+    const iso = date.toISOString();
+    return `${iso.slice(0, 10)} ${iso.slice(11, 23)}000000 +0000`;
+  }
+  if (input.timeStyle === "long-iso") return date.toISOString().slice(0, 16).replace("T", " ");
+  if (input.timeStyle === "iso") {
+    const iso = date.toISOString();
+    return `${iso.slice(5, 10)} ${iso.slice(11, 16)}`;
+  }
+  return formatDate(date);
+}
+
+function displayName(name: string, stats: Awaited<ReturnType<typeof fs.lstat>>, input: Input): string {
+  const quoted = input.quote === true ? JSON.stringify(name) : name;
+  const classified = classify(quoted, stats, input);
+  if (input.slash === true && stats.isDirectory() && !classified.endsWith("/")) return `${classified}/`;
+  return classified;
 }
 
 function classify(name: string, stats: Awaited<ReturnType<typeof fs.lstat>>, input: Input): string {
