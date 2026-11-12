@@ -166,18 +166,18 @@ Add the registry package directly to the plugin list:
 
 ```jsonc
 {
-  "plugins": ["opencode-fs-plugin@1.4.0"]
+  "plugins": ["opencode-fs-plugin@1.4.1"]
 }
 ```
 
-`opencode plugin add opencode-fs-plugin@1.4.0` installs it and writes the config
+`opencode plugin add opencode-fs-plugin@1.4.1` installs it and writes the config
 entry. A bare `opencode-fs-plugin` follows the `latest` tag.
 
 OpenCode manages the package under its cache, so the path is not stable. If you
 also want the packaged skill, install it into a project instead:
 
 ```bash
-npm install opencode-fs-plugin@1.4.0
+npm install opencode-fs-plugin@1.4.1
 ```
 
 ```jsonc
@@ -192,7 +192,7 @@ npm install opencode-fs-plugin@1.4.0
 Download the release tarball, then install it as a normal npm package:
 
 ```bash
-VERSION=1.4.0
+VERSION=1.4.1
 curl -L -o "opencode-fs-plugin-${VERSION}.tgz" \
   "https://github.com/masterjg/opencode-fs-plugin/releases/download/v${VERSION}/opencode-fs-plugin-${VERSION}.tgz"
 npm install "./opencode-fs-plugin-${VERSION}.tgz"
@@ -221,20 +221,20 @@ OpenCode installs it from Git:
 
 ```jsonc
 {
-  "plugins": ["github:masterjg/opencode-fs-plugin#v1.4.0"]
+  "plugins": ["github:masterjg/opencode-fs-plugin#v1.4.1"]
 }
 ```
 
-`opencode plugin add 'github:masterjg/opencode-fs-plugin#v1.4.0'` installs the
+`opencode plugin add 'github:masterjg/opencode-fs-plugin#v1.4.1'` installs the
 same spec and writes the config entry. The equivalent full URL is
-`git+https://github.com/masterjg/opencode-fs-plugin.git#v1.4.0`. A tag is
+`git+https://github.com/masterjg/opencode-fs-plugin.git#v1.4.1`. A tag is
 checked for updates; use a full commit hash to pin it.
 
 Git plugins are installed under OpenCode's cache, so their package path is not
 stable. If you also want the packaged skill, install with npm instead:
 
 ```bash
-npm install "github:masterjg/opencode-fs-plugin#v1.4.0"
+npm install "github:masterjg/opencode-fs-plugin#v1.4.1"
 ```
 
 Then use `./node_modules/opencode-fs-plugin` in `plugins` and
