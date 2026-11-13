@@ -53,7 +53,9 @@ the `fs` namespace (`tools.fs.cp`, direct `fs_cp`).
 - `dd` supports `bs`, `count`, `skip`, `seek`, and `status`; it does not
   implement conversions or `iflag`/`oflag`.
 - `cpio` reads and writes newc archives; `ar` uses GNU short names (max 16 bytes).
-  Both reject traversal and unsafe member names.
+  Both reject traversal and unsafe member names. Like `tar`, create resolves
+  `paths` against the project; pass absolute sources plus `directory` for
+  relative member names.
 
 ## HTTP requests
 

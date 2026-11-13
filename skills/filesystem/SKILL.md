@@ -283,7 +283,8 @@ await tools.fs.http_request({
 - `fs.sed` supports `s<delim>pattern<delim>replacement<delim>flags` with `g`,
   `i` and `p`. It is not a full sed interpreter.
 - `fs.find` has no `-exec`; use `fs.rm`/`fs.trash` separately.
-- No `xz`, `zstd`, `7z`, `chown`, `chattr`, `dd`, or `rsync`.
+- No `xz`, `zstd`, `7z`, `rar`, `chattr`, ACLs, xattrs, or `rsync`.
+  `chown` and `dd` are available; the SSH MCP covers transfers.
 - `fs.tail` has bounded `follow` only; unbounded `tail -f` is not supported.
 - `cp -a` preserves mode and timestamps but not ACLs or xattrs.
 - `fs.tar`/`fs.zip` create from `input` or stdin; extraction is file-backed.
