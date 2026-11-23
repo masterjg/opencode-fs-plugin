@@ -100,7 +100,7 @@ host drops unknown fields, so a name typo runs with defaults.
 | `paths` + optional `keep`/`force`/`stdout`/`level`/`suffix` | `fs.gzip`, `fs.gunzip` |
 | `url` + optional `output` | `fs.http_request` |
 | `stages` + optional `input`/`output` | `fs.pipe` |
-| `command` + `args` + optional `cwd`/`stdin`/`timeoutMs` | `fs.exec` |
+| `command` + `args` + optional `cwd`/`stdin`/`timeoutMs`/`network`/`allowPaths` | `fs.exec` |
 
 `fs.head` takes `skip` for line ranges: `sed -n '20,40p'` is
 `fs.head({ paths, skip: 19, lines: 21 })`. `fs.find` takes
@@ -148,22 +148,34 @@ remove them explicitly.
 
 ## Exec
 
-`fs.exec` runs an allowlisted executable without a shell. The default allowlist
-is `npm`, `npx`, `uv`, `uvx`, `pip`, `pip3`; override it with the fs plugin
-option `execAllowlist` in `opencode.jsonc`:
+`fs.exec` runs an allowlisted executable in a **procage sandbox** without a
+shell. The default allowlist is `npm`, `npx`, `uv`, `uvx`, `pip`, `pip3`;
+override it with the fs plugin option `execAllowlist` in `opencode.jsonc`:
 
 ```jsonc
 { "package": "./repos/opencode-fs-plugin", "options": { "execAllowlist": ["npm", "uv"] } }
 ```
 
-`command` is a bare executable name; `args` are passed verbatim, so `;`, `|`,
-and `$()` have no shell meaning. `cwd` must resolve inside the project unless
-`external_directory` allows it. Direct calls return JSON with
-`exitCode`/`stdout`/`stderr`; in `fs.pipe` the stage passes raw stdout.
+The project is read/write/exec. **Network and external paths are denied by
+default.** `network: true` asserts `fs_exec_network`; every `allowPaths` entry
+asserts `external_directory`, and `mode: "ro"` keeps it read-only:
 
 ```js
-await tools.fs.exec({ command: "npm", args: ["run", "build"], timeoutMs: 300000 })
-await tools.fs.exec({ command: "uv", args: ["run", "pytest"] })
+await tools.fs.exec({
+  command: "npm",
+  args: ["install"],
+  network: true,
+  allowPaths: [{ path: "/home/you/.npm", mode: "rw" }],
+  timeoutMs: 300000,
+})
+```
+
+Denied access returns `violations` and a `hint`; ask the user, then retry with
+the approved path or network. `command` is a bare name, `args` are literal, and
+`cwd` is sandboxed. Direct calls return JSON with `exitCode`/`stdout`/`stderr`
+and violations; in `fs.pipe` the stage passes raw stdout.
+
+```js
 await tools.fs.pipe({
   stages: [
     { tool: "exec", args: { command: "npm", args: ["test"] } },
@@ -173,8 +185,9 @@ await tools.fs.pipe({
 ```
 
 A non-zero exit is a normal result; allowlist rejection, timeout, and abort are
-errors. The tool asserts `fs_exec`, uses a process group for timeout kills, and
-caps captured stdout/stderr.
+handled explicitly. Procage kills every process the run started, including
+detached descendants, and caps captured stdout/stderr. It requires Linux
+x64/arm64, glibc 2.28+, and Node 22.12+.
 
 ## Batch independent calls
 
@@ -407,6 +420,8 @@ await tools.fs.http_request({
 - Linux only; there is no Windows branch.
 - `fs.sed` supports `s<delim>pattern<delim>replacement<delim>flags` with `g`,
   `i` and `p`. It is not a full sed interpreter.
+- `fs.exec` requires procage: Linux x64/arm64, glibc 2.28+, Node 22.12+. Network
+  and external paths are denied until approved.
 - `fs.find` has no arbitrary `-exec`; use `action: "delete"`/`"trash"` for the
   common cleanup case, or `fs.rm`/`fs.trash` separately.
 - No `xz`, `zstd`, `7z`, `rar`, `chattr`, ACLs, xattrs, or `rsync`.
@@ -460,8 +475,9 @@ Command actions are `fs_<command>` (for example `fs_cp`). `fs_*` wildcards work
 in agent rules. `fs.pipe` asserts each stage's action; a denied stage cannot be
 hidden inside a pipeline. Do not work around a denied tool with shell.
 
-`fs_exec` runs only exact allowlisted names and asserts `fs_exec` plus
-`external_directory` when `cwd` leaves the project. There is no shell.
+`fs_exec` runs only exact allowlisted names in a procage sandbox. It asserts
+`fs_exec`, plus `fs_exec_network` for `network: true` and `external_directory`
+for each `allowPaths` entry or an external `cwd`. There is no shell.
 
 `fs_http_request` is allowed by default, like `fetch`. Its resource is the
 request host; rules can allow one host and ask or deny the rest. Each redirect

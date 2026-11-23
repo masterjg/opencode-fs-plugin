@@ -3,10 +3,13 @@
  * license-wizard managed-header v1 EPL-2.0 short 73897e75828f
  */
 
-import { spawn, type ChildProcess } from "node:child_process";
-import { once } from "node:events";
+import * as fs from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import * as path from "node:path";
 import { Type, type Static } from "@sinclair/typebox";
-import { FsError, fromErrno } from "../core/errors.js";
+import type { Violation } from "procage";
+import { FsError } from "../core/errors.js";
+import { collect } from "../core/stream.js";
 import { textResult, type RunContext, type ToolSpec } from "../core/types.js";
 
 export const DEFAULT_EXEC_ALLOWLIST = ["npm", "npx", "uv", "uvx", "pip", "pip3"] as const;
@@ -39,28 +42,61 @@ const Schema = Type.Object(
     timeoutMs: Type.Optional(
       Type.Integer({ minimum: 100, maximum: 600_000, description: "Timeout in milliseconds. Default: 120000." }),
     ),
+    network: Type.Optional(
+      Type.Boolean({
+        description: "Allow IP network after `fs_exec_network` approval. Default: false.",
+      }),
+    ),
+    allowPaths: Type.Optional(
+      Type.Array(
+        Type.Object(
+          {
+            path: Type.String({ minLength: 1, description: "External path to expose after approval." }),
+            mode: Type.Optional(
+              Type.Union([Type.Literal("ro"), Type.Literal("rw")], { description: "Read-only or read-write. Default: rw." }),
+            ),
+          },
+          { additionalProperties: false },
+        ),
+      ),
+    ),
   },
   { additionalProperties: false },
 );
 
 type Input = Static<typeof Schema>;
 
+interface PolicyDocument {
+  fs: Array<{ access: string; target: { subpath: string } }>;
+  net: string;
+  [key: string]: unknown;
+}
+
 interface ExecOutcome {
   stdout: Buffer;
   stderr: Buffer;
   exitCode: number;
-  signal: NodeJS.Signals | null;
+  signal: string | null;
   timedOut: boolean;
   aborted: boolean;
   stdoutTruncated: boolean;
   stderrTruncated: boolean;
+  violations: Violation[];
+}
+
+let procage: Promise<typeof import("procage")> | undefined;
+
+function loadProcage(): Promise<typeof import("procage")> {
+  procage ??= import("procage");
+  return procage;
 }
 
 export const execTool: ToolSpec<Input> = {
   name: "exec",
   description:
-    "Run an allowlisted executable without a shell and return its exit code, stdout, and stderr. " +
-    "Direct calls return JSON; pipe stages pass raw stdout. Default allowlist: npm, npx, uv, uvx, pip, pip3.",
+    "Run an allowlisted executable in a procage sandbox without a shell. Direct calls return JSON; " +
+    "pipe stages pass raw stdout. Default allowlist: npm, npx, uv, uvx, pip, pip3. Network and external " +
+    "paths are denied until approved.",
   schema: Schema,
   pipeable: "filter",
   mutates: true,
@@ -78,178 +114,235 @@ export const execTool: ToolSpec<Input> = {
     }
 
     const requested = input.cwd ?? ".";
-    const target = await ctx.sandbox.resolveExisting(requested, { allowRoot: true });
-    const stats = await ctx.sandbox.stat(target.full, requested);
-    if (!stats.isDirectory()) throw new FsError(`exec cwd is not a directory: "${requested}"`, "not-directory");
-    await ctx.permission.assert([{ target, boundary: target.full }]);
+    const cwdTarget = await ctx.sandbox.resolveExisting(requested, { allowRoot: true });
+    const cwdStats = await ctx.sandbox.stat(cwdTarget.full, requested);
+    if (!cwdStats.isDirectory()) throw new FsError(`exec cwd is not a directory: "${requested}"`, "not-directory");
+    await ctx.permission.assert([{ target: cwdTarget, boundary: cwdTarget.full }]);
     if (ctx.signal.aborted) throw new FsError("exec interrupted.", "interrupted");
 
-    const outcome = await runProcess(
-      ctx,
-      command,
-      args,
-      target.full,
-      input.timeoutMs ?? 120_000,
-      input.stdin,
-      io.stdin,
-    );
-    const metadata = {
-      command,
-      args,
-      exitCode: outcome.exitCode,
-      signal: outcome.signal,
-      timedOut: outcome.timedOut,
-      aborted: outcome.aborted,
-      stdoutTruncated: outcome.stdoutTruncated,
-      stderrTruncated: outcome.stderrTruncated,
-    };
-    if (io.piped === true) {
-      return {
-        stdout: outcome.stdout,
-        stderr: outcome.stderr.toString("utf8"),
-        exitCode: outcome.exitCode === 0 ? 0 : 1,
-        metadata,
-      };
+    if (input.network === true) await ctx.permissionFor("fs_exec_network").assert([]);
+
+    const allowed: Array<{ full: string; mode: "ro" | "rw" }> = [];
+    for (const entry of input.allowPaths ?? []) {
+      const target = await ctx.sandbox.resolveExisting(entry.path, { allowRoot: true });
+      await ctx.permission.assert([{ target, boundary: target.full }]);
+      const mode = entry.mode ?? "rw";
+      if (!allowed.some((item) => item.full === target.full && item.mode === mode)) {
+        allowed.push({ full: target.full, mode });
+      }
     }
-    const body = {
-      ...metadata,
-      stdout: outcome.stdout.toString("utf8"),
-      stderr: outcome.stderr.toString("utf8"),
-    };
-    return textResult(JSON.stringify(body, null, 2), metadata, outcome.exitCode === 0 ? 0 : 1);
+
+    const executable = await resolveExecutable(command);
+    const tempDir = await fs.mkdtemp(path.join(ctx.tmpdir, "fs-exec-"));
+    try {
+      const outcome = await runCaged(ctx, {
+        command,
+        executable,
+        args,
+        cwd: cwdTarget.full,
+        timeoutMs: input.timeoutMs ?? 120_000,
+        network: input.network === true,
+        allowed,
+        tempDir,
+        input: io.stdin === undefined
+          ? input.stdin === undefined ? undefined : Buffer.from(input.stdin)
+          : await collect(io.stdin),
+      });
+      const metadata = {
+        command,
+        args,
+        exitCode: outcome.exitCode,
+        signal: outcome.signal,
+        timedOut: outcome.timedOut,
+        aborted: outcome.aborted,
+        stdoutTruncated: outcome.stdoutTruncated,
+        stderrTruncated: outcome.stderrTruncated,
+        sandboxBlocked: isSandboxBlocked(outcome),
+        violations: outcome.violations.length,
+        network: input.network === true,
+        allowPaths: allowed,
+      };
+      if (io.piped === true) {
+        return {
+          stdout: outcome.stdout,
+          stderr: outcome.stderr.toString("utf8"),
+          exitCode: outcome.exitCode === 0 ? 0 : 1,
+          metadata,
+        };
+      }
+      const sandboxBlocked = isSandboxBlocked(outcome);
+      const body = {
+        ...metadata,
+        stdout: outcome.stdout.toString("utf8"),
+        stderr: outcome.stderr.toString("utf8"),
+        violations: outcome.violations,
+        ...(sandboxBlocked
+          ? {
+              hint:
+                "The sandbox denied an external path or network access. Ask the user, then retry with allowPaths or network: true.",
+            }
+          : {}),
+      };
+      return textResult(JSON.stringify(body, null, 2), metadata, outcome.exitCode === 0 ? 0 : 1);
+    } finally {
+      /* v8 ignore next 5 */
+      try {
+        await fs.rm(tempDir, { recursive: true, force: true });
+      } catch {
+        /* already gone */
+      }
+    }
   },
 };
 
-function runProcess(
-  ctx: RunContext,
-  command: string,
-  args: string[],
-  cwd: string,
-  timeoutMs: number,
-  input: string | undefined,
-  pipe: AsyncIterable<Buffer> | undefined,
-): Promise<ExecOutcome> {
-  return new Promise((resolve, reject) => {
-    const feed = input !== undefined || pipe !== undefined;
-    const child = spawn(command, args, {
-      cwd,
-      env: process.env,
-      shell: false,
-      detached: process.platform !== "win32",
-      stdio: [feed ? "pipe" : "ignore", "pipe", "pipe"],
-      windowsHide: true,
-    });
-    const cap = ctx.maxOutputBytes;
-    let stdout: Buffer<ArrayBufferLike> = Buffer.alloc(0);
-    let stderr: Buffer<ArrayBufferLike> = Buffer.alloc(0);
-    let stdoutTruncated = false;
-    let stderrTruncated = false;
-    let timedOut = false;
-    let aborted = false;
-    let settled = false;
-    let forceTimer: NodeJS.Timeout | undefined;
+interface CagedInput {
+  command: string;
+  executable: { path: string; real: string };
+  args: string[];
+  cwd: string;
+  timeoutMs: number;
+  network: boolean;
+  allowed: Array<{ full: string; mode: "ro" | "rw" }>;
+  tempDir: string;
+  input: Buffer | undefined;
+}
 
-    child.stdout?.on("data", (chunk: Buffer) => {
-      const next = appendCapped(stdout, chunk, cap);
-      stdout = next.data;
-      stdoutTruncated ||= next.truncated;
-    });
-    child.stderr?.on("data", (chunk: Buffer) => {
-      const next = appendCapped(stderr, chunk, cap);
-      stderr = next.data;
-      stderrTruncated ||= next.truncated;
-    });
+async function runCaged(ctx: RunContext, input: CagedInput): Promise<ExecOutcome> {
+  let api: typeof import("procage");
+  try {
+    api = await loadProcage();
+  } catch (error) {
+    /* v8 ignore next */
+    throw new FsError(`exec sandbox is unavailable: ${String(error)}`, "unsupported");
+  }
 
-    const timer = setTimeout(() => {
-      timedOut = true;
-      killTree(child, "SIGTERM");
-      forceTimer = setTimeout(() => killTree(child, "SIGKILL"), 2_000);
-      forceTimer.unref();
-    }, timeoutMs);
-    const onAbort = () => {
-      aborted = true;
-      killTree(child, "SIGTERM");
+  const doc = api.Policy.preset("agent_workspace", 3, { workspace: ctx.sandbox.root }).toJSON() as PolicyDocument;
+  doc.net = input.network ? "ip" : "none";
+  addRule(doc, "exec", path.dirname(input.executable.path));
+  addRule(doc, "exec", path.dirname(input.executable.real));
+  addRule(doc, "exec", path.dirname(process.execPath));
+  addRule(doc, "exec", path.resolve(path.dirname(process.execPath), ".."));
+  addRule(doc, "exec", path.dirname(input.executable.real));
+  addRule(doc, "exec", path.resolve(path.dirname(input.executable.real), ".."));
+  for (const root of ["/home/linuxbrew", "/var/home/linuxbrew"]) {
+    try {
+      await fs.access(root);
+      addRule(doc, "read", root);
+      addRule(doc, "exec", root);
+    } catch {
+      // Homebrew is optional.
+    }
+  }
+  addRule(doc, "write", input.tempDir);
+  addRule(doc, "write", input.cwd);
+  for (const allowed of input.allowed) addRule(doc, allowed.mode === "ro" ? "read" : "write", allowed.full);
+
+  let cage: InstanceType<typeof api.Cage>;
+  let policy: ReturnType<typeof api.Policy.fromJSON>;
+  try {
+    policy = api.Policy.fromJSON(doc);
+    cage = new api.Cage(policy, { violations: true, acceptSpawnSnapshot: true });
+  } catch (error) {
+    /* v8 ignore next */
+    throw new FsError(`exec policy rejected: ${String(error)}`, "unsupported");
+  }
+
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
+  );
+  env.TMPDIR = input.tempDir;
+
+  let child;
+  try {
+    child = await cage.spawn([input.executable.path, ...input.args], {
+      cwd: input.cwd,
+      env,
+      stdin: input.input !== undefined,
+    });
+  } catch (error) {
+    /* v8 ignore next */
+    throw new FsError(`exec spawn failed: ${String(error)}`, "unsupported");
+  }
+
+  let aborted = false;
+  const onAbort = () => {
+    aborted = true;
+    child?.kill();
+  };
+  ctx.signal.addEventListener("abort", onAbort, { once: true });
+  try {
+    const out = await child.output({ timeout: input.timeoutMs, ...(input.input === undefined ? {} : { input: input.input }) });
+    const violations = filterViolations(await child.violations());
+    const stdout = cap(out.stdout, ctx.maxOutputBytes);
+    const stderr = cap(out.stderr, ctx.maxOutputBytes);
+    return {
+      stdout: stdout.data,
+      stderr: stderr.data,
+      exitCode: out.timedOut ? 124 : aborted ? 130 : (out.exitCode ?? 1),
+      signal: out.signal,
+      timedOut: out.timedOut,
+      aborted,
+      stdoutTruncated: stdout.truncated,
+      stderrTruncated: stderr.truncated,
+      violations,
     };
-    ctx.signal.addEventListener("abort", onAbort, { once: true });
+  } catch (error) {
+    /* v8 ignore next 14 */
+    if (aborted || ctx.signal.aborted) {
+      return {
+        stdout: Buffer.alloc(0),
+        stderr: Buffer.alloc(0),
+        exitCode: 130,
+        signal: null,
+        timedOut: false,
+        aborted: true,
+        stdoutTruncated: false,
+        stderrTruncated: false,
+        violations: [],
+      };
+    }
+    /* v8 ignore next */
+    throw new FsError(`exec failed: ${String(error)}`, "unsupported");
+  } finally {
+    ctx.signal.removeEventListener("abort", onAbort);
+    child.close();
+  }
+}
 
-    const cleanup = () => {
-      clearTimeout(timer);
-      if (forceTimer) clearTimeout(forceTimer);
-      ctx.signal.removeEventListener("abort", onAbort);
-    };
-    child.on("error", (error) => {
-      /* v8 ignore next */
-      if (settled) return;
-      settled = true;
-      cleanup();
-      reject(fromErrno(error));
-    });
-    child.on("close", (code, signal) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      resolve({
-        stdout,
-        stderr,
-        exitCode: timedOut ? 124 : aborted ? 130 : (code ?? 1),
-        signal,
-        timedOut,
-        aborted,
-        stdoutTruncated,
-        stderrTruncated,
-      });
-    });
+function addRule(doc: PolicyDocument, access: string, target: string): void {
+  const subpath = path.resolve(target);
+  if (doc.fs.some((rule) => rule.access === access && rule.target.subpath === subpath)) return;
+  doc.fs.push({ access, target: { subpath } });
+}
 
-    if (feed) void feedStdin(child, input, pipe);
+export function filterViolations(violations: readonly Violation[]): Violation[] {
+  return violations.filter((violation) => {
+    if (violation.target?.startsWith("/")) return true;
+    return /AF_INET|AF_INET6/.test(violation.target ?? "");
   });
 }
 
-async function feedStdin(
-  child: ChildProcess,
-  input: string | undefined,
-  pipe: AsyncIterable<Buffer> | undefined,
-): Promise<void> {
-  const stdin = child.stdin;
-  /* v8 ignore next */
-  if (!stdin) return;
-  try {
-    stdin.on("error", () => undefined);
-    if (pipe !== undefined) {
-      for await (const chunk of pipe) {
-        if (!stdin.write(chunk)) await once(stdin, "drain");
-      }
-    } else {
-      stdin.write(input as string);
-    }
-    stdin.end();
-  } catch {
-    /* child closed before the write completed */
-  }
+function isSandboxBlocked(outcome: ExecOutcome): boolean {
+  if (outcome.violations.length > 0) return true;
+  if (outcome.exitCode === 0) return false;
+  return /EACCES|EPERM|EROFS|Permission denied|Read-only file system/i.test(outcome.stderr.toString("utf8"));
 }
 
-function appendCapped(current: Buffer, chunk: Buffer, cap: number): { data: Buffer; truncated: boolean } {
-  if (current.length >= cap) return { data: current, truncated: true };
-  const remaining = cap - current.length;
-  if (chunk.length <= remaining) return { data: Buffer.concat([current, chunk]), truncated: false };
-  return { data: Buffer.concat([current, chunk.subarray(0, remaining)]), truncated: true };
-}
-
-function killTree(child: ChildProcess, signal: NodeJS.Signals): void {
-  /* v8 ignore next */
-  if (!child.pid) return;
-  /* v8 ignore next */
-  if (process.platform !== "win32") {
+async function resolveExecutable(command: string): Promise<{ path: string; real: string }> {
+  const directories = (process.env.PATH ?? "").split(path.delimiter).filter(Boolean);
+  for (const directory of directories) {
+    const candidate = path.join(directory, command);
     try {
-      process.kill(-child.pid, signal);
-      return;
+      await fs.access(candidate, fsConstants.X_OK);
+      return { path: candidate, real: await fs.realpath(candidate) };
     } catch {
-      /* fall through to child.kill */
+      // keep searching PATH
     }
   }
-  /* v8 ignore next 5 */
-  try {
-    child.kill(signal);
-  } catch {
-    /* already gone */
-  }
+  throw new FsError(`exec command not found: "${command}"`, "not-found");
+}
+
+function cap(data: Buffer, limit: number): { data: Buffer; truncated: boolean } {
+  if (data.length <= limit) return { data, truncated: false };
+  return { data: data.subarray(0, limit), truncated: true };
 }

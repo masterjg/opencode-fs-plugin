@@ -72,7 +72,7 @@ unit, end-to-end and coverage tests.
 | `cpio` | `fs.cpio` | `create`/`list`/`extract` (newc), `directory`, `members`, `input`, `member`, `verbose` |
 | `ar` | `fs.ar` | `create`/`list`/`extract`, `directory`, `members` |
 | HTTP(S) | `fs.http_request` | `url`, `method`, `headers`, `body`, `json`, `output`, `checksum`, `maxBytes`, `timeoutMs`, `failOnError`, `followRedirects`, `maxRedirects` |
-| process | `fs.exec` | `command`, `args`, `cwd`, `stdin`, `timeoutMs`; exact allowlist, no shell |
+| process | `fs.exec` | `command`, `args`, `cwd`, `stdin`, `timeoutMs`, `network`, `allowPaths`; exact allowlist, procage sandbox, no shell |
 | shell pipe | `fs.pipe` | `stages`, `input`, `output`, `append` |
 
 `fs.head.skip` selects line ranges (`sed -n '20,40p'`). `fs.find` can
@@ -128,9 +128,9 @@ work, fan out with `Promise.all` over `tools.fs.*` (or one multi-path call).
 
 ## Exec
 
-`fs.exec` runs one allowlisted executable with `shell: false`. The default
-allowlist is `npm`, `npx`, `uv`, `uvx`, `pip`, `pip3`; override it in the plugin
-options:
+`fs.exec` runs one allowlisted executable inside a procage sandbox with
+`shell: false`. The default allowlist is `npm`, `npx`, `uv`, `uvx`, `pip`,
+`pip3`; override it in the plugin options:
 
 ```jsonc
 {
@@ -139,12 +139,30 @@ options:
 }
 ```
 
-`command` is a bare name, `args` are literal, and `cwd` is sandboxed. Direct
-calls return JSON with `exitCode`, `stdout`, and `stderr`; a pipe stage returns
-raw stdout so it composes with `grep`, `sort`, `tee`, and the rest.
+The workspace (project) is read/write/exec, but **network and external paths are
+denied by default**. Approve them per call:
 
 ```js
-await tools.fs.exec({ command: "npm", args: ["run", "build"], timeoutMs: 300000 })
+await tools.fs.exec({
+  command: "npm",
+  args: ["install"],
+  network: true,
+  allowPaths: [{ path: "/home/you/.npm", mode: "rw" }],
+  timeoutMs: 300000,
+})
+```
+
+`network: true` asserts `fs_exec_network`; every `allowPaths` entry asserts
+`external_directory`. Use `mode: "ro"` for read-only paths. Denied operations
+come back as `violations` and a `hint`; ask the user, then retry with the approved
+paths or network. `fs.exec` also kills every process it started when the run
+ends, including detached descendants.
+
+`command` is a bare name, `args` are literal, and `cwd` is sandboxed. Direct
+calls return JSON with `exitCode`, `stdout`, `stderr`, and violations; a pipe
+stage returns raw stdout so it composes with `grep`, `sort`, `tee`, and the rest.
+
+```js
 await tools.fs.pipe({
   stages: [
     { tool: "exec", args: { command: "npm", args: ["test"] } },
@@ -153,8 +171,8 @@ await tools.fs.pipe({
 })
 ```
 
-The command asserts `fs_exec`, uses a process group for timeout kills, caps
-stdout/stderr, and treats a non-zero exit as a normal result.
+The command asserts `fs_exec`, caps stdout/stderr, and treats a non-zero exit as
+a normal result. Procage requires Linux x64/arm64, glibc 2.28+, and Node 22.12+.
 
 ## Performance and concurrency
 
@@ -241,18 +259,18 @@ Add the registry package directly to the plugin list:
 
 ```jsonc
 {
-  "plugins": ["opencode-fs-plugin@1.5.1"]
+  "plugins": ["opencode-fs-plugin@1.9.0"]
 }
 ```
 
-`opencode plugin add opencode-fs-plugin@1.5.1` installs it and writes the config
+`opencode plugin add opencode-fs-plugin@1.9.0` installs it and writes the config
 entry. A bare `opencode-fs-plugin` follows the `latest` tag.
 
 OpenCode manages the package under its cache, so the path is not stable. If you
 also want the packaged skill, install it into a project instead:
 
 ```bash
-npm install opencode-fs-plugin@1.5.1
+npm install opencode-fs-plugin@1.9.0
 ```
 
 ```jsonc
@@ -267,7 +285,7 @@ npm install opencode-fs-plugin@1.5.1
 Download the release tarball, then install it as a normal npm package:
 
 ```bash
-VERSION=1.5.1
+VERSION=1.9.0
 curl -L -o "opencode-fs-plugin-${VERSION}.tgz" \
   "https://github.com/masterjg/opencode-fs-plugin/releases/download/v${VERSION}/opencode-fs-plugin-${VERSION}.tgz"
 npm install "./opencode-fs-plugin-${VERSION}.tgz"
@@ -296,20 +314,20 @@ OpenCode installs it from Git:
 
 ```jsonc
 {
-  "plugins": ["github:masterjg/opencode-fs-plugin#v1.5.1"]
+  "plugins": ["github:masterjg/opencode-fs-plugin#v1.9.0"]
 }
 ```
 
-`opencode plugin add 'github:masterjg/opencode-fs-plugin#v1.5.1'` installs the
+`opencode plugin add 'github:masterjg/opencode-fs-plugin#v1.9.0'` installs the
 same spec and writes the config entry. The equivalent full URL is
-`git+https://github.com/masterjg/opencode-fs-plugin.git#v1.5.1`. A tag is
+`git+https://github.com/masterjg/opencode-fs-plugin.git#v1.9.0`. A tag is
 checked for updates; use a full commit hash to pin it.
 
 Git plugins are installed under OpenCode's cache, so their package path is not
 stable. If you also want the packaged skill, install with npm instead:
 
 ```bash
-npm install "github:masterjg/opencode-fs-plugin#v1.5.1"
+npm install "github:masterjg/opencode-fs-plugin#v1.9.0"
 ```
 
 Then use `./node_modules/opencode-fs-plugin` in `plugins` and
@@ -366,6 +384,17 @@ Every tool asserts an action named after the tool (`fs_cp`, `fs_rm`,
 `fs_pipe` stages, and so on). Internal paths use project-relative resources;
 external targets first require `external_directory` on the absolute boundary.
 `allow always` persists the same patterns as the built-in tools.
+
+`fs.exec` asserts `fs_exec`; `network: true` also asserts `fs_exec_network`, and
+each `allowPaths` entry asserts `external_directory`:
+
+```jsonc
+{
+  "permissions": [
+    { "action": "fs_exec_network", "resource": "*", "effect": "ask" }
+  ]
+}
+```
 
 `fs.http_request` is allowed by default, like `fetch`. Its resource is the
 request host (`example.com:8443`), so requests can be restricted per host:

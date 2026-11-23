@@ -1,7 +1,10 @@
 {
   "name": "opencode-fs-plugin",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "type": "module",
+  "engines": {
+    "node": ">=22.12"
+  },
   "description": "OpenCode 2 plugin: Linux-style filesystem, text, and HTTP(S) tools under the fs namespace.",
   "repository": {
     "type": "git",
@@ -33,6 +36,7 @@
     "@sinclair/typebox": "^0.34.52",
     "diff": "^9.0.0",
     "picomatch": "^4.0.7",
+    "procage": "^0.8.0",
     "tar-stream": "^3.2.2",
     "yauzl": "^3.4.0",
     "yazl": "^3.3.1"

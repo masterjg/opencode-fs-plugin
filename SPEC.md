@@ -80,19 +80,32 @@ Aliases are accepted only where noted: `path` for one `paths` element (`stat`,
 
 ## Process execution
 
-- `fs.exec` is the only `child_process` use. It spawns with `shell: false`; there
-  is no shell parsing, redirection, or command substitution.
+- `fs.exec` is the only tool that starts processes, through `procage`; it never
+  uses `child_process`, `spawn`, or a shell.
 - `command` must be a bare executable name and must match the allowlist exactly.
   Default: `npm`, `npx`, `uv`, `uvx`, `pip`, `pip3`. Override with the plugin
   option `execAllowlist`; an empty list disables execution.
+- The policy is procage `agent_workspace` v3: the project is read/write/exec.
+  Network and external paths are denied by default.
+- `network: true` asserts `fs_exec_network` and sets the policy network to IP.
+  `allowPaths` entries assert `external_directory`; `mode: "ro"` adds a read
+  rule, `mode: "rw"` adds a write rule.
+- Denied file or network access is reported as `violations` plus a `hint`, and
+  stderr containing EACCES/EPERM/EROFS marks `sandboxBlocked`. Ask the user, then
+  retry with the approved paths or network.
 - `args` are passed verbatim. `cwd` resolves inside the sandbox and asserts
   `external_directory` when it leaves the project; the action is `fs_exec`.
-- Timeout defaults to 120000 ms, capped at 600000. A timeout kills the process
-  group (SIGTERM, then SIGKILL) and reports `timedOut: true`, exit code 124.
+- Timeout defaults to 120000 ms, capped at 600000. Procage ends the run and kills
+  every process it started, including detached descendants; `timedOut: true`
+  and exit code 124 are returned.
 - Captured stdout/stderr are capped at `maxOutputBytes`; truncation is reported.
-- Direct calls return JSON with `exitCode`, `stdout`, and `stderr`. In `fs.pipe`,
-  the stage returns raw stdout and composes as a source or filter.
+- Direct calls return JSON with `exitCode`, `stdout`, `stderr`, `violations`, and
+  the sandbox decision. In `fs.pipe`, the stage returns raw stdout and composes as
+  a source or filter.
 - A non-zero exit is a normal result, not a tool error.
+- `procage` is lazy-loaded; if the host cannot load it, `fs.exec` fails with
+  `unsupported` while the other fs tools continue to work. Requires Linux
+  x64/arm64, glibc 2.28+, and Node 22.12+.
 
 ## Deliberate gaps
 
