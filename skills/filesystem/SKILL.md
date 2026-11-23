@@ -25,7 +25,8 @@ With `execute` allowed, call it as `tools.fs.<command>`; agents without
 | Regex substitution or in-place edit | `fs.sed` |
 | Recoverable deletion | `fs.trash` |
 | HTTP(S) fetch, API call, or file download | `fs.http_request` |
-| Batching or loops | `execute` JS loops over `tools.fs.*` |
+| Many independent fs calls | one multi-path call, else `Promise.all` in `execute` |
+| Sequential byte pipeline | `fs.pipe` |
 
 Do not duplicate a built-in when it already covers the job. `fs` exists for the
 operations the built-ins do not cover, and for composable text/archive work.
@@ -112,10 +113,59 @@ host drops unknown fields, so a name typo runs with defaults.
 - `fs.mktemp` needs a template ending in at least three `X`; use `suffix` for an
   extension.
 
+## Batch independent calls
+
+`execute` is a JS runtime. Do not `await` independent fs calls one at a time.
+
+1. **Use the widest native call first.** `cat`, `stat`, `hash`, `ls`, `grep`,
+   `tee`, `wc`, `chmod`, `touch`, `rm`, and `trash` take `paths` arrays. Use one
+   call when combined output is enough:
+
+   ```js
+   const stats = await tools.fs.stat({ paths: files, format: "%n %s" })
+   const sums = await tools.fs.hash({ files })
+   ```
+
+2. **Fan out when you need per-item results.** `Promise.all` preserves input
+   order:
+
+   ```js
+   const rows = await Promise.all(files.map(async (f) => {
+     const text = String(await tools.fs.cat({ paths: [f] }))
+     return { f, text, ok: !/^(ERROR|BLOCKED):/.test(text) }
+   }))
+   ```
+
+   `fs` domain errors resolve as `ERROR:`/`BLOCKED:` text; they do not reject.
+   Permission denials and host validation throw, so use `Promise.allSettled`
+   only when those should not cancel the batch.
+
+3. **Bound very large fan-outs.** One tool call per item is expensive; use a
+   small worker pool (for example 8) instead of `Promise.all` over thousands:
+
+   ```js
+   async function mapLimit(items, limit, fn) {
+     const out = new Array(items.length)
+     let next = 0
+     await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+       while (next < items.length) {
+         const i = next++
+         out[i] = await fn(items[i], i)
+       }
+     }))
+     return out
+   }
+   ```
+
+Keep `for (const x of items) { await ... }` only when each step depends on the
+previous result, such as read → transform → write the same file. Use `fs.pipe`
+for a sequential byte chain; use this section for independent work.
+
 ## Pipe
 
-Stages run sequentially and pass bytes. Only pipeable tools are allowed. The
-first stage may be a source or a filter; later stages consume stdin.
+`fs.pipe` runs fs tools as a **sequential byte pipeline**: each stage's stdout
+is the next stage's stdin. Use it for filter chains; use the batching pattern
+above for parallel fan-out.
 
 ```js
 await tools.fs.pipe({
@@ -128,17 +178,30 @@ await tools.fs.pipe({
 })
 ```
 
-`output` writes the final stream and `append` appends. Stage names are the short
-native names (`cat`, `grep`, `sort`), not `fs.cat`. There is no shell,
-redirection operator, nested pipe, or `find -exec`. A filter stage needs
-`input` or a preceding source stage. Set `grep.noFilename: true` in a pipe when
-later stages need bare lines instead of `path:line`.
+| Field | Meaning |
+|---|---|
+| `stages` | 1–50 `{ tool, args }` entries; names are short (`cat`, not `fs.cat`) |
+| `input` | Initial stdin text when the first stage is a filter |
+| `output` | Write final stdout to a file (final `tee`) |
+| `append` | Append to `output` instead of overwriting |
 
-New filter stages: `tac`, `rev`, `nl`, `paste`, `shuf`, `fold`, `base64`, `od`,
-and `strings`. `dd` and `cpio` are source/sink stages.
+The first stage must be a source (`cat`, `http_request`, `dd`, or a path-reading
+text tool such as `tac`, `rev`, `nl`, `base64`, `od`, `strings`) or receive
+`input`. A filter first (`grep`, `sort`, `head`, `wc`) emits
+`ERROR: no input files and no stdin` as pipeline data. Archive writers (`tar`,
+`zip`, `cpio`) emit nothing downstream, so put them last. `wc` and `hash` also
+emit their result text, so they can end a chain or feed a later stage.
 
-`http_request` is a source stage. Pipe stages exchange whole buffers, so set
-`maxBytes` for large responses; use `output` for real streaming to disk.
+Stages exchange whole buffers. Set `maxBytes` on `http_request`; for large
+downloads prefer `fs.http_request({ output })`, which streams to disk. In-memory
+text is allowed:
+
+```js
+await tools.fs.pipe({
+  input: "b\na\nb\n",
+  stages: [{ tool: "sort", args: { unique: true } }],
+})
+```
 
 ```js
 await tools.fs.pipe({
@@ -148,6 +211,23 @@ await tools.fs.pipe({
   ],
 })
 ```
+
+`output` and `append` assert `fs_tee` on the destination. The result metadata
+lists each stage's `bytesIn`, `bytesOut`, and `exitCode`; use it as the
+verification trail.
+
+Common pipe mistakes:
+
+- `commands` is not a field; the field is `stages`.
+- A bare `{ tool: "sort", args: {} }` first stage returns
+  `ERROR: no input files and no stdin`; add a source stage or `input`.
+- Stage names are `cat`, not `fs.cat`.
+- There is no shell, redirection operator, nested pipe, `find -exec`, or
+  `xargs`.
+
+Pipeable filters include `head`, `tail`, `grep`, `sed`, `sort`, `uniq`, `cut`,
+`tr`, `tee`, `gzip`, `gunzip`, `tac`, `rev`, `nl`, `paste`, `shuf`, `fold`,
+`base64`, `od`, and `strings`. Unknown stage names fail with `unsupported`.
 
 ## Background jobs
 

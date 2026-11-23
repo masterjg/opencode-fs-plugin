@@ -117,6 +117,11 @@ large downloads prefer `fs.http_request({ output })`, which streams to disk.
 
 There is no shell, redirection operator, nested pipe, or `find -exec`.
 
+`fs.pipe` is sequential by design and is not a batch primitive. For independent
+work, fan out with `Promise.all` over `tools.fs.*` (or one multi-path call).
+`fs` domain errors resolve as `ERROR:`/`BLOCKED:` text, so check each result;
+permission denials throw.
+
 ## Performance and concurrency
 
 All I/O is asynchronous; the plugin never calls a synchronous `fs` API.
