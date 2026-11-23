@@ -241,7 +241,11 @@ async function runCaged(ctx: RunContext, input: CagedInput): Promise<ExecOutcome
   let policy: ReturnType<typeof api.Policy.fromJSON>;
   try {
     policy = api.Policy.fromJSON(doc);
-    cage = new api.Cage(policy, { violations: true, acceptSpawnSnapshot: true });
+    cage = new api.Cage(policy, {
+      violations: true,
+      acceptSpawnSnapshot: true,
+      relax: ["signals-same-user"],
+    });
   } catch (error) {
     /* v8 ignore next */
     throw new FsError(`exec policy rejected: ${String(error)}`, "unsupported");

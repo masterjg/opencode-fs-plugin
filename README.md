@@ -173,6 +173,7 @@ await tools.fs.pipe({
 
 The command asserts `fs_exec`, caps stdout/stderr, and treats a non-zero exit as
 a normal result. Procage requires Linux x64/arm64, glibc 2.28+, and Node 22.12+.
+On kernels before Landlock ABI 6, signal isolation relaxes to same-user.
 
 ## Performance and concurrency
 

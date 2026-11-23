@@ -105,7 +105,8 @@ Aliases are accepted only where noted: `path` for one `paths` element (`stat`,
 - A non-zero exit is a normal result, not a tool error.
 - `procage` is lazy-loaded; if the host cannot load it, `fs.exec` fails with
   `unsupported` while the other fs tools continue to work. Requires Linux
-  x64/arm64, glibc 2.28+, and Node 22.12+.
+  x64/arm64, glibc 2.28+, and Node 22.12+. On kernels before Landlock ABI 6,
+  signals are relaxed from self-and-children to same-user, as procage requires.
 
 ## Deliberate gaps
 
