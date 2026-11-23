@@ -46,7 +46,7 @@ what `fs.stat`, `fs.ls`, `fs.hash`, `fs.diff`, or `fs.cat` can confirm.
 | Times and sizes | `fs.touch`, `fs.truncate` |
 | Links and modes | `fs.ln`, `fs.readlink`, `fs.chmod` |
 | Hash, usage | `fs.hash`, `fs.du`, `fs.df` |
-| Predicate search | `fs.find` (`name`, `type`, `size`, `mtime`, `maxDepth`) |
+| Predicate search | `fs.find` (`name`, `type`, `size`, `mtime`, `maxDepth`, `action`) |
 | Archives | `fs.tar` (`create`/`extract`/`list`), `fs.zip`, `fs.unzip` (`extract`/`list`), `fs.cpio`, `fs.ar`, `fs.gzip`, `fs.gunzip` |
 | Compare | `fs.diff` |
 | Temp and trash | `fs.mktemp`, `fs.trash` |
@@ -67,7 +67,7 @@ Recent parity additions:
 |---|---|
 | `fs.sort` | `generalNumeric`, `humanNumeric`, `version`, `dictionary`, `ignoreNonPrinting`, `stable`, `check`, `checkQuiet`, `zeroTerminated`, GNU `keys` ranges |
 | `fs.ls` | `size`, `numericIds`, `noGroup`, `noOwner`, `slash`, `quote`, `versionSort`, `extensionSort`, `fullTime`, `timeStyle`, `hide`, `ignore`, `groupDirectoriesFirst` |
-| `fs.find` | `lname`/`ilname`, `regex`/`iregex`, `uid`/`gid`/`user`/`group`, `links`, `inum`, `samefile`, `fstype`, `newerXY`, `printf`; `c`/`w`/`b` size suffixes |
+| `fs.find` | `lname`/`ilname`, `regex`/`iregex`, `uid`/`gid`/`user`/`group`, `links`, `inum`, `samefile`, `fstype`, `newerXY`, `printf`, `action` (`print`/`delete`/`trash`); `c`/`w`/`b` size suffixes |
 | `fs.stat` | `terse`, extended tokens `%f`, `%m`, `%r`, `%w`, `%W`, `%C` |
 | `fs.tail` | bounded `follow`, `timeoutMs`, `intervalMs`, `maxBytes` |
 | `fs.tar`/`fs.zip` | `input`/`member` stream input and pipe sink support |
@@ -99,14 +99,23 @@ host drops unknown fields, so a name typo runs with defaults.
 | `url` + optional `output` | `fs.http_request` |
 | `stages` + optional `input`/`output` | `fs.pipe` |
 
+`fs.head` takes `skip` for line ranges: `sed -n '20,40p'` is
+`fs.head({ paths, skip: 19, lines: 21 })`. `fs.find` takes
+`action: "print" | "delete" | "trash"`; the starting directory itself is never
+removed, and deletion asserts `fs_rm`/`fs_trash`.
+
 ### Common mistakes
 
 - `fs.hash` canonical is `files`; `paths` and `path` are accepted aliases.
 - `fs.mkdir` canonical is `path`; `paths` is accepted but cannot be combined.
 - `fs.sed` canonical is `script`/`expressions`; `expression` is accepted. Only
-  `s/.../.../flags` is supported; line ranges need `head`/`tail` or `pipe`.
+  `s/.../.../flags` is supported; line ranges use `fs.head({ skip, lines })` or
+  `fs.tail`.
 - `fs.grep` canonical is `maxCount`; `limit` is accepted. Add `recursive: true`
   for a directory.
+- `fs.find` `action: "delete"`/`"trash"` never removes the starting directory
+  itself; use `fs.rm` if you mean the root. Deletion asserts `fs_rm`/`fs_trash`,
+  and directory matches need `recursive: true` for delete.
 - `fs.cat` and text filters read `paths`; Code Mode has no stdin, so `fs.cat({})`
   fails. Use `fs.pipe` for stdin.
 - There is no `fs.write`; use the built-in `write` or `fs.tee({ paths, content })`.
@@ -118,19 +127,20 @@ host drops unknown fields, so a name typo runs with defaults.
 | Shell pattern | Use |
 |---|---|
 | `sed -n '1,80p' f` | `fs.head({ paths: [f], lines: 80 })` |
-| `sed -n '20,40p' f` | `fs.pipe({ stages: [{ tool: "cat", args: { paths: [f] } }, { tool: "head", args: { lines: 40 } }, { tool: "tail", args: { lines: 21 } }] })` |
+| `sed -n '20,40p' f` | `fs.head({ paths: [f], skip: 19, lines: 21 })` |
 | `sed 's/a/b/'` / `sed -i` | `fs.sed({ script, paths, inPlace })` |
 | `head -n N f` / `tail -n N f` | `fs.head` / `fs.tail` |
 | `wc -l f` | `fs.wc({ paths: [f], lines: true })` |
 | `sha256sum f` | `fs.hash({ files: [f] })` |
-| `find ... -exec rm -rf {} +` | `fs.find(...)`, then `fs.rm({ paths, recursive: true })` or `fs.trash` |
+| `find ... -exec rm -rf {} +` | `fs.find({ ..., action: "delete", recursive: true })` or `action: "trash"` |
 | `cat > f <<EOF` | built-in `write` or `fs.tee({ paths: [f], content })` |
 | `rg pattern path` | `fs.grep({ pattern, paths })` or the built-in `grep` |
 | `ls -l f` | `fs.ls({ paths: [f], long: true })` |
 
 `sed -n` applied to another command's stdout has no fs equivalent; keep that in
-the command pipeline. `fs.find` has no `-exec` by design; list the paths, then
-delete or trash them explicitly.
+the command pipeline. `fs.find` has no arbitrary `-exec` by design; use
+`action: "delete"` or `"trash"` for the common cleanup case, or list the paths and
+remove them explicitly.
 
 ## Batch independent calls
 
@@ -363,7 +373,8 @@ await tools.fs.http_request({
 - Linux only; there is no Windows branch.
 - `fs.sed` supports `s<delim>pattern<delim>replacement<delim>flags` with `g`,
   `i` and `p`. It is not a full sed interpreter.
-- `fs.find` has no `-exec`; use `fs.rm`/`fs.trash` separately.
+- `fs.find` has no arbitrary `-exec`; use `action: "delete"`/`"trash"` for the
+  common cleanup case, or `fs.rm`/`fs.trash` separately.
 - No `xz`, `zstd`, `7z`, `rar`, `chattr`, ACLs, xattrs, or `rsync`.
   `chown` and `dd` are available; the SSH MCP covers transfers.
 - `fs.tail` has bounded `follow` only; unbounded `tail -f` is not supported.

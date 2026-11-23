@@ -12,6 +12,9 @@ const Schema = Type.Object(
   {
     paths: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { description: "Files to read. Omit to read stdin." })),
     lines: Type.Optional(Type.Integer({ minimum: 1, description: "Number of lines. Default: 10 (`-n`)." })),
+    skip: Type.Optional(
+      Type.Integer({ minimum: 0, description: "Skip this many leading lines before output (`sed -n 'a,bp'` ranges)." }),
+    ),
     bytes: Type.Optional(Type.Integer({ minimum: 1, description: "Number of bytes (`-c`)." })),
     quiet: Type.Optional(Type.Boolean({ description: "Never print file headers (`-q`)." })),
     verbose: Type.Optional(Type.Boolean({ description: "Always print file headers (`-v`)." })),
@@ -23,7 +26,9 @@ type Input = Static<typeof Schema>;
 
 export const headTool: ToolSpec<Input> = {
   name: "head",
-  description: "Output the first part of files or stdin with Linux `head` semantics (`-n`, `-c`, `-q`, `-v`).",
+  description:
+    "Output the first part of files or stdin with Linux `head` semantics (`-n`, `-c`, `-q`, `-v`). " +
+    "`skip` selects a line range such as `sed -n '20,40p'`.",
   schema: Schema,
   pipeable: "filter",
   mutates: false,
@@ -31,7 +36,11 @@ export const headTool: ToolSpec<Input> = {
     if (input.lines !== undefined && input.bytes !== undefined) {
       throw new FsError("head accepts either lines or bytes, not both.", "invalid");
     }
+    if (input.skip !== undefined && input.bytes !== undefined) {
+      throw new FsError("head skip applies to lines, not bytes.", "invalid");
+    }
     const count = input.bytes ?? input.lines ?? 10;
+    const skip = input.skip ?? 0;
     const paths = input.paths ?? [];
     const targets = [];
     for (const requested of paths) {
@@ -46,7 +55,7 @@ export const headTool: ToolSpec<Input> = {
     if (targets.length === 0) {
       const data = input.bytes !== undefined
         ? await collect(await inputStream([], io.stdin), input.bytes)
-        : await takeLines(inputStream([], io.stdin), count);
+        : await takeLines(inputStream([], io.stdin), count, skip);
       output.push(data);
     } else {
       for (const target of targets) {
@@ -56,7 +65,7 @@ export const headTool: ToolSpec<Input> = {
         output.push(
           input.bytes !== undefined
             ? await collect(readFiles([target.full]), input.bytes)
-            : await takeLines(readFiles([target.full]), count),
+            : await takeLines(readFiles([target.full]), count, skip),
         );
       }
     }
@@ -64,14 +73,14 @@ export const headTool: ToolSpec<Input> = {
   },
 };
 
-async function takeLines(stream: AsyncIterable<Buffer>, count: number): Promise<Buffer> {
+async function takeLines(stream: AsyncIterable<Buffer>, count: number, skip = 0): Promise<Buffer> {
   const output: string[] = [];
+  let seen = 0;
   let taken = 0;
   for await (const line of lines(stream)) {
-    /* v8 ignore next */
+    if (seen++ < skip) continue;
     output.push(line.text + (line.newline ? "\n" : ""));
     taken++;
-    /* v8 ignore next */
     if (taken >= count) break;
   }
   return Buffer.from(output.join(""), "utf8");

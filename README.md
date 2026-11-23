@@ -25,9 +25,9 @@ unit, end-to-end and coverage tests.
 | `sha256sum`/`md5sum` | `fs.hash` | `algorithm`, `tag`; hashes files or stdin |
 | `du` | `fs.du` | `summarize`, `all`, `human`, `total`, `maxDepth`, `follow`, `oneFileSystem` |
 | `df` | `fs.df` | `human`, `inodes`, `printType`, `all` |
-| `find` | `fs.find` | `name`, `iname`, `pathPattern`, `lname`, `ilname`, `regex`, `iregex`, `type`, `size`, `mtime`, `mmin`, `maxDepth`, `minDepth`, `empty`, `perm`, `uid`, `gid`, `user`, `group`, `links`, `inum`, `samefile`, `fstype`, `newer`, `newerXY`, `printf`, `follow`, `print0`, `sort` |
+| `find` | `fs.find` | `name`, `iname`, `pathPattern`, `lname`, `ilname`, `regex`, `iregex`, `type`, `size`, `mtime`, `mmin`, `maxDepth`, `minDepth`, `empty`, `perm`, `uid`, `gid`, `user`, `group`, `links`, `inum`, `samefile`, `fstype`, `newer`, `newerXY`, `printf`, `follow`, `print0`, `sort`, `action` (`print`/`delete`/`trash`), `recursive` |
 | `cat` | `fs.cat` | `number`, `numberNonBlank`, `squeezeBlank`, `showEnds`, `showTabs`, `showNonPrinting` |
-| `head` | `fs.head` | `lines`, `bytes`, `quiet`, `verbose` |
+| `head` | `fs.head` | `lines`, `skip`, `bytes`, `quiet`, `verbose` |
 | `tail` | `fs.tail` | `lines`, `bytes`, `fromStart`, `quiet`, `verbose`, `follow`, `timeoutMs`, `intervalMs`, `maxBytes` |
 | `tee` | `fs.tee` | `append`, `content` |
 | `wc` | `fs.wc` | `lines`, `words`, `bytes`, `chars`, `maxLineLength` |
@@ -73,6 +73,10 @@ unit, end-to-end and coverage tests.
 | `ar` | `fs.ar` | `create`/`list`/`extract`, `directory`, `members` |
 | HTTP(S) | `fs.http_request` | `url`, `method`, `headers`, `body`, `json`, `output`, `checksum`, `maxBytes`, `timeoutMs`, `failOnError`, `followRedirects`, `maxRedirects` |
 | shell pipe | `fs.pipe` | `stages`, `input`, `output`, `append` |
+
+`fs.head.skip` selects line ranges (`sed -n '20,40p'`). `fs.find` can
+`action: "delete"` or `"trash"` its matches; the starting directory itself is
+never removed, and the `fs_rm`/`fs_trash` permissions are asserted.
 
 Canonical field names are listed above. Aliases are accepted only where noted:
 `path` for one `paths` element (`stat`, `ls`, `cat`, `find`, `tee`, `grep`,

@@ -11,6 +11,8 @@ import { pathsFrom } from "../core/aliases.js";
 import { FsError } from "../core/errors.js";
 import { lookupGroup, lookupUser, modeString, num, typeName, walkAll } from "../core/fsutil.js";
 import { textResult, type ToolSpec } from "../core/types.js";
+import { rmTool } from "./rm.js";
+import { trashTool } from "./trash.js";
 
 const Schema = Type.Object(
   {
@@ -49,6 +51,15 @@ const Schema = Type.Object(
     follow: Type.Optional(Type.Boolean({ description: "Follow symlinks (`-L`)." })),
     print0: Type.Optional(Type.Boolean({ description: "NUL-separated output (`-print0`)." })),
     sort: Type.Optional(Type.Boolean({ description: "Sort results lexically. Default: true." })),
+    action: Type.Optional(
+      Type.Union([Type.Literal("print"), Type.Literal("delete"), Type.Literal("trash")], {
+        description:
+          "What to do with matches. Default `print`. `delete`/`trash` are destructive and assert `fs_rm`/`fs_trash`; the starting directory itself is never removed.",
+      }),
+    ),
+    recursive: Type.Optional(
+      Type.Boolean({ description: "Delete matched directories recursively (`action: delete` only)." }),
+    ),
   },
   { additionalProperties: false },
 );
@@ -76,6 +87,15 @@ interface Patterns {
   gid?: number | null | undefined;
   fstype?: string | undefined;
   fstypeCache: Map<string, string>;
+}
+
+interface Match {
+  requested: string;
+  full: string;
+  stats: Awaited<ReturnType<typeof fs.lstat>>;
+  root: string;
+  depth: number;
+  isRoot: boolean;
 }
 
 const FS_TYPES = new Map<number, string>([
@@ -108,13 +128,21 @@ export const findTool: ToolSpec<Input> = {
     "Find entries with Linux-like predicates: `-name`, `-iname`, `-path`, `-lname`, `-ilname`, " +
     "`-regex`, `-iregex`, `-type`, `-size`, `-mtime`, `-mmin`, `-maxdepth`, `-mindepth`, `-empty`, `-perm`, " +
     "`-uid`, `-gid`, `-user`, `-group`, `-links`, `-inum`, `-samefile`, `-fstype`, `-newer`, " +
-    "`-newerXY`, `-printf`, `-L`, `-print0`.",
+    "`-newerXY`, `-printf`, `-L`, `-print0`. `action` can print, delete, or trash matches; " +
+    "the starting directory itself is never removed.",
   schema: Schema,
   pipeable: false,
-  mutates: false,
+  mutates: true,
   async run(ctx, input) {
     /* v8 ignore next */
     const paths = pathsFrom(input) ?? ["."];
+    const action = input.action ?? "print";
+    if (action !== "print" && (input.printf !== undefined || input.print0 === true)) {
+      throw new FsError("find action delete/trash cannot be combined with printf or print0.", "invalid");
+    }
+    if (input.recursive === true && action !== "delete") {
+      throw new FsError("find recursive requires action: delete.", "invalid");
+    }
     const patterns: Patterns = {
       nameMatch: input.name === undefined ? undefined : picomatch(input.name, { dot: true }),
       inameMatch: input.iname === undefined ? undefined : picomatch(input.iname, { dot: true, nocase: true }),
@@ -141,7 +169,7 @@ export const findTool: ToolSpec<Input> = {
     patterns.uid = input.uid ?? await resolveId(input.user, "user");
     patterns.gid = input.gid ?? await resolveId(input.group, "group");
 
-    const results: string[] = [];
+    const found: Match[] = [];
     for (const requested of paths) {
       const target = await ctx.sandbox.resolveExisting(requested, { allowRoot: true });
       await ctx.permission.assert([{ target, boundary: target.full }]);
@@ -152,14 +180,14 @@ export const findTool: ToolSpec<Input> = {
       /* v8 ignore next */
       if (!rootStats.isDirectory()) {
         if (await matches(target.full, rootStats, input, patterns, 0)) {
-          results.push(await render(requested, target.full, rootStats, input, patterns, target.full, 0));
+          found.push({ requested, full: target.full, stats: rootStats, root: target.full, depth: 0, isRoot: true });
         }
         continue;
       }
       /* v8 ignore next */
       if (input.maxDepth === 0) {
         if (await matches(target.full, rootStats, input, patterns, 0)) {
-          results.push(await render(requested, target.full, rootStats, input, patterns, target.full, 0));
+          found.push({ requested, full: target.full, stats: rootStats, root: target.full, depth: 0, isRoot: true });
         }
         continue;
       }
@@ -175,9 +203,39 @@ export const findTool: ToolSpec<Input> = {
         const depth = relative.split(path.sep).length;
         if (input.minDepth !== undefined && depth < input.minDepth) continue;
         if (await matches(entry.path, entry.stats, input, patterns, depth)) {
-          results.push(await render(entry.path, entry.path, entry.stats, input, patterns, target.full, depth));
+          found.push({ requested: entry.path, full: entry.path, stats: entry.stats, root: target.full, depth, isRoot: false });
         }
       }
+    }
+
+    if (action !== "print") {
+      const targets = found
+        .filter((match) => !(match.isRoot && match.stats.isDirectory()))
+        .sort((a, b) => b.depth - a.depth || a.full.localeCompare(b.full));
+      const unique = [...new Map(targets.map((match) => [match.full, match])).values()];
+      if (unique.length === 0) {
+        return textResult("", { found: found.length, action, ...(action === "delete" ? { removed: [] } : { trashed: [] }) });
+      }
+      const pathsToChange = unique.map((match) => match.full);
+      if (action === "delete") {
+        const result = await rmTool.run(
+          { ...ctx, permission: ctx.permissionFor("fs_rm") },
+          { paths: pathsToChange, recursive: input.recursive === true, force: true },
+          {},
+        );
+        return textResult("", { found: found.length, action, ...result.metadata });
+      }
+      const result = await trashTool.run(
+        { ...ctx, permission: ctx.permissionFor("fs_trash") },
+        { paths: pathsToChange },
+        {},
+      );
+      return textResult("", { found: found.length, action, ...result.metadata });
+    }
+
+    const results: string[] = [];
+    for (const match of found) {
+      results.push(await render(match.requested, match.full, match.stats, input, patterns, match.root, match.depth));
     }
     if (input.sort !== false) results.sort((a, b) => a.localeCompare(b));
     if (input.printf !== undefined) {

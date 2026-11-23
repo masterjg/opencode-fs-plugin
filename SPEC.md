@@ -83,8 +83,9 @@ Aliases are accepted only where noted: `path` for one `paths` element (`stat`,
 These are not implemented:
 
 - `xz`, `zstd`, `7z`, `rar`
-- `awk`, full `sed` command language, `find -exec`
-- `chown`, `chgrp`, `chattr`, `dd`, `rsync`
+- `awk`, full `sed` command language, arbitrary `find -exec`; `find action` covers
+  delete/trash only
+- `chgrp`, `chattr`, `rsync`
 - ACL and xattr preservation in `cp -a`
 - remaining GNU edge-flag parity for `ls`, `stat`, `sort`, `find`
 - symlink-race-proof sandboxing
@@ -101,7 +102,7 @@ These are not implemented:
 - ICMP `ping` (raw sockets) and `ip`/netlink configuration
 - `rsync`, `scp`, and other transfer protocols; use the SSH MCP for remote work
 - ACLs, xattrs, and `chattr`/`lsattr`
-- `awk`, full `jq`/`yq`, and the remaining `sed` command language
+- `jq`/`yq`
 - `7z`, `rar`, `xz`, `zstd`, and `bzip2`; batch 2 may add pure-JS or native deps
 - `fallocate`, `mkfifo`, `mknod`, `flock`, and mount operations
 
@@ -114,6 +115,9 @@ These are not implemented:
 - `find -size` accepts `c` (bytes), `w` (2-byte words), `b` (512-byte blocks),
   and binary `K`/`M`/`G`/... suffixes; `-mtime`/`-mmin` accept `+N` (older),
   `-N` (newer), and exact `N`. `newerXY` uses `XY:path`.
+- `head skip` selects a line range: `skip: 19, lines: 21` is `sed -n '20,40p'`.
+- `find action: "delete"|"trash"` reuses the `fs_rm`/`fs_trash` gates, removes
+  deepest matches first, and never removes the starting directory itself.
 - `sort -k` accepts field/character ranges with modifiers `bdfghiMnrV`.
 - `tar`/`zip` extraction rejects path traversal and escaping links.
 - `pipe` passes raw bytes and only accepts registered pipeable stages; `tar` and

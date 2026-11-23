@@ -73,6 +73,15 @@ describe("text option coverage", () => {
     expect(headStdin.result.stdout.toString()).toBe("ab");
     const headLines = await runSpec(headTool, { lines: 1 }, sb, { stdin: bufferStream("a\nb\n") });
     expect(headLines.result.stdout.toString()).toBe("a\n");
+    const headSkip = await runSpec(headTool, { paths: ["a"], skip: 1, lines: 2 }, sb);
+    expect(headSkip.result.stdout.toString()).toBe("2\n3\n");
+    const headSkipPast = await runSpec(headTool, { paths: ["a"], skip: 10, lines: 2 }, sb);
+    expect(headSkipPast.result.stdout.toString()).toBe("");
+    const headSkipStdin = await runSpec(headTool, { skip: 1, lines: 1 }, sb, { stdin: bufferStream("a\nb\nc\n") });
+    expect(headSkipStdin.result.stdout.toString()).toBe("b\n");
+    const headSkipNoNewline = await runSpec(headTool, { skip: 1, lines: 1 }, sb, { stdin: bufferStream("a\nb") });
+    expect(headSkipNoNewline.result.stdout.toString()).toBe("b");
+    await expect(runSpec(headTool, { paths: ["a"], skip: 1, bytes: 1 }, sb)).rejects.toMatchObject({ code: "invalid" });
     await expect(runSpec(headTool, { paths: ["a"], lines: 1, bytes: 1 }, sb)).rejects.toMatchObject({ code: "invalid" });
     const tailQuiet = await runSpec(tailTool, { paths: ["a", "a"], lines: 1, quiet: true }, sb);
     expect(tailQuiet.result.stdout.toString()).not.toContain("==>");
