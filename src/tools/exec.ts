@@ -244,7 +244,7 @@ async function runCaged(ctx: RunContext, input: CagedInput): Promise<ExecOutcome
     cage = new api.Cage(policy, {
       violations: true,
       acceptSpawnSnapshot: true,
-      relax: ["signals-same-user"],
+      relax: ["waive:trust-handoff", "signals-same-user"],
     });
   } catch (error) {
     /* v8 ignore next */

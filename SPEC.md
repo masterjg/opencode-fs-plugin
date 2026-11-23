@@ -107,6 +107,8 @@ Aliases are accepted only where noted: `path` for one `paths` element (`stat`,
   `unsupported` while the other fs tools continue to work. Requires Linux
   x64/arm64, glibc 2.28+, and Node 22.12+. On kernels before Landlock ABI 6,
   signals are relaxed from self-and-children to same-user, as procage requires.
+  The trust-handoff class is waived so package tools can update workspace files
+  such as `.git/hooks`; the executable allowlist remains the trust boundary.
 
 ## Deliberate gaps
 
