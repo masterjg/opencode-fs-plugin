@@ -397,6 +397,11 @@ blocked path and `fs_exec_network` for blocked sockets before retrying:
 }
 ```
 
+Keep both rules explicit. Plugin actions match OpenCode's base
+`{ "action": "*", "resource": "*", "effect": "allow" }` rule, so an unlisted
+`fs_exec_network` or `external_directory` resource is allowed without a prompt,
+not asked.
+
 `fs.http_request` is allowed by default, like `fetch`. Its resource is the
 request host (`example.com:8443`), so requests can be restricted per host:
 
