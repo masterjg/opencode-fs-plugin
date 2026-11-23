@@ -113,6 +113,25 @@ host drops unknown fields, so a name typo runs with defaults.
 - `fs.mktemp` needs a template ending in at least three `X`; use `suffix` for an
   extension.
 
+### Shell patterns and their fs equivalents
+
+| Shell pattern | Use |
+|---|---|
+| `sed -n '1,80p' f` | `fs.head({ paths: [f], lines: 80 })` |
+| `sed -n '20,40p' f` | `fs.pipe({ stages: [{ tool: "cat", args: { paths: [f] } }, { tool: "head", args: { lines: 40 } }, { tool: "tail", args: { lines: 21 } }] })` |
+| `sed 's/a/b/'` / `sed -i` | `fs.sed({ script, paths, inPlace })` |
+| `head -n N f` / `tail -n N f` | `fs.head` / `fs.tail` |
+| `wc -l f` | `fs.wc({ paths: [f], lines: true })` |
+| `sha256sum f` | `fs.hash({ files: [f] })` |
+| `find ... -exec rm -rf {} +` | `fs.find(...)`, then `fs.rm({ paths, recursive: true })` or `fs.trash` |
+| `cat > f <<EOF` | built-in `write` or `fs.tee({ paths: [f], content })` |
+| `rg pattern path` | `fs.grep({ pattern, paths })` or the built-in `grep` |
+| `ls -l f` | `fs.ls({ paths: [f], long: true })` |
+
+`sed -n` applied to another command's stdout has no fs equivalent; keep that in
+the command pipeline. `fs.find` has no `-exec` by design; list the paths, then
+delete or trash them explicitly.
+
 ## Batch independent calls
 
 `execute` is a JS runtime. Do not `await` independent fs calls one at a time.
