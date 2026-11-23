@@ -91,6 +91,8 @@ Aliases are accepted only where noted: `path` for one `paths` element (`stat`,
 - When network is enabled, the policy is `ip` (IPv4/IPv6) plus the resolver
   sockets used by systemd-resolved, nscd, and SSSD. Plain UDP DNS needs none;
   other Unix sockets stay blocked. Landlock ignores paths absent on the host.
+  On T2 below Landlock ABI 9 the sockets cannot be scoped, so the
+  `no-unix-sockets` relaxation drops them and only UDP DNS remains.
 - Denied access is handled by asserting the configured permission and retrying,
   bounded to six attempts: a blocked path asks `external_directory` on its
   containing directory (or the nearest existing ancestor for a missing or

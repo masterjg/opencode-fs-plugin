@@ -156,7 +156,9 @@ when the run ends, including detached descendants.
 With network enabled, the policy also opens the resolver sockets used by
 systemd-resolved, nscd, and SSSD (`/run/systemd/resolve`, `/run/nscd`,
 `/var/lib/sss/pipes`), so DNS works across common Linux distributions. Plain
-UDP DNS needs none of them; other Unix sockets stay blocked.
+UDP DNS needs none of them; other Unix sockets stay blocked. On kernels where
+procage cannot scope Unix sockets (T2 below Landlock ABI 9), the policy drops
+them via `no-unix-sockets`; DNS then works only through a plain UDP resolver.
 
 ```js
 await tools.fs.exec({ command: "npm", args: ["install"], timeoutMs: 300000 })

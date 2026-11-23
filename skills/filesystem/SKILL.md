@@ -168,7 +168,8 @@ await tools.fs.exec({ command: "npm", args: ["install"], timeoutMs: 300000 })
 Denied access returns `violations` and a `hint`; approval covers the denied
 path's containing directory (or nearest existing ancestor), and a path still
 blocked after approval is reported. With network approved, DNS works through the
-systemd-resolved, nscd, or SSSD sockets; other Unix sockets stay blocked.
+systemd-resolved, nscd, or SSSD sockets where the kernel can scope them; other
+Unix sockets stay blocked and plain UDP DNS works everywhere.
 `command` is a bare name, `args` are literal, and `cwd` is sandboxed. Direct
 calls return JSON with `exitCode`/`stdout`/`stderr` and violations; in `fs.pipe`
 the stage passes raw stdout.
