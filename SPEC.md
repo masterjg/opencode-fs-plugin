@@ -86,13 +86,15 @@ Aliases are accepted only where noted: `path` for one `paths` element (`stat`,
   Default: `npm`, `npx`, `uv`, `uvx`, `pip`, `pip3`. Override with the plugin
   option `execAllowlist`; an empty list disables execution.
 - The policy is procage `agent_workspace` v3: the project is read/write/exec.
-  Network and external paths are denied by default.
-- `network: true` asserts `fs_exec_network` and sets the policy network to IP.
-  `allowPaths` entries assert `external_directory`; `mode: "ro"` adds a read
-  rule, `mode: "rw"` adds a write rule.
-- Denied file or network access is reported as `violations` plus a `hint`, and
-  stderr containing EACCES/EPERM/EROFS marks `sandboxBlocked`. Ask the user, then
-  retry with the approved paths or network.
+  Network and external paths are denied by default; there are no per-call
+  grants.
+- Denied access is handled by asserting the configured permission and retrying,
+  bounded to six attempts: a blocked path asks `external_directory` on the
+  absolute path, a blocked socket asks `fs_exec_network`. The `allow`/`ask`/`deny`
+  decision comes from `opencode.jsonc`, not from the tool call.
+- If a path or socket stays blocked after approval, the result reports
+  `violations` plus a `hint`; stderr containing EACCES/EPERM/EROFS marks
+  `sandboxBlocked`.
 - `args` are passed verbatim. `cwd` resolves inside the sandbox and asserts
   `external_directory` when it leaves the project; the action is `fs_exec`.
 - Timeout defaults to 120000 ms, capped at 600000. Procage ends the run and kills

@@ -10,9 +10,13 @@ import { FsError } from "../../src/core/errors.js";
 import { Sandbox } from "../../src/core/sandbox.js";
 import {
   DEFAULT_EXEC_ALLOWLIST,
+  detectsNetworkDenial,
+  discoverExternalPaths,
   execTool,
   filterViolations,
+  isSandboxBlocked,
   normalizeExecAllowlist,
+  type ExecOutcome,
 } from "../../src/tools/exec.js";
 import { pipeTool } from "../../src/tools/pipe.js";
 import { makeOutside, makeRoot, pathExists, runSpec } from "../helpers.js";
@@ -245,83 +249,81 @@ describe("exec", () => {
     expect(result.result.stdout.toString()).toBe("abc");
   });
 
-  it("allows approved external paths read-write", async () => {
+  it("auto-approves a denied external path", async () => {
     const { sb } = await setup();
     const outside = await makeOutside();
     roots.push(outside.dir);
+    const file = path.join(outside.dir, "out.txt");
+    await fs.writeFile(file, "old\n");
     const result = await runSpec(
       execTool,
       {
         command: "node",
-        args: ["-e", `require('fs').writeFileSync(${JSON.stringify(path.join(outside.dir, "out.txt"))}, "ok")`],
-        allowPaths: [{ path: outside.dir, mode: "rw" }, { path: outside.dir }],
+        args: ["-e", `require('fs').writeFileSync(${JSON.stringify(file)}, "ok")`],
       },
       sb,
       { execAllowlist: ["node"] },
     );
     expect(parsed(result).exitCode).toBe(0);
     expect(result.requests.some((request) => request.action === "external_directory")).toBe(true);
-    expect(await fs.readFile(path.join(outside.dir, "out.txt"), "utf8")).toBe("ok");
+    expect(parsed(result).externalPaths).toContain(file);
+    expect(await fs.readFile(file, "utf8")).toBe("ok");
   });
 
-  it("reports a denied external write and a read-only path", async () => {
+  it("reports a path that remains denied after approval", async () => {
     const { sb } = await setup();
     const outside = await makeOutside();
     roots.push(outside.dir);
-    const file = path.join(outside.dir, "target.txt");
+    const file = path.join(outside.dir, "readonly.txt");
     await fs.writeFile(file, "ro\n");
-    const read = await runSpec(
-      execTool,
-      {
-        command: "node",
-        args: ["-e", `process.stdout.write(require('fs').readFileSync(${JSON.stringify(file)}, "utf8"))`],
-        allowPaths: [{ path: file, mode: "ro" }],
-      },
-      sb,
-      { execAllowlist: ["node"] },
-    );
-    expect(parsed(read).stdout).toBe("ro\n");
-
-    const write = await runSpec(
+    await fs.chmod(file, 0o444);
+    const result = await runSpec(
       execTool,
       {
         command: "node",
         args: ["-e", `require('fs').writeFileSync(${JSON.stringify(file)}, "no")`],
-        allowPaths: [{ path: file, mode: "ro" }],
       },
       sb,
       { execAllowlist: ["node"] },
     );
-    expect(parsed(write)).toMatchObject({ sandboxBlocked: true, exitCode: 1 });
-    expect(parsed(write).stderr).toContain("EACCES");
+    expect(parsed(result)).toMatchObject({ sandboxBlocked: true, exitCode: 1 });
+    expect(parsed(result).stderr).toMatch(/EACCES|EPERM|EROFS/);
   });
 
-  it("asks for network approval and records network denials", async () => {
+  it("auto-approves network access and records it", async () => {
     const { sb } = await setup();
     const script = "const n=require('net');try{const s=n.connect(9,'127.0.0.1');s.on('error',()=>process.exit(0));}catch(e){process.exit(0)}";
-    const allowed = await runSpec(
-      execTool,
-      { command: "node", args: ["-e", script], network: true },
-      sb,
-      { execAllowlist: ["node"] },
-    );
-    expect(allowed.requests.some((request) => request.action === "fs_exec_network")).toBe(true);
-    expect(parsed(allowed).network).toBe(true);
-
-    const denied = await runSpec(
+    const result = await runSpec(
       execTool,
       { command: "node", args: ["-e", script] },
       sb,
       { execAllowlist: ["node"] },
     );
-    expect(parsed(denied)).toMatchObject({ sandboxBlocked: true, network: false });
-    expect((parsed(denied).violations as Array<{ target?: string }>).some((v) => v.target?.includes("AF_INET"))).toBe(true);
-    await expect(
-      runSpec(execTool, { command: "node", args: ["-e", script], network: true }, sb, {
-        execAllowlist: ["node"],
-        deny: true,
-      }),
-    ).rejects.toBeTruthy();
+    expect(result.requests.some((request) => request.action === "fs_exec_network")).toBe(true);
+    expect(parsed(result).network).toBe(true);
+  });
+
+  it("handles an unapprovable path and a repeated denial", async () => {
+    const { sb } = await setup();
+    const outside = await makeOutside();
+    roots.push(outside.dir);
+    const file = path.join(outside.dir, "readonly.txt");
+    await fs.writeFile(file, "ro\n");
+    await fs.chmod(file, 0o444);
+    const script = [
+      "const fs=require('fs');",
+      `try{fs.writeFileSync(${JSON.stringify(file)},"no")}catch(e){`,
+      "console.error('EACCES /nonexistent/fs-exec/path');",
+      "console.error(e.message);",
+      "}",
+      "process.exit(1);",
+    ].join("");
+    const result = await runSpec(execTool, { command: "node", args: ["-e", script] }, sb, {
+      execAllowlist: ["node"],
+    });
+    expect(parsed(result)).toMatchObject({ sandboxBlocked: true, exitCode: 1 });
+    expect(parsed(result).externalPaths).toContain(file);
+    expect(result.requests.some((request) => request.action === "external_directory")).toBe(true);
   });
 
   it("kills detached descendants", async () => {
@@ -395,6 +397,52 @@ describe("exec", () => {
       { execAllowlist: ["node"] },
     );
     expect(result.result.stdout.length).toBeGreaterThan(0);
+  });
+});
+
+describe("exec sandbox helpers", () => {
+  const outcome = (overrides: Partial<ExecOutcome> = {}): ExecOutcome => ({
+    stdout: Buffer.alloc(0),
+    stderr: Buffer.alloc(0),
+    exitCode: 0,
+    signal: null,
+    timedOut: false,
+    aborted: false,
+    stdoutTruncated: false,
+    stderrTruncated: false,
+    violations: [],
+    ...overrides,
+  });
+  const violation = (target: string) => ({
+    pid: 1,
+    process: "node",
+    operation: "openat",
+    target,
+    deniedBy: "not granted",
+    repeats: 1,
+    message: "denied",
+  });
+
+  it("discovers and filters blocked paths", async () => {
+    const { root, sb } = await setup();
+    const found = discoverExternalPaths(
+      { sandbox: sb } as never,
+      outcome({
+        stderr: Buffer.from("EACCES: permission denied, open '/home/a/x'\n"),
+        violations: [violation("/home/b"), violation("/home/a/x"), violation(`${root}/inside`)],
+      }),
+    );
+    expect(found.sort()).toEqual(["/home/a/x", "/home/b"]);
+  });
+
+  it("classifies blocked and network results", () => {
+    expect(isSandboxBlocked(outcome({ violations: [violation("/home/a")] }))).toBe(true);
+    expect(isSandboxBlocked(outcome({ stderr: Buffer.from("EACCES"), exitCode: 1 }))).toBe(true);
+    expect(isSandboxBlocked(outcome())).toBe(false);
+    expect(detectsNetworkDenial(outcome({ violations: [violation("family AF_INET")] }))).toBe(true);
+    expect(detectsNetworkDenial(outcome({ stderr: Buffer.from("EAI_AGAIN") }))).toBe(true);
+    expect(detectsNetworkDenial(outcome({ violations: [{ ...violation("family AF_INET"), target: null }] }))).toBe(false);
+    expect(detectsNetworkDenial(outcome())).toBe(false);
   });
 });
 

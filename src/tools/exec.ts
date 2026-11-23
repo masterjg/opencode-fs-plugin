@@ -42,24 +42,6 @@ const Schema = Type.Object(
     timeoutMs: Type.Optional(
       Type.Integer({ minimum: 100, maximum: 600_000, description: "Timeout in milliseconds. Default: 120000." }),
     ),
-    network: Type.Optional(
-      Type.Boolean({
-        description: "Allow IP network after `fs_exec_network` approval. Default: false.",
-      }),
-    ),
-    allowPaths: Type.Optional(
-      Type.Array(
-        Type.Object(
-          {
-            path: Type.String({ minLength: 1, description: "External path to expose after approval." }),
-            mode: Type.Optional(
-              Type.Union([Type.Literal("ro"), Type.Literal("rw")], { description: "Read-only or read-write. Default: rw." }),
-            ),
-          },
-          { additionalProperties: false },
-        ),
-      ),
-    ),
   },
   { additionalProperties: false },
 );
@@ -72,7 +54,7 @@ interface PolicyDocument {
   [key: string]: unknown;
 }
 
-interface ExecOutcome {
+export interface ExecOutcome {
   stdout: Buffer;
   stderr: Buffer;
   exitCode: number;
@@ -120,34 +102,53 @@ export const execTool: ToolSpec<Input> = {
     await ctx.permission.assert([{ target: cwdTarget, boundary: cwdTarget.full }]);
     if (ctx.signal.aborted) throw new FsError("exec interrupted.", "interrupted");
 
-    if (input.network === true) await ctx.permissionFor("fs_exec_network").assert([]);
-
-    const allowed: Array<{ full: string; mode: "ro" | "rw" }> = [];
-    for (const entry of input.allowPaths ?? []) {
-      const target = await ctx.sandbox.resolveExisting(entry.path, { allowRoot: true });
-      await ctx.permission.assert([{ target, boundary: target.full }]);
-      const mode = entry.mode ?? "rw";
-      if (!allowed.some((item) => item.full === target.full && item.mode === mode)) {
-        allowed.push({ full: target.full, mode });
-      }
-    }
-
     const executable = await resolveExecutable(command);
     const tempDir = await fs.mkdtemp(path.join(ctx.tmpdir, "fs-exec-"));
     try {
-      const outcome = await runCaged(ctx, {
-        command,
-        executable,
-        args,
-        cwd: cwdTarget.full,
-        timeoutMs: input.timeoutMs ?? 120_000,
-        network: input.network === true,
-        allowed,
-        tempDir,
-        input: io.stdin === undefined
-          ? input.stdin === undefined ? undefined : Buffer.from(input.stdin)
-          : await collect(io.stdin),
-      });
+      const inputData = io.stdin === undefined
+        ? input.stdin === undefined ? undefined : Buffer.from(input.stdin)
+        : await collect(io.stdin);
+      let networkAllowed = false;
+      const approved: Array<{ full: string }> = [];
+      let outcome: ExecOutcome | undefined;
+
+      for (let attempt = 0; attempt < 6; attempt++) {
+        outcome = await runCaged(ctx, {
+          command,
+          executable,
+          args,
+          cwd: cwdTarget.full,
+          timeoutMs: input.timeoutMs ?? 120_000,
+          network: networkAllowed,
+          allowed: approved,
+          tempDir,
+          input: inputData,
+        });
+
+        const networkDenied = !networkAllowed && detectsNetworkDenial(outcome);
+        const deniedPaths = discoverExternalPaths(ctx, outcome)
+          .filter((candidate) => !approved.some((entry) => entry.full === candidate));
+        if (!networkDenied && deniedPaths.length === 0) break;
+
+        if (networkDenied) {
+          await ctx.permissionFor("fs_exec_network").assert([]);
+          networkAllowed = true;
+          continue;
+        }
+
+        let added = false;
+        for (const candidate of deniedPaths) {
+          const target = await ctx.sandbox.resolveExisting(candidate, { allowRoot: true }).catch(() => undefined);
+          if (target === undefined) continue;
+          await ctx.permission.assert([{ target, boundary: target.full }]);
+          approved.push({ full: target.full });
+          added = true;
+        }
+        if (!added) break;
+      }
+
+      /* v8 ignore next */
+      if (outcome === undefined) throw new FsError("exec produced no result.", "io");
       const metadata = {
         command,
         args,
@@ -159,8 +160,8 @@ export const execTool: ToolSpec<Input> = {
         stderrTruncated: outcome.stderrTruncated,
         sandboxBlocked: isSandboxBlocked(outcome),
         violations: outcome.violations.length,
-        network: input.network === true,
-        allowPaths: allowed,
+        network: networkAllowed,
+        externalPaths: approved.map((entry) => entry.full),
       };
       if (io.piped === true) {
         return {
@@ -179,7 +180,7 @@ export const execTool: ToolSpec<Input> = {
         ...(sandboxBlocked
           ? {
               hint:
-                "The sandbox denied an external path or network access. Ask the user, then retry with allowPaths or network: true.",
+                "The sandbox denied an external path or network access. Approve the path or network in the permission prompt and retry.",
             }
           : {}),
       };
@@ -202,7 +203,7 @@ interface CagedInput {
   cwd: string;
   timeoutMs: number;
   network: boolean;
-  allowed: Array<{ full: string; mode: "ro" | "rw" }>;
+  allowed: Array<{ full: string }>;
   tempDir: string;
   input: Buffer | undefined;
 }
@@ -235,7 +236,7 @@ async function runCaged(ctx: RunContext, input: CagedInput): Promise<ExecOutcome
   }
   addRule(doc, "write", input.tempDir);
   addRule(doc, "write", input.cwd);
-  for (const allowed of input.allowed) addRule(doc, allowed.mode === "ro" ? "read" : "write", allowed.full);
+  for (const allowed of input.allowed) addRule(doc, "write", allowed.full);
 
   let cage: InstanceType<typeof api.Cage>;
   let policy: ReturnType<typeof api.Policy.fromJSON>;
@@ -326,10 +327,41 @@ export function filterViolations(violations: readonly Violation[]): Violation[] 
   });
 }
 
-function isSandboxBlocked(outcome: ExecOutcome): boolean {
+export function isSandboxBlocked(outcome: ExecOutcome): boolean {
   if (outcome.violations.length > 0) return true;
   if (outcome.exitCode === 0) return false;
   return /EACCES|EPERM|EROFS|Permission denied|Read-only file system/i.test(outcome.stderr.toString("utf8"));
+}
+
+export function detectsNetworkDenial(outcome: ExecOutcome): boolean {
+  if (outcome.violations.some((violation) => /AF_INET|AF_INET6/.test(violation.target ?? ""))) return true;
+  return /EAI_AGAIN|getaddrinfo|ENETUNREACH|ECONNREFUSED/i.test(outcome.stderr.toString("utf8"));
+}
+
+export function discoverExternalPaths(ctx: RunContext, outcome: ExecOutcome): string[] {
+  const found = new Set<string>();
+  for (const violation of outcome.violations) {
+    if (violation.target?.startsWith("/")) found.add(violation.target);
+  }
+
+  const stderr = outcome.stderr.toString("utf8");
+  for (const line of stderr.split("\n")) {
+    if (!/EACCES|EPERM|EROFS|Permission denied|Read-only file system|error writing|not written|cannot open|failed to open/i.test(line)) {
+      continue;
+    }
+    for (const match of line.matchAll(/(?:^|[\s'"`(])(\/[^\s'"`),]+)/g)) {
+      found.add(match[1]!);
+    }
+  }
+  for (const match of stderr.matchAll(/path:\s*['"]([^'"]+)['"]/g)) {
+    found.add(match[1]!);
+  }
+
+  const root = ctx.sandbox.root;
+  return [...found]
+    .map((candidate) => path.resolve(candidate))
+    .filter((candidate) => candidate !== root && !candidate.startsWith(`${root}${path.sep}`))
+    .filter((candidate, index, all) => all.indexOf(candidate) === index);
 }
 
 async function resolveExecutable(command: string): Promise<{ path: string; real: string }> {

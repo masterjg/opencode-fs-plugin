@@ -100,7 +100,7 @@ host drops unknown fields, so a name typo runs with defaults.
 | `paths` + optional `keep`/`force`/`stdout`/`level`/`suffix` | `fs.gzip`, `fs.gunzip` |
 | `url` + optional `output` | `fs.http_request` |
 | `stages` + optional `input`/`output` | `fs.pipe` |
-| `command` + `args` + optional `cwd`/`stdin`/`timeoutMs`/`network`/`allowPaths` | `fs.exec` |
+| `command` + `args` + optional `cwd`/`stdin`/`timeoutMs` | `fs.exec` |
 
 `fs.head` takes `skip` for line ranges: `sed -n '20,40p'` is
 `fs.head({ paths, skip: 19, lines: 21 })`. `fs.find` takes
@@ -157,21 +157,16 @@ override it with the fs plugin option `execAllowlist` in `opencode.jsonc`:
 ```
 
 The project is read/write/exec. **Network and external paths are denied by
-default.** `network: true` asserts `fs_exec_network`; every `allowPaths` entry
-asserts `external_directory`, and `mode: "ro"` keeps it read-only:
+default, and there are no per-call grants.** When the sandbox blocks something,
+`fs.exec` asks `external_directory` for the path or `fs_exec_network` for a
+socket, then retries; the decision comes from `opencode.jsonc`:
 
 ```js
-await tools.fs.exec({
-  command: "npm",
-  args: ["install"],
-  network: true,
-  allowPaths: [{ path: "/home/you/.npm", mode: "rw" }],
-  timeoutMs: 300000,
-})
+await tools.fs.exec({ command: "npm", args: ["install"], timeoutMs: 300000 })
 ```
 
-Denied access returns `violations` and a `hint`; ask the user, then retry with
-the approved path or network. `command` is a bare name, `args` are literal, and
+Denied access returns `violations` and a `hint`; if a path stays blocked after
+approval, the result says so. `command` is a bare name, `args` are literal, and
 `cwd` is sandboxed. Direct calls return JSON with `exitCode`/`stdout`/`stderr`
 and violations; in `fs.pipe` the stage passes raw stdout.
 
@@ -476,8 +471,9 @@ in agent rules. `fs.pipe` asserts each stage's action; a denied stage cannot be
 hidden inside a pipeline. Do not work around a denied tool with shell.
 
 `fs_exec` runs only exact allowlisted names in a procage sandbox. It asserts
-`fs_exec`, plus `fs_exec_network` for `network: true` and `external_directory`
-for each `allowPaths` entry or an external `cwd`. There is no shell.
+`fs_exec`, then asks `external_directory` for a blocked path or `fs_exec_network`
+for a blocked socket and retries; there are no per-call grants. There is no
+shell.
 
 `fs_http_request` is allowed by default, like `fetch`. Its resource is the
 request host; rules can allow one host and ask or deny the rest. Each redirect
