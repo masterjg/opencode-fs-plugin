@@ -277,59 +277,23 @@ const status = JSON.parse(await tools.fs.job({ id: job.jobId }))
 A job that produces no text returns empty content from `fs.job wait`; verify the
 effect with `fs.stat`, `fs.ls`, or `fs.diff`, and use `fs.job({ id })` for state.
 
-## Loops and batching
+## Orchestration notes
 
-`execute` is always available and is the orchestration layer for every `fs` tool.
-Use ordinary JavaScript for iteration, conditionals, retries, and parallel calls.
-Do not use a shell or `toolbox.run` for batching.
-
-Sequential is the safe default for writes, destructive work, ordering, and
-permission prompts:
-
-```js
-const files = (
-  await tools.fs.find({
-    paths: ["src"],
-    name: "*.sh",
-    type: "f",
-    print0: true,
-  })
-).split("\0").filter(Boolean)
-
-for (const file of files) {
-  await tools.fs.chmod({ paths: [file], mode: "640" })
-}
-```
-
-Use `Promise.all` only for independent work. It rejects on the first failure
-while the other calls continue, so prefer `Promise.allSettled` when partial
-results are useful. Bound concurrency to about 4–8:
-
-```js
-async function mapLimit(items, limit, fn) {
-  const results = []
-  for (let i = 0; i < items.length; i += limit) {
-    results.push(...(await Promise.all(items.slice(i, i + limit).map(fn))))
-  }
-  return results
-}
-
-const stats = await mapLimit(files, 4, (file) =>
-  tools.fs.stat({ paths: [file], format: "%n %s" }),
-)
-```
-
-Each call still enforces its own `fs_<tool>` and `external_directory`
-permissions; loops do not bypass them. Code Mode has no timers, so use
-`wait_for` for time-based waits and `background: true` for long jobs.
+`execute` is the orchestration layer for every `fs` tool. Each batched call still
+asserts its own `fs_<tool>` and `external_directory` permission, so fan-out does
+not bypass permissions. Code Mode has no timers: use `wait_for` for time-based
+waits and `background: true` for long jobs. Writes and destructive operations
+may fan out too when their targets are independent; keep ordering only when a
+later step depends on an earlier result.
 
 ## Performance
 
 All `fs` I/O is asynchronous. Independent work is parallelized automatically
 within each call, up to `os.availableParallelism()`: tree copies, hashing,
 gzip/gunzip, grep reads, `find`/`du`/`grep -r`/`chmod -R`/`chown -R` traversal,
-`diff -r`, `ls` formatting, `ps` /proc scans, and `split` writes. Do not add
-your own concurrency for those.
+`diff -r`, `ls` formatting, `ps` /proc scans, and `split` writes. Do not
+re-implement that internal concurrency; fan out separate tool calls only as
+described in Batch independent calls.
 
 The limit comes from the plugin `concurrency` option or
 `OPENCODE_FS_CONCURRENCY`. CPU-bound `sort`, `sed`, and text diffing stay
