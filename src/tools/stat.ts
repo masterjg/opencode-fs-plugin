@@ -5,13 +5,15 @@
 
 import * as fs from "node:fs/promises";
 import { Type, type Static } from "@sinclair/typebox";
+import { requiredPaths } from "../core/aliases.js";
 import { fromErrno } from "../core/errors.js";
 import { lookupGroup, lookupUser, modeString, num, typeName } from "../core/fsutil.js";
 import { textResult, type ToolSpec } from "../core/types.js";
 
 const Schema = Type.Object(
   {
-    paths: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+    paths: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })),
+    path: Type.Optional(Type.String({ minLength: 1, description: "Alias for a single element of `paths`." })),
     follow: Type.Optional(Type.Boolean({ description: "Follow symlinks (`-L`)." })),
     format: Type.Optional(Type.String({ description: "printf-style format string (`-c`, `--printf`)." })),
     terse: Type.Optional(Type.Boolean({ description: "Terse single-line output (`-t`)." })),
@@ -33,7 +35,8 @@ export const statTool: ToolSpec<Input> = {
   mutates: false,
   async run(ctx, input) {
     const blocks: string[] = [];
-    for (const requested of input.paths) {
+    const paths = requiredPaths(input, "stat");
+    for (const requested of paths) {
       const target = input.follow === true
         ? await ctx.sandbox.resolveFollow(requested)
         : await ctx.sandbox.resolveExisting(requested, { allowRoot: true });
@@ -55,7 +58,7 @@ export const statTool: ToolSpec<Input> = {
           : await customFormat(input.format, requested, target.full, stats, link),
       );
     }
-    return textResult(blocks.join("\n"), { paths: input.paths });
+    return textResult(blocks.join("\n"), { paths });
   },
 };
 

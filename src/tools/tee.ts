@@ -4,13 +4,15 @@
  */
 
 import { Type, type Static } from "@sinclair/typebox";
+import { pathsFrom } from "../core/aliases.js";
 import { FsError } from "../core/errors.js";
 import { collect, writeAll } from "../core/stream.js";
 import type { ToolSpec } from "../core/types.js";
 
 const Schema = Type.Object(
   {
-    paths: Type.Array(Type.String({ minLength: 1 }), { description: "Files to write. Empty means pass through only." }),
+    paths: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { description: "Files to write. Empty means pass through only." })),
+    path: Type.Optional(Type.String({ minLength: 1, description: "Alias for a single element of `paths`." })),
     append: Type.Optional(Type.Boolean({ description: "Append instead of overwriting (`-a`)." })),
     content: Type.Optional(Type.String({ description: "Text to write when no stdin is available." })),
   },
@@ -28,7 +30,8 @@ export const teeTool: ToolSpec<Input> = {
   pipeable: "filter",
   mutates: true,
   async run(ctx, input, io) {
-    if (input.paths.length === 0 && input.content === undefined && io.stdin === undefined) {
+    const paths = pathsFrom(input) ?? [];
+    if (paths.length === 0 && input.content === undefined && io.stdin === undefined) {
       throw new FsError("tee needs files, content, or stdin.", "invalid");
     }
     const data = input.content !== undefined
@@ -36,7 +39,7 @@ export const teeTool: ToolSpec<Input> = {
       : await collect(io.stdin as AsyncIterable<Buffer>);
 
     const targets = [];
-    for (const requested of input.paths) {
+    for (const requested of paths) {
       const target = await ctx.sandbox.resolveForCreate(requested);
       targets.push({ requested, target });
     }
@@ -44,7 +47,7 @@ export const teeTool: ToolSpec<Input> = {
     for (const target of targets) {
       await writeAll(target.target.full, data, input.append === true);
     }
-    return { stdout: data, exitCode: 0, metadata: { files: input.paths, append: input.append === true } };
+    return { stdout: data, exitCode: 0, metadata: { files: paths, append: input.append === true } };
   },
 };
 

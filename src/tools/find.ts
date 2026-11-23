@@ -7,6 +7,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import picomatch from "picomatch";
 import { Type, type Static } from "@sinclair/typebox";
+import { pathsFrom } from "../core/aliases.js";
 import { FsError } from "../core/errors.js";
 import { lookupGroup, lookupUser, modeString, num, typeName, walkAll } from "../core/fsutil.js";
 import { textResult, type ToolSpec } from "../core/types.js";
@@ -14,6 +15,7 @@ import { textResult, type ToolSpec } from "../core/types.js";
 const Schema = Type.Object(
   {
     paths: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { description: "Starting paths. Default: ['.']." })),
+    path: Type.Optional(Type.String({ minLength: 1, description: "Alias for a single element of `paths`." })),
     name: Type.Optional(Type.String({ description: "Filename glob (`-name`)." })),
     iname: Type.Optional(Type.String({ description: "Case-insensitive filename glob (`-iname`)." })),
     pathPattern: Type.Optional(Type.String({ description: "Path glob (`-path`)." })),
@@ -112,7 +114,7 @@ export const findTool: ToolSpec<Input> = {
   mutates: false,
   async run(ctx, input) {
     /* v8 ignore next */
-    const paths = input.paths ?? ["."];
+    const paths = pathsFrom(input) ?? ["."];
     const patterns: Patterns = {
       nameMatch: input.name === undefined ? undefined : picomatch(input.name, { dot: true }),
       inameMatch: input.iname === undefined ? undefined : picomatch(input.iname, { dot: true, nocase: true }),

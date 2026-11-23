@@ -4,12 +4,14 @@
  */
 
 import { Type, type Static } from "@sinclair/typebox";
+import { pathsFrom } from "../core/aliases.js";
 import { collect, inputStream, lines } from "../core/stream.js";
 import { textResult, type ToolSpec } from "../core/types.js";
 
 const Schema = Type.Object(
   {
     paths: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { description: "Files to concatenate. Omit to read stdin." })),
+    path: Type.Optional(Type.String({ minLength: 1, description: "Alias for a single element of `paths`." })),
     number: Type.Optional(Type.Boolean({ description: "Number all output lines (`-n`)." })),
     numberNonBlank: Type.Optional(Type.Boolean({ description: "Number only non-blank lines (`-b`)." })),
     squeezeBlank: Type.Optional(Type.Boolean({ description: "Collapse repeated blank lines (`-s`)." })),
@@ -30,8 +32,9 @@ export const catTool: ToolSpec<Input> = {
   pipeable: "source",
   mutates: false,
   async run(ctx, input, io) {
-    const paths = await resolvePaths(ctx, input.paths ?? []);
-    const stream = inputStream(paths.map((entry) => entry.full), io.stdin);
+    const paths = pathsFrom(input) ?? [];
+    const targets = await resolvePaths(ctx, paths);
+    const stream = inputStream(targets.map((entry) => entry.full), io.stdin);
     if (
       input.number !== true &&
       input.numberNonBlank !== true &&
@@ -40,7 +43,7 @@ export const catTool: ToolSpec<Input> = {
       input.showTabs !== true &&
       input.showNonPrinting !== true
     ) {
-      return { stdout: await collect(stream), exitCode: 0, metadata: { paths: input.paths ?? [] } };
+      return { stdout: await collect(stream), exitCode: 0, metadata: { paths } };
     }
 
     const output: string[] = [];
@@ -63,7 +66,7 @@ export const catTool: ToolSpec<Input> = {
       }
       output.push(text + (line.newline ? "\n" : ""));
     }
-    return textResult(output.join(""), { paths: input.paths ?? [] });
+    return textResult(output.join(""), { paths });
   },
 };
 

@@ -6,6 +6,7 @@
 import * as fs from "node:fs";
 import { createHash } from "node:crypto";
 import { Type, type Static } from "@sinclair/typebox";
+import { filesFrom } from "../core/aliases.js";
 import { FsError, fromErrno } from "../core/errors.js";
 import { mapLimit } from "../core/parallel.js";
 import { textResult, type ToolSpec } from "../core/types.js";
@@ -13,6 +14,8 @@ import { textResult, type ToolSpec } from "../core/types.js";
 const Schema = Type.Object(
   {
     files: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { description: "Files to hash. Omit to hash stdin." })),
+    paths: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { description: "Alias for `files`." })),
+    path: Type.Optional(Type.String({ minLength: 1, description: "Alias for a single element of `files`." })),
     algorithm: Type.Optional(
       Type.Union(
         [Type.Literal("md5"), Type.Literal("sha1"), Type.Literal("sha256"), Type.Literal("sha512")],
@@ -36,14 +39,15 @@ export const hashTool: ToolSpec<Input> = {
   mutates: false,
   async run(ctx, input, io) {
     const algorithm = input.algorithm ?? "sha256";
-    if (input.files === undefined || input.files.length === 0) {
-      if (io.stdin === undefined) throw new FsError("no input files and no stdin.", "invalid");
+    const files = filesFrom(input);
+    if (files === undefined || files.length === 0) {
+      if (io.stdin === undefined) throw new FsError("hash needs files: [...] or stdin.", "invalid");
       const hash = await hashStream(algorithm, io.stdin);
       return textResult(`${hash}  -\n`, { algorithm, stdin: true });
     }
 
     const targets = [];
-    for (const requested of input.files) {
+    for (const requested of files) {
       const target = await ctx.sandbox.resolveFollow(requested);
       targets.push({ requested, target });
     }
@@ -64,7 +68,7 @@ export const hashTool: ToolSpec<Input> = {
       },
       ctx.signal,
     );
-    return textResult(results.join("\n") + "\n", { algorithm, files: input.files });
+    return textResult(results.join("\n") + "\n", { algorithm, files });
   },
 };
 

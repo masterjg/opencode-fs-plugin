@@ -7,15 +7,18 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { randomBytes } from "node:crypto";
 import { Type, type Static } from "@sinclair/typebox";
+import { expressionsFrom, pathsFrom } from "../core/aliases.js";
 import { FsError, fromErrno } from "../core/errors.js";
 import { inputStream, writeAll } from "../core/stream.js";
 import { textResult, type ToolSpec } from "../core/types.js";
 
 const Schema = Type.Object(
   {
-    script: Type.String({ description: "sed substitution, e.g. s/old/new/g." }),
+    script: Type.Optional(Type.String({ description: "sed substitution, e.g. s/old/new/g." })),
+    expression: Type.Optional(Type.String({ minLength: 1, description: "Alias for a single element of `expressions`." })),
     expressions: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { description: "Additional -e expressions." })),
     paths: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { description: "Files to process. Omit to read stdin." })),
+    path: Type.Optional(Type.String({ minLength: 1, description: "Alias for a single element of `paths`." })),
     inPlace: Type.Optional(Type.Boolean({ description: "Edit files in place (`-i`)." })),
     extendedRegexp: Type.Optional(Type.Boolean({ description: "Use extended regular expressions (`-E`)." })),
     quiet: Type.Optional(Type.Boolean({ description: "Suppress automatic output (`-n`)." })),
@@ -41,9 +44,12 @@ export const sedTool: ToolSpec<Input> = {
   pipeable: "filter",
   mutates: false,
   async run(ctx, input, io) {
-    const scripts = [input.script, ...(input.expressions ?? [])];
+    const scripts = [input.script, ...expressionsFrom(input)].filter(
+      (value): value is string => value !== undefined,
+    );
+    if (scripts.length === 0) throw new FsError("sed needs script, expression, or expressions", "invalid");
     const substitutions = scripts.map((script) => parseSubstitution(script, input.extendedRegexp === true));
-    const paths = input.paths ?? [];
+    const paths = pathsFrom(input) ?? [];
     if (input.inPlace === true && paths.length === 0) {
       throw new FsError("in-place editing requires paths.", "invalid");
     }

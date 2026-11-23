@@ -74,6 +74,13 @@ unit, end-to-end and coverage tests.
 | HTTP(S) | `fs.http_request` | `url`, `method`, `headers`, `body`, `json`, `output`, `checksum`, `maxBytes`, `timeoutMs`, `failOnError`, `followRedirects`, `maxRedirects` |
 | shell pipe | `fs.pipe` | `stages`, `input`, `output`, `append` |
 
+Canonical field names are listed above. Aliases are accepted only where noted:
+`path` for one `paths` element (`stat`, `ls`, `cat`, `find`, `tee`, `grep`,
+`sed`), `source` for `sources` (`cp`, `mv`, `ln`), `expression` for
+`expressions` (`sed`), and `limit` for `maxCount` (`grep`). `fs.mkdir` accepts
+`paths` beside `path`, and `fs.hash` accepts `paths`/`path` beside `files`.
+Prefer the canonical names.
+
 ## Pipe
 
 `fs.pipe` joins registered tools through byte buffers. Stages run in order;

@@ -73,13 +73,17 @@ Recent parity additions:
 
 ## Argument shapes
 
-Use the exact field names; scalar `path` is only valid for `fs.mkdir`. The host
-silently drops unknown arguments, so a typo like `path` instead of `paths` makes
-the tool run with defaults (often `.`), not fail.
+Use the canonical field names below. Aliases are accepted only where noted:
+`path` for one `paths` element (`fs.stat`, `fs.ls`, `fs.cat`, `fs.find`,
+`fs.tee`, `fs.grep`, `fs.sed`), `source` for `sources` (`fs.cp`, `fs.mv`,
+`fs.ln`), `expression` for `expressions` (`fs.sed`), and `limit` for `maxCount`
+(`fs.grep`). `fs.mkdir` accepts `paths` beside `path`, and `fs.hash` accepts
+`paths`/`path` beside `files`. Other tools take only the canonical name; the
+host drops unknown fields, so a name typo runs with defaults.
 
 | Field | Commands |
 |---|---|
-| `path` | `fs.mkdir` |
+| `path` | `fs.mkdir` (canonical; `paths` accepted); alias for one path in `fs.stat`, `fs.ls`, `fs.cat`, `fs.find`, `fs.tee`, `fs.grep`, `fs.sed` |
 | `sources` + `destination` | `fs.cp`, `fs.mv`, `fs.ln` |
 | `paths` | `fs.stat`, `fs.ls`, `fs.find`, `fs.rm`, `fs.rmdir`, `fs.touch`, `fs.truncate`, `fs.chmod`, `fs.chown`, `fs.readlink`, `fs.du`, `fs.df`, `fs.cat`, `fs.head`, `fs.tail`, `fs.tee`, `fs.wc`, `fs.sort`, `fs.uniq`, `fs.cut`, `fs.tr`, `fs.grep`, `fs.sed`, `fs.gzip`, `fs.gunzip`, `fs.trash`, `fs.file`, `fs.base64`, `fs.od`, `fs.strings`, `fs.sync`, `fs.mountpoint`, `fs.tac`, `fs.rev`, `fs.nl`, `fs.fold`, `fs.shuf` |
 | `pids` | `fs.ps`, `fs.kill` |
@@ -96,11 +100,12 @@ the tool run with defaults (often `.`), not fail.
 
 ### Common mistakes
 
-- `fs.hash` takes `files`, not `paths`; with neither files nor stdin it fails.
-- `fs.mkdir` takes `path`; every other path tool takes `paths`.
-- `fs.sed` takes `expressions` (plural) and only `s/.../.../flags`; line ranges
-  need `head`/`tail` or `pipe`.
-- `fs.grep` takes `maxCount`, not `limit`; add `recursive: true` for a directory.
+- `fs.hash` canonical is `files`; `paths` and `path` are accepted aliases.
+- `fs.mkdir` canonical is `path`; `paths` is accepted but cannot be combined.
+- `fs.sed` canonical is `script`/`expressions`; `expression` is accepted. Only
+  `s/.../.../flags` is supported; line ranges need `head`/`tail` or `pipe`.
+- `fs.grep` canonical is `maxCount`; `limit` is accepted. Add `recursive: true`
+  for a directory.
 - `fs.cat` and text filters read `paths`; Code Mode has no stdin, so `fs.cat({})`
   fails. Use `fs.pipe` for stdin.
 - There is no `fs.write`; use the built-in `write` or `fs.tee({ paths, content })`.

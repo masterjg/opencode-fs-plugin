@@ -7,6 +7,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import picomatch from "picomatch";
 import { Type, type Static } from "@sinclair/typebox";
+import { pathsFrom } from "../core/aliases.js";
 import { fromErrno } from "../core/errors.js";
 import { formatDate, lookupGroup, lookupUser, modeString, num } from "../core/fsutil.js";
 import { humanSize } from "../core/format.js";
@@ -16,6 +17,7 @@ import { textResult, type ToolSpec } from "../core/types.js";
 const Schema = Type.Object(
   {
     paths: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { description: "Paths to list. Default: ['.']." })),
+    path: Type.Optional(Type.String({ minLength: 1, description: "Alias for a single element of `paths`." })),
     all: Type.Optional(Type.Boolean({ description: "Include hidden entries and `.`/`..` (`-a`)." })),
     almostAll: Type.Optional(Type.Boolean({ description: "Include hidden entries but not `.`/`..` (`-A`)." })),
     long: Type.Optional(Type.Boolean({ description: "Long listing (`-l`)." })),
@@ -72,7 +74,7 @@ export const lsTool: ToolSpec<Input> = {
   pipeable: false,
   mutates: false,
   async run(ctx, input) {
-    const paths = input.paths ?? ["."];
+    const paths = pathsFrom(input) ?? ["."];
     const blocks: string[] = [];
     for (const requested of paths) {
       const target = await ctx.sandbox.resolveExisting(requested, { allowRoot: true });

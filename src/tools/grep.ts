@@ -6,6 +6,7 @@
 import * as fs from "node:fs/promises";
 import picomatch from "picomatch";
 import { Type, type Static } from "@sinclair/typebox";
+import { pathsFrom } from "../core/aliases.js";
 import { FsError, fromErrno } from "../core/errors.js";
 import { walkAll } from "../core/fsutil.js";
 import { mapLimit } from "../core/parallel.js";
@@ -16,6 +17,7 @@ const Schema = Type.Object(
   {
     pattern: Type.String({ description: "Search pattern." }),
     paths: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { description: "Files or directories. Omit to read stdin." })),
+    path: Type.Optional(Type.String({ minLength: 1, description: "Alias for a single element of `paths`." })),
     recursive: Type.Optional(Type.Boolean({ description: "Search directories recursively (`-r`)." })),
     include: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { description: "Only search matching globs (`--include`)." })),
     exclude: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { description: "Skip matching globs (`--exclude`)." })),
@@ -36,6 +38,7 @@ const Schema = Type.Object(
     before: Type.Optional(Type.Integer({ minimum: 0, description: "Lines before (`-B`)." })),
     after: Type.Optional(Type.Integer({ minimum: 0, description: "Lines after (`-A`)." })),
     maxCount: Type.Optional(Type.Integer({ minimum: 1, description: "Maximum matches per file (`-m`)." })),
+    limit: Type.Optional(Type.Integer({ minimum: 1, description: "Alias for `maxCount`." })),
     noMessages: Type.Optional(Type.Boolean({ description: "Suppress error messages (`-s`)." })),
   },
   { additionalProperties: false },
@@ -65,7 +68,7 @@ export const grepTool: ToolSpec<Input> = {
       if (exclude !== undefined && exclude(file)) return false;
       return true;
     };
-    const paths = input.paths ?? [];
+    const paths = pathsFrom(input) ?? [];
     const targets: Target[] = [];
     if (paths.length > 0) {
       for (const requested of paths) {
@@ -168,6 +171,7 @@ function search(
   const rows = data.toString("utf8").split("\n");
   /* v8 ignore next */
   if (rows[rows.length - 1] === "") rows.pop();
+  const maxCount = input.maxCount ?? input.limit;
   const before = input.before ?? input.context ?? 0;
   const after = input.after ?? input.context ?? 0;
   const lines: string[] = [];
@@ -182,12 +186,20 @@ function search(
     matched = true;
     count++;
     if (input.filesWithMatches === true && !lines.includes(name)) lines.push(name);
-    if (input.maxCount !== undefined && count >= input.maxCount) break;
-    if (input.filesWithMatches === true) continue;
+    if (input.filesWithMatches === true) {
+      if (maxCount !== undefined && count >= maxCount) break;
+      continue;
+    }
     /* v8 ignore next */
-    if (input.filesWithoutMatch === true) continue;
+    if (input.filesWithoutMatch === true) {
+      if (maxCount !== undefined && count >= maxCount) break;
+      continue;
+    }
     /* v8 ignore next */
-    if (input.count === true) continue;
+    if (input.count === true) {
+      if (maxCount !== undefined && count >= maxCount) break;
+      continue;
+    }
     if (input.onlyMatching === true) {
       regex.lastIndex = 0;
       for (const match of row.matchAll(regex)) {
@@ -207,9 +219,10 @@ function search(
         lastPrinted = context;
       }
     }
+    if (maxCount !== undefined && count >= maxCount) break;
   }
   /* v8 ignore next */
-  if (input.count === true) lines.push(`${showName ? `${name}:` : ""}${Math.min(count, input.maxCount ?? count)}`);
+  if (input.count === true) lines.push(`${showName ? `${name}:` : ""}${Math.min(count, maxCount ?? count)}`);
   if (input.filesWithoutMatch === true && !matched) lines.push(name);
   return { lines, matched };
 }

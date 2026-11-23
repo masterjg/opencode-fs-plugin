@@ -6,12 +6,14 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { Type, type Static } from "@sinclair/typebox";
+import { sourcesFrom } from "../core/aliases.js";
 import { FsError, fromErrno, isMissing } from "../core/errors.js";
 import { textResult, type ToolSpec } from "../core/types.js";
 
 const Schema = Type.Object(
   {
-    sources: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+    sources: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })),
+    source: Type.Optional(Type.String({ minLength: 1, description: "Alias for a single element of `sources`." })),
     destination: Type.String({ minLength: 1, description: "Link path, or an existing directory for multiple sources." }),
     symbolic: Type.Optional(Type.Boolean({ description: "Create symbolic links (`-s`)." })),
     force: Type.Optional(Type.Boolean({ description: "Replace existing destinations (`-f`)." })),
@@ -33,6 +35,8 @@ export const lnTool: ToolSpec<Input> = {
   pipeable: false,
   mutates: true,
   async run(ctx, input) {
+    const sourcePaths = sourcesFrom(input);
+    if (sourcePaths.length === 0) throw new FsError("ln needs sources: [...]", "invalid");
     const destTarget = await ctx.sandbox.resolveForCreate(input.destination);
     let destIsDirectory = false;
     try {
@@ -41,13 +45,13 @@ export const lnTool: ToolSpec<Input> = {
       /* v8 ignore next 2 */
       if (!isMissing(error)) throw fromErrno(error, "access");
     }
-    if (input.sources.length > 1 && !destIsDirectory) {
+    if (sourcePaths.length > 1 && !destIsDirectory) {
       throw new FsError("Multiple sources require an existing directory destination.", "not-directory");
     }
 
     const created: string[] = [];
-    for (const requested of input.sources) {
-      const link = destIsDirectory || input.sources.length > 1
+    for (const requested of sourcePaths) {
+      const link = destIsDirectory || sourcePaths.length > 1
         ? path.join(destTarget.full, path.basename(path.resolve(requested)))
         : destTarget.full;
       const linkTarget = await ctx.sandbox.resolveForCreate(link);

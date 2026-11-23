@@ -6,13 +6,15 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { Type, type Static } from "@sinclair/typebox";
+import { sourcesFrom } from "../core/aliases.js";
 import { FsError, fromErrno, isMissing } from "../core/errors.js";
 import { copyTree, ensureParent } from "../core/fsutil.js";
 import { textResult, type ToolSpec } from "../core/types.js";
 
 const Schema = Type.Object(
   {
-    sources: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+    sources: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })),
+    source: Type.Optional(Type.String({ minLength: 1, description: "Alias for a single element of `sources`." })),
     destination: Type.String({ minLength: 1 }),
     force: Type.Optional(Type.Boolean({ description: "Overwrite existing destinations (`-f`)." })),
     noClobber: Type.Optional(Type.Boolean({ description: "Never overwrite (`-n`)." })),
@@ -33,8 +35,10 @@ export const mvTool: ToolSpec<Input> = {
   pipeable: false,
   mutates: true,
   async run(ctx, input) {
+    const requestedSources = sourcesFrom(input);
+    if (requestedSources.length === 0) throw new FsError("mv needs sources: [...]", "invalid");
     const sources = [];
-    for (const requested of input.sources) {
+    for (const requested of requestedSources) {
       const target = await ctx.sandbox.resolveExisting(requested);
       ctx.sandbox.assertSafeToDelete(target.full);
       const stats = await ctx.sandbox.lstat(target.full, requested);

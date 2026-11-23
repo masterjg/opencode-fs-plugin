@@ -6,13 +6,15 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { Type, type Static } from "@sinclair/typebox";
+import { sourcesFrom } from "../core/aliases.js";
 import { FsError, fromErrno, isMissing } from "../core/errors.js";
 import { copyTree, isSubpath } from "../core/fsutil.js";
 import { textResult, type ToolSpec } from "../core/types.js";
 
 const Schema = Type.Object(
   {
-    sources: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+    sources: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })),
+    source: Type.Optional(Type.String({ minLength: 1, description: "Alias for a single element of `sources`." })),
     destination: Type.String({ minLength: 1 }),
     recursive: Type.Optional(Type.Boolean({ description: "Copy directories recursively (`-r`, `-R`)." })),
     archive: Type.Optional(Type.Boolean({ description: "Archive mode (`-a`): recursive, preserve, keep symlinks." })),
@@ -49,8 +51,10 @@ export const cpTool: ToolSpec<Input> = {
     const dereference = archive ? false : input.dereference !== false;
     const preserve = archive || input.preserve === true;
 
+    const requestedSources = sourcesFrom(input);
+    if (requestedSources.length === 0) throw new FsError("cp needs sources: [...]", "invalid");
     const sources: Source[] = [];
-    for (const requested of input.sources) {
+    for (const requested of requestedSources) {
       const target = dereference
         ? await ctx.sandbox.resolveFollow(requested)
         : await ctx.sandbox.resolveExisting(requested);

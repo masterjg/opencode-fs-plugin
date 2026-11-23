@@ -4,6 +4,12 @@ This fork targets Linux and Node 22+. Tool names follow native commands; option
 fields follow the native long options. The model-facing tools are grouped under
 the `fs` namespace (`tools.fs.cp`, direct `fs_cp`).
 
+Aliases are accepted only where noted: `path` for one `paths` element (`stat`,
+`ls`, `cat`, `find`, `tee`, `grep`, `sed`), `source` for `sources` (`cp`, `mv`,
+`ln`), `expression` for `expressions` (`sed`), and `limit` for `maxCount`
+(`grep`). `mkdir` accepts `paths` beside `path`, and `hash` accepts
+`paths`/`path` beside `files`; the canonical names remain preferred.
+
 ## Principles
 
 - Every tool is async and uses `fs/promises`; no synchronous filesystem calls.
