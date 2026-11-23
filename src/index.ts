@@ -30,6 +30,7 @@ import { diffTool } from "./tools/diff.js";
 import { duTool } from "./tools/du.js";
 import { fileTool } from "./tools/file.js";
 import { findTool } from "./tools/find.js";
+import { execTool, normalizeExecAllowlist } from "./tools/exec.js";
 import { findmntTool } from "./tools/findmnt.js";
 import { foldTool } from "./tools/fold.js";
 import { grepTool } from "./tools/grep.js";
@@ -141,6 +142,7 @@ const TOOLS: readonly AnyTool[] = [
   trTool,
   sedTool,
   grepTool,
+  execTool,
   pipeTool,
 ];
 
@@ -196,6 +198,7 @@ export default Plugin.define({
     const concurrency = clampConcurrency(
       typeof ctx.options?.concurrency === "number" ? ctx.options.concurrency : undefined,
     );
+    const execAllowlist = normalizeExecAllowlist(ctx.options?.execAllowlist);
     const maxOutputBytes =
       typeof ctx.options?.maxOutputBytes === "number" && ctx.options.maxOutputBytes > 0
         ? Math.trunc(ctx.options.maxOutputBytes)
@@ -248,6 +251,7 @@ export default Plugin.define({
                     signal,
                     tmpdir: os.tmpdir(),
                     maxOutputBytes,
+                    execAllowlist,
                   },
                   parsed,
                   {},

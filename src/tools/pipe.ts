@@ -13,6 +13,7 @@ import { catTool } from "./cat.js";
 import { cpioTool } from "./cpio.js";
 import { cutTool } from "./cut.js";
 import { ddTool } from "./dd.js";
+import { execTool } from "./exec.js";
 import { foldTool } from "./fold.js";
 import { grepTool } from "./grep.js";
 import { gunzipTool, gzipTool } from "./gzip.js";
@@ -62,7 +63,7 @@ const REGISTRY: ReadonlyMap<string, AnyTool> = new Map(
     catTool, headTool, tailTool, grepTool, sedTool, sortTool, uniqTool, cutTool,
     trTool, wcTool, teeTool, hashTool, gzipTool, gunzipTool, tarTool, zipTool,
     httpRequestTool, base64Tool, odTool, stringsTool, tacTool, revTool, nlTool,
-    pasteTool, shufTool, foldTool, ddTool, cpioTool,
+    pasteTool, shufTool, foldTool, ddTool, cpioTool, execTool,
   ].map((tool) => [tool.name, tool]),
 );
 
@@ -93,7 +94,7 @@ export const pipeTool: ToolSpec<Input> = {
       const result = await tool.run(
         { ...ctx, permission: gate },
         parsed,
-        { ...(data === undefined ? {} : { stdin: fromBuffer(data) }) },
+        { ...(data === undefined ? {} : { stdin: fromBuffer(data) }), piped: true },
       ) as ToolResult;
       stages.push({
         tool: stage.tool,

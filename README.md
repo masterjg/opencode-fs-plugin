@@ -72,6 +72,7 @@ unit, end-to-end and coverage tests.
 | `cpio` | `fs.cpio` | `create`/`list`/`extract` (newc), `directory`, `members`, `input`, `member`, `verbose` |
 | `ar` | `fs.ar` | `create`/`list`/`extract`, `directory`, `members` |
 | HTTP(S) | `fs.http_request` | `url`, `method`, `headers`, `body`, `json`, `output`, `checksum`, `maxBytes`, `timeoutMs`, `failOnError`, `followRedirects`, `maxRedirects` |
+| process | `fs.exec` | `command`, `args`, `cwd`, `stdin`, `timeoutMs`; exact allowlist, no shell |
 | shell pipe | `fs.pipe` | `stages`, `input`, `output`, `append` |
 
 `fs.head.skip` selects line ranges (`sed -n '20,40p'`). `fs.find` can
@@ -102,7 +103,7 @@ await tools.fs.pipe({
 })
 ```
 
-New filter stages: `tac`, `rev`, `nl`, `paste`, `shuf`, `fold`, `base64`, `od`,
+New filter stages: `exec`, `tac`, `rev`, `nl`, `paste`, `shuf`, `fold`, `base64`, `od`,
 and `strings`; `dd` and `cpio` are source/sink stages like `tar`.
 
 `fs.http_request` is a pipe source, so network data can feed the same stages:
@@ -119,12 +120,41 @@ await tools.fs.pipe({
 Pipe stages exchange whole buffers, so use `maxBytes` for large responses. For
 large downloads prefer `fs.http_request({ output })`, which streams to disk.
 
-There is no shell, redirection operator, nested pipe, or `find -exec`.
+There is no shell, redirection operator, nested pipe, or arbitrary `find -exec`.
 
 `fs.pipe` is sequential by design and is not a batch primitive. For independent
 work, fan out with `Promise.all` over `tools.fs.*` (or one multi-path call).
-`fs` domain errors resolve as `ERROR:`/`BLOCKED:` text, so check each result;
-permission denials throw.
+`fs` domain errors resolve as `ERROR:`/`BLOCKED:` text; permission denials throw.
+
+## Exec
+
+`fs.exec` runs one allowlisted executable with `shell: false`. The default
+allowlist is `npm`, `npx`, `uv`, `uvx`, `pip`, `pip3`; override it in the plugin
+options:
+
+```jsonc
+{
+  "package": "./repos/opencode-fs-plugin",
+  "options": { "execAllowlist": ["npm", "uv"] }
+}
+```
+
+`command` is a bare name, `args` are literal, and `cwd` is sandboxed. Direct
+calls return JSON with `exitCode`, `stdout`, and `stderr`; a pipe stage returns
+raw stdout so it composes with `grep`, `sort`, `tee`, and the rest.
+
+```js
+await tools.fs.exec({ command: "npm", args: ["run", "build"], timeoutMs: 300000 })
+await tools.fs.pipe({
+  stages: [
+    { tool: "exec", args: { command: "npm", args: ["test"] } },
+    { tool: "grep", args: { pattern: "FAIL" } },
+  ],
+})
+```
+
+The command asserts `fs_exec`, uses a process group for timeout kills, caps
+stdout/stderr, and treats a non-zero exit as a normal result.
 
 ## Performance and concurrency
 

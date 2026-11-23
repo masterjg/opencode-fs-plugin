@@ -78,6 +78,22 @@ Aliases are accepted only where noted: `path` for one `paths` element (`stat`,
 - `maxBytes` is enforced while reading, for buffered and downloaded bodies.
 - Pipe use is a buffered source; whole bodies pass between stages.
 
+## Process execution
+
+- `fs.exec` is the only `child_process` use. It spawns with `shell: false`; there
+  is no shell parsing, redirection, or command substitution.
+- `command` must be a bare executable name and must match the allowlist exactly.
+  Default: `npm`, `npx`, `uv`, `uvx`, `pip`, `pip3`. Override with the plugin
+  option `execAllowlist`; an empty list disables execution.
+- `args` are passed verbatim. `cwd` resolves inside the sandbox and asserts
+  `external_directory` when it leaves the project; the action is `fs_exec`.
+- Timeout defaults to 120000 ms, capped at 600000. A timeout kills the process
+  group (SIGTERM, then SIGKILL) and reports `timedOut: true`, exit code 124.
+- Captured stdout/stderr are capped at `maxOutputBytes`; truncation is reported.
+- Direct calls return JSON with `exitCode`, `stdout`, and `stderr`. In `fs.pipe`,
+  the stage returns raw stdout and composes as a source or filter.
+- A non-zero exit is a normal result, not a tool error.
+
 ## Deliberate gaps
 
 These are not implemented:
@@ -97,8 +113,8 @@ These are not implemented:
 - true streaming through pipe stages; `http_request` buffers unless `output` is set
 - worker threads for CPU-bound stages (`sort`, `sed`, text diffing)
 - parallel member reads inside a single `tar`/`zip` archive; member order is fixed
-- process start, `nohup`, `setsid`, and `timeout` wrappers; the plugin never
-  uses `child_process`
+- process start beyond the allowlisted `exec` tool; `nohup`, `setsid`, and
+  `timeout` wrappers are unavailable
 - ICMP `ping` (raw sockets) and `ip`/netlink configuration
 - `rsync`, `scp`, and other transfer protocols; use the SSH MCP for remote work
 - ACLs, xattrs, and `chattr`/`lsattr`

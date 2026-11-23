@@ -12,6 +12,8 @@ export type PipeMode = "source" | "filter" | "sink" | false;
 export interface IO {
   /** Piped input when the tool is used as a pipe stage. */
   readonly stdin?: AsyncIterable<Buffer>;
+  /** True when the tool is running inside `fs.pipe`. */
+  readonly piped?: boolean;
 }
 
 export interface ToolResult {
@@ -29,6 +31,7 @@ export interface RunContext {
   readonly signal: AbortSignal;
   readonly tmpdir: string;
   readonly maxOutputBytes: number;
+  readonly execAllowlist: readonly string[];
 }
 
 export interface ToolSpec<I> {

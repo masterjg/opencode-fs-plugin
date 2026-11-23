@@ -25,6 +25,7 @@ With `execute` allowed, call it as `tools.fs.<command>`; agents without
 | Regex substitution or in-place edit | `fs.sed` |
 | Recoverable deletion | `fs.trash` |
 | HTTP(S) fetch, API call, or file download | `fs.http_request` |
+| Allowlisted package CLI | `fs.exec` (no shell; default npm/npx/uv/uvx/pip/pip3) |
 | Many independent fs calls | one multi-path call, else `Promise.all` in `execute` |
 | Sequential byte pipeline | `fs.pipe` |
 
@@ -53,6 +54,7 @@ what `fs.stat`, `fs.ls`, `fs.hash`, `fs.diff`, or `fs.cat` can confirm.
 | Text filters | `fs.cat`, `fs.head`, `fs.tail`, `fs.grep`, `fs.sed`, `fs.sort`, `fs.uniq`, `fs.cut`, `fs.tr`, `fs.wc`, `fs.tee`, `fs.tac`, `fs.rev`, `fs.nl`, `fs.paste`, `fs.comm`, `fs.split`, `fs.shuf`, `fs.fold` |
 | Compose filters | `fs.pipe` |
 | HTTP(S) | `fs.http_request` (`output`, `checksum`, `maxBytes`, `json`) |
+| Allowlisted package CLI | `fs.exec` (`command`, `args`, `cwd`, `stdin`, `timeoutMs`) |
 | Processes | `fs.ps`, `fs.pgrep`, `fs.kill` (`dryRun` available) |
 | System info | `fs.id`, `fs.uname`, `fs.uptime`, `fs.date`, `fs.findmnt`, `fs.mountpoint` |
 | Binary inspection | `fs.file`, `fs.base64`, `fs.od`, `fs.strings` |
@@ -98,6 +100,7 @@ host drops unknown fields, so a name typo runs with defaults.
 | `paths` + optional `keep`/`force`/`stdout`/`level`/`suffix` | `fs.gzip`, `fs.gunzip` |
 | `url` + optional `output` | `fs.http_request` |
 | `stages` + optional `input`/`output` | `fs.pipe` |
+| `command` + `args` + optional `cwd`/`stdin`/`timeoutMs` | `fs.exec` |
 
 `fs.head` takes `skip` for line ranges: `sed -n '20,40p'` is
 `fs.head({ paths, skip: 19, lines: 21 })`. `fs.find` takes
@@ -136,11 +139,42 @@ removed, and deletion asserts `fs_rm`/`fs_trash`.
 | `cat > f <<EOF` | built-in `write` or `fs.tee({ paths: [f], content })` |
 | `rg pattern path` | `fs.grep({ pattern, paths })` or the built-in `grep` |
 | `ls -l f` | `fs.ls({ paths: [f], long: true })` |
+| `npm ...` / `uv run ...` | `fs.exec({ command, args })` (allowlisted only) |
 
 `sed -n` applied to another command's stdout has no fs equivalent; keep that in
 the command pipeline. `fs.find` has no arbitrary `-exec` by design; use
 `action: "delete"` or `"trash"` for the common cleanup case, or list the paths and
 remove them explicitly.
+
+## Exec
+
+`fs.exec` runs an allowlisted executable without a shell. The default allowlist
+is `npm`, `npx`, `uv`, `uvx`, `pip`, `pip3`; override it with the fs plugin
+option `execAllowlist` in `opencode.jsonc`:
+
+```jsonc
+{ "package": "./repos/opencode-fs-plugin", "options": { "execAllowlist": ["npm", "uv"] } }
+```
+
+`command` is a bare executable name; `args` are passed verbatim, so `;`, `|`,
+and `$()` have no shell meaning. `cwd` must resolve inside the project unless
+`external_directory` allows it. Direct calls return JSON with
+`exitCode`/`stdout`/`stderr`; in `fs.pipe` the stage passes raw stdout.
+
+```js
+await tools.fs.exec({ command: "npm", args: ["run", "build"], timeoutMs: 300000 })
+await tools.fs.exec({ command: "uv", args: ["run", "pytest"] })
+await tools.fs.pipe({
+  stages: [
+    { tool: "exec", args: { command: "npm", args: ["test"] } },
+    { tool: "grep", args: { pattern: "FAIL" } },
+  ],
+})
+```
+
+A non-zero exit is a normal result; allowlist rejection, timeout, and abort are
+errors. The tool asserts `fs_exec`, uses a process group for timeout kills, and
+caps captured stdout/stderr.
 
 ## Batch independent calls
 
@@ -254,9 +288,9 @@ Common pipe mistakes:
 - There is no shell, redirection operator, nested pipe, `find -exec`, or
   `xargs`.
 
-Pipeable filters include `head`, `tail`, `grep`, `sed`, `sort`, `uniq`, `cut`,
-`tr`, `tee`, `gzip`, `gunzip`, `tac`, `rev`, `nl`, `paste`, `shuf`, `fold`,
-`base64`, `od`, and `strings`. Unknown stage names fail with `unsupported`.
+Pipeable filters include `exec`, `head`, `tail`, `grep`, `sed`, `sort`, `uniq`,
+`cut`, `tr`, `tee`, `gzip`, `gunzip`, `tac`, `rev`, `nl`, `paste`, `shuf`,
+`fold`, `base64`, `od`, and `strings`. Unknown stage names fail with `unsupported`.
 
 ## Background jobs
 
@@ -382,8 +416,9 @@ await tools.fs.http_request({
 - `fs.tar`/`fs.zip` create from `input` or stdin; extraction is file-backed.
 - `fs.http_request` is HTTP(S) only: no FTP/SFTP, cookie jars, client
   certificates, proxies, multipart uploads, or resumable downloads.
-- No process can be started or wrapped: `nohup`, `setsid`, and `timeout` are
-  unavailable, and `fs.kill` rejects pid 0, pid 1, and process groups.
+- Only `fs.exec` starts processes, and only exact allowlisted names; `nohup`,
+  `setsid`, and `timeout` wrappers are unavailable. `fs.kill` rejects pid 0,
+  pid 1, and process groups.
 - No ICMP ping; use `fs.http_request` or a TCP port check. No ACL, xattr, or
   `chattr` support. `rsync`/`scp` are out of scope; use the SSH MCP.
 - `fs.comm` expects sorted input. `fs.ar` uses GNU short names (16 bytes max);
@@ -424,6 +459,9 @@ await tools.fs.http_request({
 Command actions are `fs_<command>` (for example `fs_cp`). `fs_*` wildcards work
 in agent rules. `fs.pipe` asserts each stage's action; a denied stage cannot be
 hidden inside a pipeline. Do not work around a denied tool with shell.
+
+`fs_exec` runs only exact allowlisted names and asserts `fs_exec` plus
+`external_directory` when `cwd` leaves the project. There is no shell.
 
 `fs_http_request` is allowed by default, like `fetch`. Its resource is the
 request host; rules can allow one host and ask or deny the rest. Each redirect

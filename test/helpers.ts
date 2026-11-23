@@ -10,6 +10,7 @@ import type { TSchema } from "@sinclair/typebox";
 import { PermissionGate, type PermissionAssertInput } from "../src/core/permissions.js";
 import { parseSchema } from "../src/core/schema.js";
 import { Sandbox } from "../src/core/sandbox.js";
+import { DEFAULT_EXEC_ALLOWLIST } from "../src/tools/exec.js";
 import type { ToolResult, ToolSpec } from "../src/core/types.js";
 
 export interface RunSpecOptions {
@@ -19,6 +20,7 @@ export interface RunSpecOptions {
   tmpdir?: string;
   maxOutputBytes?: number;
   stdin?: AsyncIterable<Buffer>;
+  execAllowlist?: readonly string[];
 }
 
 export interface RunSpecResult<I> {
@@ -73,6 +75,7 @@ export async function runSpec<I>(
       signal: options.signal ?? new AbortController().signal,
       tmpdir: options.tmpdir ?? os.tmpdir(),
       maxOutputBytes: options.maxOutputBytes ?? 1024 * 1024,
+      execAllowlist: options.execAllowlist ?? DEFAULT_EXEC_ALLOWLIST,
     },
     input,
     options.stdin === undefined ? {} : { stdin: options.stdin },
