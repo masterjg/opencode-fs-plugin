@@ -94,6 +94,19 @@ the tool run with defaults (often `.`), not fail.
 | `url` + optional `output` | `fs.http_request` |
 | `stages` + optional `input`/`output` | `fs.pipe` |
 
+### Common mistakes
+
+- `fs.hash` takes `files`, not `paths`; with neither files nor stdin it fails.
+- `fs.mkdir` takes `path`; every other path tool takes `paths`.
+- `fs.sed` takes `expressions` (plural) and only `s/.../.../flags`; line ranges
+  need `head`/`tail` or `pipe`.
+- `fs.grep` takes `maxCount`, not `limit`; add `recursive: true` for a directory.
+- `fs.cat` and text filters read `paths`; Code Mode has no stdin, so `fs.cat({})`
+  fails. Use `fs.pipe` for stdin.
+- There is no `fs.write`; use the built-in `write` or `fs.tee({ paths, content })`.
+- `fs.mktemp` needs a template ending in at least three `X`; use `suffix` for an
+  extension.
+
 ## Pipe
 
 Stages run sequentially and pass bytes. Only pipeable tools are allowed. The
@@ -313,6 +326,11 @@ await tools.fs.http_request({
 
 - Paths resolve against the project directory. Paths outside it require
   `external_directory` approval, except tool-owned temp/trash paths.
+- The global config allows `/tmp/opencode/**` and the OpenCode cache, state, and
+  config trees (`$HOME/.cache/opencode/**`, `$HOME/.local/share/opencode/**`,
+  `$HOME/.local/state/opencode/**`, `$HOME/.config/opencode/**`). Prefer
+  `fs.mktemp` for scratch files; a denied path is a blocker, not a reason to
+  switch to shell.
 - Symlinks are handled per command: `rm`/`mv` never follow the final link, `cp`
   follows unless `archive`/`dereference: false`, and `stat`/`ls` use lstat
   unless asked to follow.
