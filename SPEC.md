@@ -88,9 +88,13 @@ Aliases are accepted only where noted: `path` for one `paths` element (`stat`,
 - The policy is procage `agent_workspace` v3: the project is read/write/exec.
   Network and external paths are denied by default; there are no per-call
   grants.
+- When network is enabled, the policy is `ip` (IPv4/IPv6) plus the resolver
+  sockets used by systemd-resolved, nscd, and SSSD. Plain UDP DNS needs none;
+  other Unix sockets stay blocked. Landlock ignores paths absent on the host.
 - Denied access is handled by asserting the configured permission and retrying,
-  bounded to six attempts: a blocked path asks `external_directory` on the
-  absolute path, a blocked socket asks `fs_exec_network`. The `allow`/`ask`/`deny`
+  bounded to six attempts: a blocked path asks `external_directory` on its
+  containing directory (or the nearest existing ancestor for a missing or
+  redacted path), a blocked socket asks `fs_exec_network`. The `allow`/`ask`/`deny`
   decision comes from `opencode.jsonc`, not from the tool call.
 - If a path or socket stays blocked after approval, the result reports
   `violations` plus a `hint`; stderr containing EACCES/EPERM/EROFS marks

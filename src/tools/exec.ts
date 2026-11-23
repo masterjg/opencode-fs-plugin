@@ -48,10 +48,24 @@ const Schema = Type.Object(
 
 type Input = Static<typeof Schema>;
 
-interface PolicyDocument {
+export interface PolicyDocument {
   fs: Array<{ access: string; target: { subpath: string } }>;
   net: string;
+  ipc: { unix_sockets: string[] };
   [key: string]: unknown;
+}
+
+/**
+ * Sockets used by the name-service resolvers on common Linux systems:
+ * systemd-resolved, nscd, and SSSD. Plain glibc/musl DNS over UDP needs none.
+ * Landlock ignores paths that do not exist on the host.
+ */
+export const RESOLVER_SOCKETS = ["/run/systemd/resolve", "/run/nscd", "/var/lib/sss/pipes"] as const;
+
+/** Set the network mode, plus the resolver sockets it needs. */
+export function applyNetworkPolicy(doc: PolicyDocument, network: boolean): void {
+  doc.net = network ? "ip" : "none";
+  if (network) doc.ipc.unix_sockets = [...RESOLVER_SOCKETS];
 }
 
 export interface ExecOutcome {
@@ -138,10 +152,17 @@ export const execTool: ToolSpec<Input> = {
 
         let added = false;
         for (const candidate of deniedPaths) {
-          const target = await ctx.sandbox.resolveExisting(candidate, { allowRoot: true }).catch(() => undefined);
+          const target = await existingBoundary(ctx, candidate);
           if (target === undefined) continue;
-          await ctx.permission.assert([{ target, boundary: target.full }]);
-          approved.push({ full: target.full });
+          /* v8 ignore next */
+          const stats = await ctx.sandbox.stat(target.full, candidate).catch(() => undefined);
+          /* v8 ignore next */
+          if (stats === undefined) continue;
+          const boundary = stats.isDirectory() ? target.full : path.dirname(target.full);
+          const dirTarget = await ctx.sandbox.resolveExisting(boundary, { allowRoot: true });
+          if (approved.some((entry) => entry.full === dirTarget.full)) continue;
+          await ctx.permission.assert([{ target: dirTarget, boundary: dirTarget.full }]);
+          approved.push({ full: dirTarget.full });
           added = true;
         }
         if (!added) break;
@@ -218,7 +239,7 @@ async function runCaged(ctx: RunContext, input: CagedInput): Promise<ExecOutcome
   }
 
   const doc = api.Policy.preset("agent_workspace", 3, { workspace: ctx.sandbox.root }).toJSON() as PolicyDocument;
-  doc.net = input.network ? "ip" : "none";
+  applyNetworkPolicy(doc, input.network);
   addRule(doc, "exec", path.dirname(input.executable.path));
   addRule(doc, "exec", path.dirname(input.executable.real));
   addRule(doc, "exec", path.dirname(process.execPath));
@@ -314,6 +335,23 @@ async function runCaged(ctx: RunContext, input: CagedInput): Promise<ExecOutcome
   }
 }
 
+/**
+ * Resolve a denied path to the nearest existing ancestor, so a missing
+ * directory or a redacted temp name still yields an approvable boundary.
+ * The filesystem root is never exposed.
+ */
+async function existingBoundary(ctx: RunContext, candidate: string) {
+  let current = candidate;
+  for (;;) {
+    /* v8 ignore next */
+    const target = await ctx.sandbox.resolveExisting(current, { allowRoot: true }).catch(() => undefined);
+    if (target !== undefined) {
+      return target.full === path.parse(target.full).root ? undefined : target;
+    }
+    current = path.dirname(current);
+  }
+}
+
 function addRule(doc: PolicyDocument, access: string, target: string): void {
   const subpath = path.resolve(target);
   if (doc.fs.some((rule) => rule.access === access && rule.target.subpath === subpath)) return;
@@ -345,12 +383,11 @@ export function discoverExternalPaths(ctx: RunContext, outcome: ExecOutcome): st
   }
 
   const stderr = outcome.stderr.toString("utf8");
-  for (const line of stderr.split("\n")) {
-    if (!/EACCES|EPERM|EROFS|Permission denied|Read-only file system|error writing|not written|cannot open|failed to open/i.test(line)) {
-      continue;
-    }
-    for (const match of line.matchAll(/(?:^|[\s'"`(])(\/[^\s'"`),]+)/g)) {
-      found.add(match[1]!);
+  if (/EACCES|EPERM|EROFS|Permission denied|Read-only file system|error writing|not written|cannot open|failed to open/i.test(stderr)) {
+    for (const line of stderr.split("\n")) {
+      for (const match of line.matchAll(/(?:^|[\s'"`(])(\/[^\s'"`),]+)/g)) {
+        found.add(match[1]!);
+      }
     }
   }
   for (const match of stderr.matchAll(/path:\s*['"]([^'"]+)['"]/g)) {
@@ -360,6 +397,7 @@ export function discoverExternalPaths(ctx: RunContext, outcome: ExecOutcome): st
   const root = ctx.sandbox.root;
   return [...found]
     .map((candidate) => path.resolve(candidate))
+    .map((candidate) => candidate.replace(/\/\*+$/, ""))
     .filter((candidate) => candidate !== root && !candidate.startsWith(`${root}${path.sep}`))
     .filter((candidate, index, all) => all.indexOf(candidate) === index);
 }

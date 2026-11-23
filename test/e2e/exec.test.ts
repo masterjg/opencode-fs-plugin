@@ -10,6 +10,8 @@ import { FsError } from "../../src/core/errors.js";
 import { Sandbox } from "../../src/core/sandbox.js";
 import {
   DEFAULT_EXEC_ALLOWLIST,
+  RESOLVER_SOCKETS,
+  applyNetworkPolicy,
   detectsNetworkDenial,
   discoverExternalPaths,
   execTool,
@@ -266,8 +268,20 @@ describe("exec", () => {
     );
     expect(parsed(result).exitCode).toBe(0);
     expect(result.requests.some((request) => request.action === "external_directory")).toBe(true);
-    expect(parsed(result).externalPaths).toContain(file);
+    expect(parsed(result).externalPaths).toContain(outside.dir);
     expect(await fs.readFile(file, "utf8")).toBe("ok");
+  });
+
+  it("approves a denied directory boundary", async () => {
+    const { sb } = await setup();
+    const outside = await makeOutside();
+    roots.push(outside.dir);
+    const script = `console.error('EACCES ' + ${JSON.stringify(outside.dir)}); process.exit(1);`;
+    const result = await runSpec(execTool, { command: "node", args: ["-e", script] }, sb, {
+      execAllowlist: ["node"],
+    });
+    expect(result.requests.some((request) => request.action === "external_directory")).toBe(true);
+    expect(parsed(result).externalPaths).toContain(outside.dir);
   });
 
   it("reports a path that remains denied after approval", async () => {
@@ -288,6 +302,19 @@ describe("exec", () => {
     );
     expect(parsed(result)).toMatchObject({ sandboxBlocked: true, exitCode: 1 });
     expect(parsed(result).stderr).toMatch(/EACCES|EPERM|EROFS/);
+    expect(parsed(result).externalPaths).toContain(outside.dir);
+  });
+
+  it("approves the nearest existing ancestor of a missing path", async () => {
+    const { sb } = await setup();
+    const outside = await makeOutside();
+    roots.push(outside.dir);
+    const missing = path.join(outside.dir, "missing", "nested", "***");
+    const script = `console.error('EACCES ' + ${JSON.stringify(missing)}); process.exit(1);`;
+    const result = await runSpec(execTool, { command: "node", args: ["-e", script] }, sb, {
+      execAllowlist: ["node"],
+    });
+    expect(parsed(result).externalPaths).toContain(outside.dir);
   });
 
   it("auto-approves network access and records it", async () => {
@@ -322,7 +349,7 @@ describe("exec", () => {
       execAllowlist: ["node"],
     });
     expect(parsed(result)).toMatchObject({ sandboxBlocked: true, exitCode: 1 });
-    expect(parsed(result).externalPaths).toContain(file);
+    expect(parsed(result).externalPaths).toContain(outside.dir);
     expect(result.requests.some((request) => request.action === "external_directory")).toBe(true);
   });
 
@@ -401,6 +428,17 @@ describe("exec", () => {
 });
 
 describe("exec sandbox helpers", () => {
+  it("enables the resolver sockets only with network", () => {
+    const on = { fs: [], net: "none", ipc: { unix_sockets: [] as string[] } };
+    applyNetworkPolicy(on, true);
+    expect(on.net).toBe("ip");
+    expect(on.ipc.unix_sockets).toEqual([...RESOLVER_SOCKETS]);
+
+    const off = { fs: [], net: "ip", ipc: { unix_sockets: ["/run/systemd/resolve"] } };
+    applyNetworkPolicy(off, false);
+    expect(off).toEqual({ fs: [], net: "none", ipc: { unix_sockets: ["/run/systemd/resolve"] } });
+  });
+
   const outcome = (overrides: Partial<ExecOutcome> = {}): ExecOutcome => ({
     stdout: Buffer.alloc(0),
     stderr: Buffer.alloc(0),
@@ -428,11 +466,17 @@ describe("exec sandbox helpers", () => {
     const found = discoverExternalPaths(
       { sandbox: sb } as never,
       outcome({
-        stderr: Buffer.from("EACCES: permission denied, open '/home/a/x'\n"),
+        stderr: Buffer.from("EACCES: permission denied, open '/home/a/x'\nEACCES: open '/home/c/***'\n"),
         violations: [violation("/home/b"), violation("/home/a/x"), violation(`${root}/inside`)],
       }),
     );
-    expect(found.sort()).toEqual(["/home/a/x", "/home/b"]);
+    expect(found.sort()).toEqual(["/home/a/x", "/home/b", "/home/c"]);
+
+    const ignored = discoverExternalPaths(
+      { sandbox: sb } as never,
+      outcome({ stderr: Buffer.from("look at /home/z\n") }),
+    );
+    expect(ignored).toEqual([]);
   });
 
   it("classifies blocked and network results", () => {
