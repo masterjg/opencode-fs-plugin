@@ -5,15 +5,34 @@
 
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
+import * as os from "node:os";
 import type { FileHandle } from "node:fs/promises";
 import * as path from "node:path";
+import { FsError } from "./errors.js";
 import type { ToolResult } from "./types.js";
 
-/** Bytes kept in memory before a direct call spills to a temporary file. */
-export const SPILL_THRESHOLD = 1024 * 1024;
+/** The dynamic threshold never goes below this. */
+export const MIN_SPILL_THRESHOLD = 16 * 1024 * 1024;
+
+/** The dynamic threshold never goes above this. */
+export const MAX_SPILL_THRESHOLD = 512 * 1024 * 1024;
 
 /** Bytes of a spilled result returned to the host as a preview. */
 export const SPILL_PREVIEW = 64 * 1024;
+
+/** A quarter of free memory, clamped to a safe range. */
+export function dynamicSpillThreshold(free = os.freemem()): number {
+  return Math.max(MIN_SPILL_THRESHOLD, Math.min(MAX_SPILL_THRESHOLD, Math.floor(free / 4)));
+}
+
+/** An explicit byte count from the plugin options; undefined means dynamic. */
+export function normalizeSpillThreshold(value: unknown): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    throw new FsError("spillThresholdBytes must be a positive number.", "invalid");
+  }
+  return Math.trunc(value);
+}
 
 /** The shared directory for spilled outputs under the plugin's temp area. */
 export function spillDirectory(tmpdir: string): string {
@@ -46,7 +65,7 @@ export class SpillSink {
     private readonly dir: string,
     private readonly name: string,
     private readonly memoryOnly = false,
-    private readonly threshold = SPILL_THRESHOLD,
+    private readonly threshold = dynamicSpillThreshold(),
     private readonly previewBytes = SPILL_PREVIEW,
   ) {}
 
@@ -103,8 +122,13 @@ export class SpillSink {
  * Spill a finished tool result that is larger than the threshold. Tools that
  * already streamed into a sink carry `outputPath` and pass through.
  */
-export async function spillResult(result: ToolResult, name: string, tmpdir: string): Promise<ToolResult> {
-  if (result.stdout.length <= SPILL_THRESHOLD || result.metadata?.outputPath !== undefined) return result;
+export async function spillResult(
+  result: ToolResult,
+  name: string,
+  tmpdir: string,
+  threshold = dynamicSpillThreshold(),
+): Promise<ToolResult> {
+  if (result.stdout.length <= threshold || result.metadata?.outputPath !== undefined) return result;
   const sink = new SpillSink(spillDirectory(tmpdir), name, false, 0);
   try {
     await sink.write(result.stdout);

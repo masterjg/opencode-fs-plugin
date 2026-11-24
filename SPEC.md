@@ -128,11 +128,12 @@ Aliases are accepted only where noted: `path` for one `paths` element (`stat`,
 
 ## Large output
 
-A direct tool result larger than 1 MiB is written to
-`/tmp/opencode/fs-spill/<tool>-<uuid>.out`. The tool returns a 64 KiB preview,
-`outputPath`, `bytes`, and `spilled: true`, and `renderResult` appends a note
-with the path. `fs.cat` streams into the spill sink; other tools spill their
-finished result. Pipe stages stay in memory so bytes pass between stages.
+A direct tool result larger than the spill threshold is written to
+`/tmp/opencode/fs-spill/<tool>-<uuid>.out`. The threshold is a quarter of free
+memory, clamped to 16 MiB..512 MiB, or the `spillThresholdBytes` plugin option.
+The tool returns a 64 KiB preview, `outputPath`, `bytes`, and `spilled: true`,
+and `renderResult` appends a note with the path. `fs.cat` streams into the sink;
+other tools spill their finished result. Pipe stages stay in memory.
 
 ## Deliberate gaps
 

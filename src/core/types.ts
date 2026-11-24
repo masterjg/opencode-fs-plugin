@@ -31,6 +31,8 @@ export interface RunContext {
   readonly signal: AbortSignal;
   readonly tmpdir: string;
   readonly execAllowlist: readonly string[];
+  /** Explicit spill threshold in bytes; unset means the dynamic default. */
+  readonly spillThreshold?: number;
   /** `proxy` forces egress through the run's allowlist proxy; `ip` is all-IP. */
   readonly execNetworkMode: "proxy" | "ip";
 }

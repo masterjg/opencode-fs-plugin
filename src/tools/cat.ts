@@ -5,7 +5,7 @@
 
 import { Type, type Static } from "@sinclair/typebox";
 import { pathsFrom } from "../core/aliases.js";
-import { SpillSink, spillDirectory } from "../core/spill.js";
+import { SpillSink, dynamicSpillThreshold, spillDirectory } from "../core/spill.js";
 import { inputStream, lines } from "../core/stream.js";
 import type { ToolSpec } from "../core/types.js";
 
@@ -36,7 +36,7 @@ export const catTool: ToolSpec<Input> = {
     const paths = pathsFrom(input) ?? [];
     const targets = await resolvePaths(ctx, paths);
     const stream = inputStream(targets.map((entry) => entry.full), io.stdin);
-    const sink = new SpillSink(spillDirectory(ctx.tmpdir), "cat", io.piped === true);
+    const sink = new SpillSink(spillDirectory(ctx.tmpdir), "cat", io.piped === true, ctx.spillThreshold ?? dynamicSpillThreshold());
     try {
       if (
         input.number !== true &&

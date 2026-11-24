@@ -7,7 +7,15 @@ import { afterEach, describe, expect, it } from "vitest";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { SPILL_THRESHOLD, SpillSink, spillDirectory, spillResult } from "../../src/core/spill.js";
+import {
+  MAX_SPILL_THRESHOLD,
+  MIN_SPILL_THRESHOLD,
+  SpillSink,
+  dynamicSpillThreshold,
+  normalizeSpillThreshold,
+  spillDirectory,
+  spillResult,
+} from "../../src/core/spill.js";
 
 const dirs: string[] = [];
 
@@ -67,13 +75,30 @@ describe("SpillSink", () => {
   });
 });
 
+describe("spill threshold", () => {
+  it("derives a quarter of free memory within bounds", () => {
+    expect(dynamicSpillThreshold(4 * 1024 ** 3)).toBe(MAX_SPILL_THRESHOLD);
+    expect(dynamicSpillThreshold(1024 ** 3)).toBe(256 * 1024 * 1024);
+    expect(dynamicSpillThreshold(64 * 1024 * 1024)).toBe(MIN_SPILL_THRESHOLD);
+    expect(dynamicSpillThreshold(0)).toBe(MIN_SPILL_THRESHOLD);
+  });
+
+  it("normalizes the option", () => {
+    expect(normalizeSpillThreshold(undefined)).toBeUndefined();
+    expect(normalizeSpillThreshold(123)).toBe(123);
+    expect(normalizeSpillThreshold(1.9)).toBe(1);
+    expect(() => normalizeSpillThreshold(0)).toThrow();
+    expect(() => normalizeSpillThreshold("x")).toThrow();
+  });
+});
+
 describe("spillResult", () => {
   it("spills a large finished result", async () => {
     const dir = await tempDir();
-    const data = Buffer.alloc(SPILL_THRESHOLD + 1, 120);
-    const result = await spillResult({ stdout: data, metadata: { ok: true } }, "tool", dir);
+    const data = Buffer.alloc(11, 120);
+    const result = await spillResult({ stdout: data, metadata: { ok: true } }, "tool", dir, 10);
     const metadata = result.metadata as Record<string, unknown>;
-    expect(result.stdout.length).toBe(64 * 1024);
+    expect(result.stdout.length).toBe(11);
     expect(metadata.spilled).toBe(true);
     expect(metadata.bytes).toBe(data.length);
     await expect(fs.readFile(metadata.outputPath as string)).resolves.toHaveLength(data.length);
@@ -82,19 +107,18 @@ describe("spillResult", () => {
 
   it("passes small and already spilled results through", async () => {
     const dir = await tempDir();
-    const small = await spillResult({ stdout: Buffer.from("ok") }, "tool", dir);
+    const small = await spillResult({ stdout: Buffer.from("ok") }, "tool", dir, 10);
     expect(small.stdout.toString()).toBe("ok");
     const already = await spillResult(
-      { stdout: Buffer.alloc(SPILL_THRESHOLD + 1), metadata: { outputPath: "/tmp/kept" } },
+      { stdout: Buffer.alloc(11), metadata: { outputPath: "/tmp/kept" } },
       "tool",
       dir,
+      10,
     );
-    expect(already.stdout.length).toBe(SPILL_THRESHOLD + 1);
+    expect(already.stdout.length).toBe(11);
   });
 
   it("reports a spill failure", async () => {
-    await expect(
-      spillResult({ stdout: Buffer.alloc(SPILL_THRESHOLD + 1) }, "tool", "/dev/null"),
-    ).rejects.toBeTruthy();
+    await expect(spillResult({ stdout: Buffer.alloc(11) }, "tool", "/dev/null", 10)).rejects.toBeTruthy();
   });
 });

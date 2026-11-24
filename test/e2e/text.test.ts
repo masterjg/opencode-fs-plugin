@@ -48,11 +48,11 @@ describe("cat, head, tail, wc and tee", () => {
     expect(squeezed.result.stdout.toString()).toBe("a\n\nb\n");
   });
 
-    it("spills a large direct read and returns a preview path", async () => {
+    it("spills a direct read over the configured threshold", async () => {
     const { root, sb } = await setup();
-    const content = "x".repeat(1024 * 1024 + 10);
+    const content = "x".repeat(70 * 1024);
     await fs.writeFile(path.join(root, "big"), content);
-    const result = await runSpec(catTool, { paths: ["big"] }, sb);
+    const result = await runSpec(catTool, { paths: ["big"] }, sb, { spillThresholdBytes: 1024 });
     const metadata = result.result.metadata as Record<string, unknown>;
     expect(metadata.spilled).toBe(true);
     expect(metadata.bytes).toBe(content.length);
@@ -62,9 +62,9 @@ describe("cat, head, tail, wc and tee", () => {
     await fs.rm(outputPath, { force: true });
   });
 
-  it("keeps a large pipe in memory", async () => {
+  it("keeps a piped read in memory", async () => {
     const { root, sb } = await setup();
-    const content = "x".repeat(1024 * 1024 + 10);
+    const content = "x".repeat(70 * 1024);
     await fs.writeFile(path.join(root, "big"), content);
     const result = await runSpec(
       pipeTool,
@@ -75,6 +75,7 @@ describe("cat, head, tail, wc and tee", () => {
         ],
       },
       sb,
+      { spillThresholdBytes: 1024 },
     );
     expect(result.result.metadata).not.toHaveProperty("outputPath");
     expect(result.result.stdout.toString()).toContain(String(content.length));
