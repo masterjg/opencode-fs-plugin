@@ -136,8 +136,6 @@ export interface ExecOutcome {
   signal: string | null;
   timedOut: boolean;
   aborted: boolean;
-  stdoutTruncated: boolean;
-  stderrTruncated: boolean;
   /** The mode the sandbox actually ran: proxy may fall back to ip. */
   networkMode: ExecNetworkMode;
   violations: Violation[];
@@ -242,8 +240,6 @@ export const execTool: ToolSpec<Input> = {
         signal: outcome.signal,
         timedOut: outcome.timedOut,
         aborted: outcome.aborted,
-        stdoutTruncated: outcome.stdoutTruncated,
-        stderrTruncated: outcome.stderrTruncated,
         sandboxBlocked: isSandboxBlocked(outcome),
         violations: outcome.violations.length,
         network: networkMode === "proxy" || ipNetwork,
@@ -372,17 +368,13 @@ async function runCaged(ctx: RunContext, input: CagedInput): Promise<ExecOutcome
   try {
     const out = await child.output({ timeout: input.timeoutMs, ...(input.input === undefined ? {} : { input: input.input }) });
     const violations = filterViolations(await child.violations());
-    const stdout = cap(out.stdout, ctx.maxOutputBytes);
-    const stderr = cap(out.stderr, ctx.maxOutputBytes);
     return {
-      stdout: stdout.data,
-      stderr: stderr.data,
+      stdout: out.stdout,
+      stderr: out.stderr,
       exitCode: out.timedOut ? 124 : aborted ? 130 : (out.exitCode ?? 1),
       signal: out.signal,
       timedOut: out.timedOut,
       aborted,
-      stdoutTruncated: stdout.truncated,
-      stderrTruncated: stderr.truncated,
       networkMode: input.networkMode,
       violations,
     };
@@ -396,8 +388,6 @@ async function runCaged(ctx: RunContext, input: CagedInput): Promise<ExecOutcome
         signal: null,
         timedOut: false,
         aborted: true,
-        stdoutTruncated: false,
-        stderrTruncated: false,
         networkMode: input.networkMode,
         violations: [],
       };
@@ -490,9 +480,4 @@ async function resolveExecutable(command: string): Promise<{ path: string; real:
     }
   }
   throw new FsError(`exec command not found: "${command}"`, "not-found");
-}
-
-function cap(data: Buffer, limit: number): { data: Buffer; truncated: boolean } {
-  if (data.length <= limit) return { data, truncated: false };
-  return { data: data.subarray(0, limit), truncated: true };
 }

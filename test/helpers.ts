@@ -18,7 +18,6 @@ export interface RunSpecOptions {
   concurrency?: number;
   signal?: AbortSignal;
   tmpdir?: string;
-  maxOutputBytes?: number;
   stdin?: AsyncIterable<Buffer>;
   execAllowlist?: readonly string[];
   execNetworkMode?: "proxy" | "ip";
@@ -75,7 +74,6 @@ export async function runSpec<I>(
       concurrency: options.concurrency ?? 4,
       signal: options.signal ?? new AbortController().signal,
       tmpdir: options.tmpdir ?? os.tmpdir(),
-      maxOutputBytes: options.maxOutputBytes ?? 1024 * 1024,
       execAllowlist: options.execAllowlist ?? DEFAULT_EXEC_ALLOWLIST,
       execNetworkMode: options.execNetworkMode ?? "proxy",
     },

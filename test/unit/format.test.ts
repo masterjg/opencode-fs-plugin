@@ -23,28 +23,28 @@ describe("format helpers", () => {
     expect(isBinary(Buffer.from([1, 0, 2]))).toBe(true);
   });
 
-  it("renders text, empty, binary, truncated and stderr results", () => {
-    expect(renderResult({ stdout: Buffer.alloc(0) }, 10)).toEqual({
+  it("renders text, empty, binary and stderr results", () => {
+    expect(renderResult({ stdout: Buffer.alloc(0) })).toEqual({
       content: "",
       metadata: { ok: true, exitCode: 0 },
     });
 
-    const text = renderResult({ stdout: Buffer.from("hello\n"), stderr: "warn" }, 100);
+    const text = renderResult({ stdout: Buffer.from("hello\n"), stderr: "warn" });
     expect(text.content).toContain("hello");
     expect(text.content).toContain("[stderr]\nwarn");
     expect(text.metadata).toMatchObject({ ok: true, exitCode: 0, stderr: "warn" });
 
-    const textWithoutNewline = renderResult({ stdout: Buffer.from("hello"), stderr: "warn" }, 100);
+    const textWithoutNewline = renderResult({ stdout: Buffer.from("hello"), stderr: "warn" });
     expect(textWithoutNewline.content).toContain("hello\n[stderr]\nwarn");
 
-    const binary = renderResult({ stdout: Buffer.from([1, 0, 2]) }, 100);
+    const binary = renderResult({ stdout: Buffer.from([1, 0, 2]) });
     expect(binary.metadata.encoding).toBe("base64");
 
-    const truncated = renderResult({ stdout: Buffer.from("abcdef") }, 3);
-    expect(truncated.content).toBe("abc");
-    expect(truncated.metadata.truncated).toBe(true);
+    const full = renderResult({ stdout: Buffer.from("abcdef") });
+    expect(full.content).toBe("abcdef");
+    expect(full.metadata.bytes).toBe(6);
 
-    const failed = renderResult({ stdout: Buffer.from("x"), exitCode: 1 }, 10);
+    const failed = renderResult({ stdout: Buffer.from("x"), exitCode: 1 });
     expect(failed.metadata.ok).toBe(false);
     expect(failed.metadata.exitCode).toBe(1);
   });

@@ -114,7 +114,7 @@ Aliases are accepted only where noted: `path` for one `paths` element (`stat`,
 - Timeout defaults to 120000 ms, capped at 600000. Procage ends the run and kills
   every process it started, including detached descendants; `timedOut: true`
   and exit code 124 are returned.
-- Captured stdout/stderr are capped at 1 MiB; truncation is reported.
+- Captured stdout/stderr are returned in full; the host's `tool_output` setting bounds what the model sees.
 - Direct calls return JSON with `exitCode`, `stdout`, `stderr`, `violations`, and
   the sandbox decision. In `fs.pipe`, the stage returns raw stdout and composes as
   a source or filter.

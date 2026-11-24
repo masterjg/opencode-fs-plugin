@@ -21,7 +21,7 @@ export function isBinary(buffer: Buffer): boolean {
   return false;
 }
 
-export function renderResult(result: ToolResult, maxOutputBytes: number): RenderedResult {
+export function renderResult(result: ToolResult): RenderedResult {
   const exitCode = result.exitCode ?? 0;
   const metadata: Record<string, unknown> = {
     ...result.metadata,
@@ -34,17 +34,14 @@ export function renderResult(result: ToolResult, maxOutputBytes: number): Render
     return { content: "", metadata };
   }
 
-  const slice = result.stdout.subarray(0, maxOutputBytes);
-  const truncated = result.stdout.length > maxOutputBytes;
-  if (truncated) metadata.truncated = true;
   metadata.bytes = result.stdout.length;
 
-  if (isBinary(slice)) {
+  if (isBinary(result.stdout)) {
     metadata.encoding = "base64";
-    return { content: slice.toString("base64"), metadata };
+    return { content: result.stdout.toString("base64"), metadata };
   }
 
-  let content = slice.toString("utf8");
+  let content = result.stdout.toString("utf8");
   if (result.stderr) content += `${content.endsWith("\n") ? "" : "\n"}[stderr]\n${result.stderr}`;
   return { content, metadata };
 }

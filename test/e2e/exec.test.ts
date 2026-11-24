@@ -162,7 +162,7 @@ describe("exec", () => {
     ).rejects.toMatchObject({ code: "interrupted" });
   });
 
-  it("caps output and reports truncation", async () => {
+  it("returns the full stdout", async () => {
     const { sb } = await setup();
     const result = await runSpec(
       execTool,
@@ -171,9 +171,9 @@ describe("exec", () => {
         args: ["-e", "process.stdout.write('abc'); setTimeout(() => process.stdout.write('def'), 10)"],
       },
       sb,
-      { execAllowlist: ["node"], maxOutputBytes: 3 },
+      { execAllowlist: ["node"] },
     );
-    expect(parsed(result)).toMatchObject({ stdout: "abc", stdoutTruncated: true });
+    expect(parsed(result).stdout).toBe("abcdef");
   });
 
   it("rejects an allowlisted command that does not exist", async () => {
@@ -203,15 +203,15 @@ describe("exec", () => {
     expect(parsed(result)).toMatchObject({ exitCode: 1, signal: "SIGTERM" });
   });
 
-  it("truncates stderr as well as stdout", async () => {
+  it("returns the full stderr", async () => {
     const { sb } = await setup();
     const result = await runSpec(
       execTool,
       { command: "node", args: ["-e", "process.stderr.write('abcdef')"] },
       sb,
-      { execAllowlist: ["node"], maxOutputBytes: 3 },
+      { execAllowlist: ["node"] },
     );
-    expect(parsed(result)).toMatchObject({ stderr: "abc", stderrTruncated: true });
+    expect(parsed(result).stderr).toBe("abcdef");
   });
 
   it("forces SIGKILL when the child ignores SIGTERM", async () => {

@@ -150,8 +150,6 @@ const TOOLS: readonly AnyTool[] = [
   pipeTool,
 ];
 
-const DEFAULT_MAX_OUTPUT = 1024 * 1024;
-
 function withBackground(schema: TSchema): TSchema {
   return Type.Composite(
     [
@@ -203,7 +201,6 @@ export default Plugin.define({
     );
     const execAllowlist = normalizeExecAllowlist(ctx.options?.execAllowlist);
     const execNetworkMode = normalizeExecNetworkMode(ctx.options?.execNetworkMode);
-    const maxOutputBytes = DEFAULT_MAX_OUTPUT;
     const jobs = new JobManager(
       typeof ctx.options?.jobDir === "string" ? { dir: ctx.options.jobDir } : {},
     );
@@ -251,14 +248,13 @@ export default Plugin.define({
                     concurrency,
                     signal,
                     tmpdir: os.tmpdir(),
-                    maxOutputBytes,
                     execAllowlist,
                     execNetworkMode,
                   },
                   parsed,
                   {},
                 );
-                return renderResult(result, maxOutputBytes);
+                return renderResult(result);
               };
 
               if ((parsed as { background?: unknown }).background === true) {

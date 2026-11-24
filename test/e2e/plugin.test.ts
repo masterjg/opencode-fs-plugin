@@ -46,14 +46,14 @@ describe("plugin registration", () => {
     const root = await makeRoot();
     const elsewhere = await makeRoot();
     roots.push(root, elsewhere);
-    const harness = makePluginHarness(root, { root: elsewhere, maxOutputBytes: 3 });
+    const harness = makePluginHarness(root, { root: elsewhere });
     await plugin.setup(harness.context as never);
     const mkdir = harness.editor.tools.find((tool) => tool.name === "mkdir");
     const result = (await mkdir?.execute({ path: "one", verbose: true }, makeToolContext())) as {
       content: string;
       metadata: Record<string, unknown>;
     };
-    expect(result.metadata.truncated).toBeUndefined();
+    expect(result.metadata.bytes).toBeGreaterThan(0);
     expect(await pathExists(path.join(root, "one"))).toBe(true);
     expect(await pathExists(path.join(elsewhere, "one"))).toBe(false);
   });

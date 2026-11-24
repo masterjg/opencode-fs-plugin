@@ -188,7 +188,7 @@ await tools.fs.pipe({
 
 A non-zero exit is a normal result; allowlist rejection, timeout, and abort are
 handled explicitly. Procage kills every process the run started, including
-detached descendants, and caps captured stdout/stderr. It requires Linux
+detached descendants, and returns captured stdout/stderr in full. It requires Linux
 x64/arm64, glibc 2.28+, and Node 22.12+.
 
 ## Batch independent calls
