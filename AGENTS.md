@@ -70,6 +70,8 @@ with `fs.job`, and as a `pipe` stage where applicable.
 
 - Conventional Commits, signed, pushed to `origin main`.
 - Update `README.md`, `SPEC.md`, and the skill in the same change as behavior.
-- Version bumps: feature or performance change → minor; fixes or docs only →
-  patch. Release CI publishes npm and creates the GitHub tag; npm processing can
-  lag a few minutes.
+- Version bumps: a feature, new option or tool, or performance change → minor;
+  fixes or docs only → patch. Major only for a complete rewrite, a new
+  architecture, or a fully new or incompatible public API; never for a single
+  option removal, a rename, or a `!` by itself. Release CI publishes npm and
+  creates the GitHub tag; npm processing can lag a few minutes.
