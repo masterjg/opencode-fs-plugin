@@ -156,13 +156,14 @@ override it with the fs plugin option `execAllowlist` in `opencode.jsonc`:
 { "package": "./repos/opencode-fs-plugin", "options": { "execAllowlist": ["npm", "uv"] } }
 ```
 
-The project is read/write/exec. **Network is proxy-only by default, and there
-are no per-call grants.** The run gets its own egress proxy with no direct
-route; every host must be approved through `fs_exec_network`, which asks with
-the host as the resource and retries with it added. The permission rules are
-the allowlist: a `*` deny plus host allows fails closed for everything else.
-`execNetworkMode: "ip"` opts into all-IP after approval instead. On Linux T2
-(no network namespace) the run falls back to `ip`.
+The project is read/write/exec. **Egress starts proxy-only, and there are no
+per-call grants.** The run gets its own egress proxy with no direct route; every
+host must be approved through `fs_exec_network`, which asks with the host as the
+resource and retries with it added. The permission rules are the allowlist: a
+`*` deny plus host allows fails closed for everything else. When the proxy
+cannot carry the run (UDP/ICMP, a client that ignores it, or Linux T2), the run
+asks with the target from its output/arguments, or `*` when none is known, and
+retries with all-IP; that is not host-scoped.
 
 ```js
 await tools.fs.exec({ command: "npm", args: ["install"], timeoutMs: 300000 })
@@ -170,7 +171,7 @@ await tools.fs.exec({ command: "npm", args: ["install"], timeoutMs: 300000 })
 
 Denied paths ask `external_directory` and approval covers the denied path's
 containing directory (or nearest existing ancestor). Denied access returns
-`violations` and a `hint`. In `ip` mode DNS works through the
+`violations` and a `hint`. In all-IP mode DNS works through the
 systemd-resolved, nscd, or SSSD sockets where the kernel can scope them; other
 Unix sockets stay blocked and plain UDP DNS works everywhere.
 `command` is a bare name, `args` are literal, and `cwd` is sandboxed. Direct
@@ -423,7 +424,8 @@ await tools.fs.http_request({
 - `fs.sed` supports `s<delim>pattern<delim>replacement<delim>flags` with `g`,
   `i` and `p`. It is not a full sed interpreter.
 - `fs.exec` requires procage: Linux x64/arm64, glibc 2.28+, Node 22.12+.
-  Network is proxy-only by default; external paths are denied until approved.
+  Egress starts proxy-only and escalates to all-IP when the proxy cannot carry
+  it; external paths are denied until approved.
 - `fs.find` has no arbitrary `-exec`; use `action: "delete"`/`"trash"` for the
   common cleanup case, or `fs.rm`/`fs.trash` separately.
 - No `xz`, `zstd`, `7z`, `rar`, `chattr`, ACLs, xattrs, or `rsync`.
@@ -479,8 +481,8 @@ hidden inside a pipeline. Do not work around a denied tool with shell.
 
 `fs_exec` runs only exact allowlisted names in a procage sandbox. It asserts
 `fs_exec`, asks `external_directory` for a blocked path, and asks
-`fs_exec_network` with the refused host (or `*` in `ip` mode), then retries.
-There are no per-call grants and no shell.
+`fs_exec_network` with the refused host or all-IP target (or `*` when none is
+known), then retries. There are no per-call grants and no shell.
 
 `fs_http_request` reuses the built-in `webfetch` permission with the requested
 URL as the resource, so one rule set covers both; each redirect hop is checked

@@ -65,16 +65,11 @@ export const RESOLVER_SOCKETS = ["/run/systemd/resolve", "/run/nscd", "/var/lib/
 /** The proxy allowlist must not be empty; this name never resolves. */
 export const PROXY_SENTINEL = "procage.invalid";
 
-export type ExecNetworkMode = "proxy" | "ip";
-
-export function normalizeExecNetworkMode(value: unknown): ExecNetworkMode {
-  if (value === undefined) return "proxy";
-  if (value === "proxy" || value === "ip") return value;
-  throw new FsError('execNetworkMode must be "proxy" or "ip".', "invalid");
-}
+/** How a run reaches the network: the per-host proxy, or all-IP. */
+export type NetworkMode = "proxy" | "ip";
 
 /** `ip` adds all-IP networking; both modes get the local resolver sockets. */
-export function applyNetworkPolicy(doc: PolicyDocument, mode: ExecNetworkMode): void {
+export function applyNetworkPolicy(doc: PolicyDocument, mode: NetworkMode): void {
   doc.ipc.unix_sockets = [...RESOLVER_SOCKETS];
   if (mode === "ip") doc.net = "ip";
 }
@@ -92,8 +87,9 @@ export function proxyHostOf(violation: Violation): ProxyHost | undefined {
   if (violation.operation !== "network-outbound") return undefined;
   const match = /^(\[[^\]]+\]|[^\s:]+)(?::(\d+))? \(not on the allowlist\)$/.exec(violation.target ?? "");
   if (match === null) return undefined;
-  const host = match[1]!;
-  return { host, entry: match[2] === undefined ? host : `${host}:${match[2]}` };
+  const raw = match[1]!;
+  const host = raw.startsWith("[") ? raw.slice(1, -1) : raw;
+  return { host, entry: match[2] === undefined ? raw : `${raw}:${match[2]}` };
 }
 
 /**
@@ -122,10 +118,70 @@ export function isProxyGap(error: unknown, api: typeof import("procage")): boole
   return error instanceof api.CapabilityGapError && error.gaps.some((gap) => gap.construct === "net-proxy");
 }
 
+/** The host cannot build a proxy-only route, so the run needs all-IP. */
+export class ProxyUnavailableError extends Error {
+  constructor() {
+    super("egress proxy is unavailable on this host");
+    this.name = "ProxyUnavailableError";
+  }
+}
+
+/** Whether a failed proxy attempt should retry with all-IP networking. */
+export function shouldEscalateIp(error: unknown, mode: NetworkMode): boolean {
+  return mode === "proxy" && error instanceof ProxyUnavailableError;
+}
+
+const IPV4 = /\b\d{1,3}(?:\.\d{1,3}){3}\b/g;
+const IPV6 = /\[[0-9a-fA-F:]+\]/g;
+const URL_HOST = /[a-z][a-z0-9+.-]*:\/\/(\[[^\]]+\]|[^/\s:'"?#]+)/gi;
+const HOST_PORT = /\b((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}|localhost):\d{1,5}\b/gi;
+const CONNECT_HOST = /\b(?:connect(?:ing|ion)? to|host|url|address)[\s'"]+((?:[a-z0-9-]+\.)+[a-z]{2,})\b/gi;
+const GETADDRINFO_HOST = /\bgetaddrinfo\b[^\n]*?\b((?:[a-z0-9-]+\.)+[a-z]{2,})\b/gi;
+const ADDRESS = /^(?:\d{1,3}(?:\.\d{1,3}){3}|[0-9a-f:]+)$/i;
+
+function stripBrackets(value: string): string {
+  const host = value.startsWith("[") && value.endsWith("]") ? value.slice(1, -1) : value;
+  return host.toLowerCase().replace(/\.$/, "");
+}
+
+/** Addresses that name no peer: unspecified binds, never approval targets. */
+function isUnspecified(host: string): boolean {
+  return host === "0.0.0.0" || host === "::" || host === "::0";
+}
+
+/** Hosts and addresses named in run output or arguments, for network approval. */
+export function networkTargetsOf(...texts: readonly string[]): string[] {
+  const found = new Set<string>();
+  for (const text of texts) {
+    for (const match of text.matchAll(URL_HOST)) found.add(stripBrackets(match[1]!));
+    for (const match of text.matchAll(HOST_PORT)) found.add(match[1]!.toLowerCase());
+    for (const match of text.matchAll(CONNECT_HOST)) found.add(match[1]!.toLowerCase());
+    for (const match of text.matchAll(GETADDRINFO_HOST)) found.add(match[1]!.toLowerCase());
+    for (const match of text.matchAll(IPV4)) found.add(match[0]);
+    for (const match of text.matchAll(IPV6)) found.add(stripBrackets(match[0]));
+  }
+  return [...found].filter((target) => !isUnspecified(target));
+}
+
+/** Prefer named hosts over addresses when both appear; addresses are the fallback. */
+export function escalationTargets(...texts: readonly string[]): string[] {
+  const targets = networkTargetsOf(...texts);
+  const named = targets.filter((target) => !ADDRESS.test(target));
+  return named.length > 0 ? named : targets;
+}
+
+/** Ask for all-IP networking after the run cannot use the proxy. */
+export async function approveIpFallback(
+  ctx: Pick<RunContext, "permissionFor">,
+  targets: readonly string[],
+): Promise<void> {
+  await ctx.permissionFor("fs_exec_network").assertTrusted(targets.length === 0 ? ["*"] : [...targets]);
+}
+
 /** Why a blocked run failed, and what to do about it. */
-export function blockedHint(mode: ExecNetworkMode): string {
+export function blockedHint(mode: NetworkMode): string {
   return mode === "proxy"
-    ? 'The run\'s network is proxy-only and a program tried to bypass it. Use a proxy-aware client, or set execNetworkMode to "ip".'
+    ? "The run's network is proxy-only and a program tried to bypass it. Approve the refused host, or allow all networking (`fs_exec_network` resource `*`) to retry with all-IP."
     : "The sandbox denied an external path or network access. Approve the path or network in the permission prompt and retry.";
 }
 
@@ -136,8 +192,8 @@ export interface ExecOutcome {
   signal: string | null;
   timedOut: boolean;
   aborted: boolean;
-  /** The mode the sandbox actually ran: proxy may fall back to ip. */
-  networkMode: ExecNetworkMode;
+  /** The mode the sandbox actually ran. */
+  networkMode: NetworkMode;
   violations: Violation[];
 }
 
@@ -183,35 +239,47 @@ export const execTool: ToolSpec<Input> = {
       const inputData = io.stdin === undefined
         ? input.stdin === undefined ? undefined : Buffer.from(input.stdin)
         : await collect(io.stdin);
-      let networkMode = ctx.execNetworkMode;
+      let networkMode: NetworkMode = "proxy";
       const proxyHosts: string[] = [];
-      let ipNetwork = false;
       const approved: Array<{ full: string }> = [];
       let outcome: ExecOutcome | undefined;
 
       for (let attempt = 0; attempt < 12; attempt++) {
-        outcome = await runCaged(ctx, {
-          command,
-          executable,
-          args,
-          cwd: cwdTarget.full,
-          timeoutMs: input.timeoutMs ?? 120_000,
-          networkMode,
-          proxyHosts,
-          ipNetwork,
-          allowed: approved,
-          tempDir,
-          input: inputData,
-        });
-        networkMode = outcome.networkMode;
-
-        if (networkMode === "ip" && !ipNetwork && detectsNetworkDenial(outcome)) {
-          await ctx.permissionFor("fs_exec_network").assert([]);
-          ipNetwork = true;
-          continue;
+        try {
+          outcome = await runCaged(ctx, {
+            command,
+            executable,
+            args,
+            cwd: cwdTarget.full,
+            timeoutMs: input.timeoutMs ?? 120_000,
+            networkMode,
+            proxyHosts,
+            allowed: approved,
+            tempDir,
+            input: inputData,
+          });
+        } catch (error) {
+          /* v8 ignore start -- Linux T2 has no proxy route to trigger this here */
+          if (shouldEscalateIp(error, networkMode)) {
+            await approveIpFallback(ctx, escalationTargets(...args));
+            networkMode = "ip";
+            continue;
+          }
+          /* v8 ignore stop */
+          /* v8 ignore next */
+          throw error;
         }
 
-        let added = await approveProxyHosts(ctx, outcome, proxyHosts);
+        if (networkMode === "proxy") {
+          if (await approveProxyHosts(ctx, outcome, proxyHosts)) continue;
+          if (detectsNetworkDenial(outcome)) {
+            await approveIpFallback(ctx, escalationTargets(outcome.stderr.toString("utf8"), ...args));
+            networkMode = "ip";
+            continue;
+          }
+        }
+
+        let added = false;
         const deniedPaths = discoverExternalPaths(ctx, outcome)
           .filter((candidate) => !approved.some((entry) => entry.full === candidate));
         for (const candidate of deniedPaths) {
@@ -242,7 +310,7 @@ export const execTool: ToolSpec<Input> = {
         aborted: outcome.aborted,
         sandboxBlocked: isSandboxBlocked(outcome),
         violations: outcome.violations.length,
-        network: networkMode === "proxy" || ipNetwork,
+        network: networkMode === "ip" || proxyHosts.length > 0,
         networkMode,
         networkHosts: proxyHosts,
         externalPaths: approved.map((entry) => entry.full),
@@ -281,9 +349,8 @@ interface CagedInput {
   args: string[];
   cwd: string;
   timeoutMs: number;
-  networkMode: ExecNetworkMode;
+  networkMode: NetworkMode;
   proxyHosts: readonly string[];
-  ipNetwork: boolean;
   allowed: Array<{ full: string }>;
   tempDir: string;
   input: Buffer | undefined;
@@ -299,7 +366,7 @@ async function runCaged(ctx: RunContext, input: CagedInput): Promise<ExecOutcome
   }
 
   const doc = api.Policy.preset("agent_workspace", 3, { workspace: ctx.sandbox.root }).toJSON() as PolicyDocument;
-  applyNetworkPolicy(doc, input.networkMode === "ip" && !input.ipNetwork ? "proxy" : input.networkMode);
+  applyNetworkPolicy(doc, input.networkMode);
   addRule(doc, "exec", path.dirname(input.executable.path));
   addRule(doc, "exec", path.dirname(input.executable.real));
   addRule(doc, "exec", path.dirname(process.execPath));
@@ -334,10 +401,8 @@ async function runCaged(ctx: RunContext, input: CagedInput): Promise<ExecOutcome
     policy = api.Policy.fromJSON(doc);
     cage = new api.Cage(policy, cageOptions);
   } catch (error) {
-    /* v8 ignore next 3 */
-    if (input.networkMode === "proxy" && isProxyGap(error, api)) {
-      return runCaged(ctx, { ...input, networkMode: "ip" });
-    }
+    /* v8 ignore next */
+    if (input.networkMode === "proxy" && isProxyGap(error, api)) throw new ProxyUnavailableError();
     /* v8 ignore next */
     throw new FsError(`exec policy rejected: ${String(error)}`, "unsupported");
   }
@@ -439,7 +504,10 @@ export function isSandboxBlocked(outcome: ExecOutcome): boolean {
 
 export function detectsNetworkDenial(outcome: ExecOutcome): boolean {
   if (outcome.violations.some((violation) => /AF_INET|AF_INET6/.test(violation.target ?? ""))) return true;
-  return /EAI_AGAIN|getaddrinfo|ENETUNREACH|ECONNREFUSED/i.test(outcome.stderr.toString("utf8"));
+  const text = `${outcome.stderr.toString("utf8")}\n${outcome.stdout.toString("utf8")}`;
+  return /(?:EACCES|EPERM)[^\n]*(?:connect|bind|socket)|(?:connect|bind|socket)[^\n]*(?:EACCES|EPERM)|EAI_AGAIN|getaddrinfo|ENETUNREACH|EHOSTUNREACH|Failed to connect|Could not connect|Network is unreachable/i.test(
+    text,
+  );
 }
 
 export function discoverExternalPaths(ctx: RunContext, outcome: ExecOutcome): string[] {

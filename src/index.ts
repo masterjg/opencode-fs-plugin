@@ -30,11 +30,7 @@ import { diffTool } from "./tools/diff.js";
 import { duTool } from "./tools/du.js";
 import { fileTool } from "./tools/file.js";
 import { findTool } from "./tools/find.js";
-import {
-  execTool,
-  normalizeExecAllowlist,
-  normalizeExecNetworkMode,
-} from "./tools/exec.js";
+import { execTool, normalizeExecAllowlist } from "./tools/exec.js";
 import { findmntTool } from "./tools/findmnt.js";
 import { foldTool } from "./tools/fold.js";
 import { grepTool } from "./tools/grep.js";
@@ -200,7 +196,6 @@ export default Plugin.define({
       typeof ctx.options?.concurrency === "number" ? ctx.options.concurrency : undefined,
     );
     const execAllowlist = normalizeExecAllowlist(ctx.options?.execAllowlist);
-    const execNetworkMode = normalizeExecNetworkMode(ctx.options?.execNetworkMode);
     const jobs = new JobManager(
       typeof ctx.options?.jobDir === "string" ? { dir: ctx.options.jobDir } : {},
     );
@@ -249,7 +244,6 @@ export default Plugin.define({
                     signal,
                     tmpdir: os.tmpdir(),
                     execAllowlist,
-                    execNetworkMode,
                   },
                   parsed,
                   {},

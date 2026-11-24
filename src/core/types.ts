@@ -31,8 +31,6 @@ export interface RunContext {
   readonly signal: AbortSignal;
   readonly tmpdir: string;
   readonly execAllowlist: readonly string[];
-  /** `proxy` forces egress through the run's allowlist proxy; `ip` is all-IP. */
-  readonly execNetworkMode: "proxy" | "ip";
 }
 
 export interface ToolSpec<I> {

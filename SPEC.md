@@ -87,21 +87,23 @@ Aliases are accepted only where noted: `path` for one `paths` element (`stat`,
   Default: `npm`, `npx`, `uv`, `uvx`, `pip`, `pip3`. Override with the plugin
   option `execAllowlist`; an empty list disables execution.
 - The policy is procage `agent_workspace` v3: the project is read/write/exec.
-  Network is proxy-only and external paths are denied by default; there are no
-  per-call grants.
-- Network is proxy-only by default: the cage gets a procage proxy whose
-  allowlist is the hosts approved through `fs_exec_network` in this run. A
-  refused host asks with the host as the resource, then the run retries with it
-  added. The permission rules are the only allowlist; there is no plugin option
-  for it.
-- `execNetworkMode: "ip"` opts into all-IP networking after `fs_exec_network`
-  approval. In `ip` mode the policy also opens the resolver sockets used by
-  systemd-resolved, nscd, and SSSD. Plain UDP DNS needs none; other Unix
-  sockets stay blocked. Landlock ignores paths absent on the host. On T2 below
-  Landlock ABI 9 the sockets cannot be scoped, so `no-unix-sockets` drops them
-  and only UDP DNS remains.
-- Proxy mode needs Linux T1 or macOS. On T2 the cage fails with the `net-proxy`
-  gap; `fs.exec` retries in `ip` mode and asks on a socket denial.
+  Egress starts proxy-only and external paths are denied by default; there are
+  no per-call grants.
+- Egress starts proxy-only: the cage gets a procage proxy whose allowlist is the
+  hosts approved through `fs_exec_network` in this run. A refused host asks with
+  the host as the resource, then the run retries with it added. The permission
+  rules are the only allowlist; there is no plugin option for it.
+- When the proxy cannot carry the run - a client that ignores it, UDP/ICMP, or a
+  host without proxy support (Linux T2) - `fs.exec` escalates to all-IP. It asks
+  `fs_exec_network` with the target named in stderr/arguments, or `*` when no
+  target is known, then retries with `net: "ip"`. All-IP is not host-scoped:
+  approval records intent, not per-host enforcement.
+- All-IP mode also opens the resolver sockets used by systemd-resolved, nscd,
+  and SSSD. Plain UDP DNS needs none; other Unix sockets stay blocked. Landlock
+  ignores paths absent on the host. On T2 below Landlock ABI 9 the sockets cannot
+  be scoped, so `no-unix-sockets` drops them and only UDP DNS remains.
+- Proxy egress needs Linux T1 or macOS. On T2 the cage reports the `net-proxy`
+  gap and the plugin takes the all-IP path above.
 - Denied paths ask `external_directory` on their containing directory (or the
   nearest existing ancestor for a missing or redacted path). Access handling is
   bounded to twelve attempts.

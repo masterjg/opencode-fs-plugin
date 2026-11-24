@@ -12,17 +12,21 @@ import {
   DEFAULT_EXEC_ALLOWLIST,
   RESOLVER_SOCKETS,
   applyNetworkPolicy,
+  approveIpFallback,
   approveProxyHosts,
   blockedHint,
   detectsNetworkDenial,
   discoverExternalPaths,
+  escalationTargets,
   execTool,
   filterViolations,
   isProxyGap,
   isSandboxBlocked,
+  networkTargetsOf,
   normalizeExecAllowlist,
-  normalizeExecNetworkMode,
   proxyHostOf,
+  ProxyUnavailableError,
+  shouldEscalateIp,
   type ExecOutcome,
 } from "../../src/tools/exec.js";
 import { pipeTool } from "../../src/tools/pipe.js";
@@ -322,16 +326,45 @@ describe("exec", () => {
     expect(parsed(result).externalPaths).toContain(outside.dir);
   });
 
-  it("asks for all-IP network in ip mode", async () => {
+  it("escalates a proxied run that needs a direct route to all-IP", async () => {
     const { sb } = await setup();
-    const script = "const n=require('net');try{const s=n.connect(9,'127.0.0.1');s.on('error',()=>process.exit(0));}catch(e){process.exit(0)}";
+    const script =
+      "const n=require('net');const s=n.connect(443,'1.1.1.1');" +
+      "s.on('connect',()=>process.exit(0));" +
+      "s.on('error',(e)=>{console.error(e.message);process.exit(0)});" +
+      "setTimeout(()=>process.exit(0),3000);";
     const result = await runSpec(
       execTool,
       { command: "node", args: ["-e", script] },
       sb,
-      { execAllowlist: ["node"], execNetworkMode: "ip" },
+      { execAllowlist: ["node"] },
     );
-    expect(result.requests.some((request) => request.action === "fs_exec_network")).toBe(true);
+    expect(
+      result.requests.some(
+        (request) => request.action === "fs_exec_network" && request.resources.includes("1.1.1.1"),
+      ),
+    ).toBe(true);
+    expect(parsed(result)).toMatchObject({ network: true, networkMode: "ip" });
+  });
+
+  it("escalates UDP to all-IP for an approved address", async () => {
+    const { sb } = await setup();
+    const script =
+      "const d=require('dgram').createSocket('udp4');" +
+      "d.on('error',(e)=>{console.error(e.message);process.exit(0)});" +
+      "d.send('x',53,'8.8.8.8',(e)=>{if(e)console.error(e.message);process.exit(0)});" +
+      "setTimeout(()=>process.exit(0),3000);";
+    const result = await runSpec(
+      execTool,
+      { command: "node", args: ["-e", script] },
+      sb,
+      { execAllowlist: ["node"] },
+    );
+    expect(
+      result.requests.some(
+        (request) => request.action === "fs_exec_network" && request.resources.includes("8.8.8.8"),
+      ),
+    ).toBe(true);
     expect(parsed(result)).toMatchObject({ network: true, networkMode: "ip" });
   });
 
@@ -387,17 +420,23 @@ describe("exec", () => {
     expect(parsed(result).networkHosts).toContain("registry.npmjs.org:443");
   }, 90_000);
 
-  it("has no direct route in proxy mode", async () => {
+  it("escalates a proxy-ignoring client to all-IP", async () => {
     const { sb } = await setup();
     const result = await runSpec(
       execTool,
-      { command: "curl", args: ["--noproxy", "*", "-sS", "https://example.com"] },
+      {
+        command: "curl",
+        args: ["--noproxy", "*", "-sS", "-o", "/dev/null", "https://example.com"],
+      },
       sb,
       { execAllowlist: ["curl"] },
     );
-    if (parsed(result).networkMode !== "proxy") return;
-    expect(parsed(result).exitCode).not.toBe(0);
-    expect(parsed(result).sandboxBlocked).toBe(true);
+    expect(
+      result.requests.some(
+        (request) => request.action === "fs_exec_network" && request.resources.includes("example.com"),
+      ),
+    ).toBe(true);
+    expect(parsed(result)).toMatchObject({ network: true, networkMode: "ip" });
   });
 
   it("handles an unapprovable path and a repeated denial", async () => {
@@ -517,8 +556,6 @@ describe("exec sandbox helpers", () => {
     signal: null,
     timedOut: false,
     aborted: false,
-    stdoutTruncated: false,
-    stderrTruncated: false,
     networkMode: "ip",
     violations: [],
     ...overrides,
@@ -563,6 +600,8 @@ describe("exec sandbox helpers", () => {
     expect(isSandboxBlocked(outcome())).toBe(false);
     expect(detectsNetworkDenial(outcome({ violations: [violation("family AF_INET")] }))).toBe(true);
     expect(detectsNetworkDenial(outcome({ stderr: Buffer.from("EAI_AGAIN") }))).toBe(true);
+    expect(detectsNetworkDenial(outcome({ stderr: Buffer.from("connect EACCES 1.1.1.1:443") }))).toBe(true);
+    expect(detectsNetworkDenial(outcome({ stdout: Buffer.from("ERR EACCES bind 0.0.0.0") }))).toBe(true);
     expect(detectsNetworkDenial(outcome({ violations: [{ ...violation("family AF_INET"), target: null }] }))).toBe(false);
     expect(detectsNetworkDenial(outcome())).toBe(false);
   });
@@ -581,7 +620,7 @@ describe("exec sandbox helpers", () => {
       entry: "example.org:443",
     });
     expect(proxyHostOf(proxyViolation("[::1]:8080 (not on the allowlist)"))).toEqual({
-      host: "[::1]",
+      host: "::1",
       entry: "[::1]:8080",
     });
     expect(proxyHostOf(proxyViolation("example.org (not on the allowlist)"))).toEqual({
@@ -626,10 +665,46 @@ describe("exec sandbox helpers", () => {
     expect(blockedHint("ip")).toMatch(/permission prompt/);
   });
 
-  it("normalizes the network mode", () => {
-    expect(normalizeExecNetworkMode(undefined)).toBe("proxy");
-    expect(normalizeExecNetworkMode("ip")).toBe("ip");
-    expect(() => normalizeExecNetworkMode("nope")).toThrow(FsError);
+  it("escalates only a proxy failure", () => {
+    expect(shouldEscalateIp(new ProxyUnavailableError(), "proxy")).toBe(true);
+    expect(shouldEscalateIp(new ProxyUnavailableError(), "ip")).toBe(false);
+    expect(shouldEscalateIp(new Error("x"), "proxy")).toBe(false);
+  });
+
+  it("extracts network targets from output and arguments", () => {
+    expect(
+      networkTargetsOf(
+        "Failed to connect to example.com port 443",
+        "1.1.1.1:443",
+        "https://[::1]:8080/x",
+        "getaddrinfo api.example.org",
+      ),
+    ).toEqual(expect.arrayContaining(["example.com", "1.1.1.1", "::1", "api.example.org"]));
+    expect(networkTargetsOf("example.com:443")).toEqual(["example.com"]);
+    expect(networkTargetsOf("EACCES bind 0.0.0.0")).toEqual([]);
+    expect(networkTargetsOf("plain words")).toEqual([]);
+  });
+
+  it("prefers named hosts over addresses when escalating", () => {
+    expect(escalationTargets("Failed to connect to example.com port 443", "1.1.1.1:443")).toEqual([
+      "example.com",
+    ]);
+    expect(escalationTargets("1.1.1.1:443")).toEqual(["1.1.1.1"]);
+    expect(escalationTargets("EACCES bind 0.0.0.0")).toEqual([]);
+  });
+
+  it("asks for all networking when no target is known", async () => {
+    const asked: string[][] = [];
+    const ctx = {
+      permissionFor: () => ({
+        assertTrusted: async (resources: string[]) => {
+          asked.push(resources);
+        },
+      }),
+    } as never;
+    await approveIpFallback(ctx, []);
+    await approveIpFallback(ctx, ["8.8.8.8"]);
+    expect(asked).toEqual([["*"], ["8.8.8.8"]]);
   });
 });
 

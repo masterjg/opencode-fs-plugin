@@ -141,10 +141,10 @@ work, fan out with `Promise.all` over `tools.fs.*` (or one multi-path call).
 }
 ```
 
-The workspace (project) is read/write/exec. **Network is proxy-only by
-default**: every run gets its own egress proxy, no direct route, and every host
-must be approved through `fs_exec_network`. There is no separate allowlist
-option; the permission rules are the allowlist:
+The workspace (project) is read/write/exec. **Egress starts proxy-only**: every
+run gets its own egress proxy, no direct route, and every host must be approved
+through `fs_exec_network`. There is no separate allowlist option; the permission
+rules are the allowlist:
 
 ```jsonc
 {
@@ -158,20 +158,24 @@ option; the permission rules are the allowlist:
 
 A host the proxy refuses asks `fs_exec_network` with that host, and the run
 retries with it added. With no rule (base allow), that happens silently; with a
-`*` deny the host fails closed instead. `execNetworkMode: "ip"` opts into all-IP
-networking after the same approval instead. External paths are separate: a
-blocked path asks `external_directory` for its containing directory (or the
-nearest existing ancestor), and the sandbox grants read/write there.
+`*` deny the host fails closed instead. When the proxy cannot carry the run
+(UDP/ICMP, a client that ignores the proxy, or a host without proxy support),
+the run asks with the target named in its output or arguments, or `*` when none
+can be identified, and retries with all-IP networking. All-IP is not
+host-scoped: that approval records intent, not per-host enforcement. External
+paths are separate: a blocked path asks `external_directory` for its containing
+directory (or the nearest existing ancestor), and the sandbox grants read/write
+there.
 
 The decision comes from your `opencode.jsonc` rules (`ask`, `allow`, `deny`), the
 same as every other tool. If a path stays blocked after approval, the result
 reports `violations` and a `hint`. `fs.exec` also kills every process it started
 when the run ends, including detached descendants.
 
-Proxy mode needs Linux T1 (user namespaces) or macOS. On Linux T2 there is no
-network namespace, so `fs.exec` falls back to all-IP: a socket denial asks
-`fs_exec_network` and retries with `ip`. In `ip` mode the policy also opens the
-resolver sockets used by systemd-resolved, nscd, and SSSD
+Proxy egress needs Linux T1 (user namespaces) or macOS. On Linux T2 there is no
+network namespace, so `fs.exec` takes the all-IP path: it asks `fs_exec_network`
+for the named target, or `*` when none is known, and retries. In all-IP mode the
+policy also opens the resolver sockets used by systemd-resolved, nscd, and SSSD
 (`/run/systemd/resolve`, `/run/nscd`, `/var/lib/sss/pipes`), so DNS works across
 common Linux distributions. Plain UDP DNS needs none of them; other Unix sockets
 stay blocked. On kernels where procage cannot scope Unix sockets (T2 below
@@ -414,8 +418,9 @@ external targets first require `external_directory` on the absolute boundary.
 `allow always` persists the same patterns as the built-in tools.
 
 `fs.exec` asserts `fs_exec` for the run, then asks `external_directory` for any
-blocked path and `fs_exec_network` for a refused host (the resource is the host,
-or `*` in ip mode) before retrying:
+blocked path and `fs_exec_network` for a refused host or an all-IP fallback
+target (the resource is the host/address, or `*` when none is known) before
+retrying:
 
 ```jsonc
 {

@@ -20,7 +20,6 @@ export interface RunSpecOptions {
   tmpdir?: string;
   stdin?: AsyncIterable<Buffer>;
   execAllowlist?: readonly string[];
-  execNetworkMode?: "proxy" | "ip";
 }
 
 export interface RunSpecResult<I> {
@@ -75,7 +74,6 @@ export async function runSpec<I>(
       signal: options.signal ?? new AbortController().signal,
       tmpdir: options.tmpdir ?? os.tmpdir(),
       execAllowlist: options.execAllowlist ?? DEFAULT_EXEC_ALLOWLIST,
-      execNetworkMode: options.execNetworkMode ?? "proxy",
     },
     input,
     options.stdin === undefined ? {} : { stdin: options.stdin },
