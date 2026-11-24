@@ -137,6 +137,7 @@ const URL_HOST = /[a-z][a-z0-9+.-]*:\/\/(\[[^\]]+\]|[^/\s:'"?#]+)/gi;
 const HOST_PORT = /\b((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}|localhost):\d{1,5}\b/gi;
 const CONNECT_HOST = /\b(?:connect(?:ing|ion)? to|host|url|address)[\s'"]+((?:[a-z0-9-]+\.)+[a-z]{2,})\b/gi;
 const GETADDRINFO_HOST = /\bgetaddrinfo\b[^\n]*?\b((?:[a-z0-9-]+\.)+[a-z]{2,})\b/gi;
+const AT_HOST = /(?:^|\s)@(?:\[([^\]]+)\]|((?:[a-z0-9-]+\.)+[a-z]{2,}))/gi;
 const ADDRESS = /^(?:\d{1,3}(?:\.\d{1,3}){3}|[0-9a-f:]+)$/i;
 
 function stripBrackets(value: string): string {
@@ -157,6 +158,7 @@ export function networkTargetsOf(...texts: readonly string[]): string[] {
     for (const match of text.matchAll(HOST_PORT)) found.add(match[1]!.toLowerCase());
     for (const match of text.matchAll(CONNECT_HOST)) found.add(match[1]!.toLowerCase());
     for (const match of text.matchAll(GETADDRINFO_HOST)) found.add(match[1]!.toLowerCase());
+    for (const match of text.matchAll(AT_HOST)) found.add(stripBrackets((match[1] ?? match[2])!.toLowerCase()));
     for (const match of text.matchAll(IPV4)) found.add(match[0]);
     for (const match of text.matchAll(IPV6)) found.add(stripBrackets(match[0]));
   }
@@ -505,7 +507,7 @@ export function isSandboxBlocked(outcome: ExecOutcome): boolean {
 export function detectsNetworkDenial(outcome: ExecOutcome): boolean {
   if (outcome.violations.some((violation) => /AF_INET|AF_INET6/.test(violation.target ?? ""))) return true;
   const text = `${outcome.stderr.toString("utf8")}\n${outcome.stdout.toString("utf8")}`;
-  return /(?:EACCES|EPERM)[^\n]*(?:connect|bind|socket)|(?:connect|bind|socket)[^\n]*(?:EACCES|EPERM)|EAI_AGAIN|getaddrinfo|ENETUNREACH|EHOSTUNREACH|Failed to connect|Could not connect|Network is unreachable/i.test(
+  return /(?:EACCES|EPERM|Operation not permitted)[^\n]*(?:connect|bind|socket)|(?:connect|bind|socket)[^\n]*(?:EACCES|EPERM|Operation not permitted)|EAI_AGAIN|getaddrinfo|ENETUNREACH|EHOSTUNREACH|Failed to connect|Could not connect|Network is unreachable/i.test(
     text,
   );
 }

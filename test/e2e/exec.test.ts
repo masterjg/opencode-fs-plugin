@@ -602,6 +602,9 @@ describe("exec sandbox helpers", () => {
     expect(detectsNetworkDenial(outcome({ stderr: Buffer.from("EAI_AGAIN") }))).toBe(true);
     expect(detectsNetworkDenial(outcome({ stderr: Buffer.from("connect EACCES 1.1.1.1:443") }))).toBe(true);
     expect(detectsNetworkDenial(outcome({ stdout: Buffer.from("ERR EACCES bind 0.0.0.0") }))).toBe(true);
+    expect(
+      detectsNetworkDenial(outcome({ stderr: Buffer.from("try_proto(): socket(): Operation not permitted") })),
+    ).toBe(true);
     expect(detectsNetworkDenial(outcome({ violations: [{ ...violation("family AF_INET"), target: null }] }))).toBe(false);
     expect(detectsNetworkDenial(outcome())).toBe(false);
   });
@@ -681,6 +684,7 @@ describe("exec sandbox helpers", () => {
       ),
     ).toEqual(expect.arrayContaining(["example.com", "1.1.1.1", "::1", "api.example.org"]));
     expect(networkTargetsOf("example.com:443")).toEqual(["example.com"]);
+    expect(networkTargetsOf("@example.com")).toEqual(["example.com"]);
     expect(networkTargetsOf("EACCES bind 0.0.0.0")).toEqual([]);
     expect(networkTargetsOf("plain words")).toEqual([]);
   });
