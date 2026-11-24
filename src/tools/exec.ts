@@ -73,21 +73,6 @@ export function normalizeExecNetworkMode(value: unknown): ExecNetworkMode {
   throw new FsError('execNetworkMode must be "proxy" or "ip".', "invalid");
 }
 
-export function normalizeExecNetworkAllowlist(value: unknown): readonly string[] {
-  if (value === undefined) return [];
-  if (!Array.isArray(value)) {
-    throw new FsError("execNetworkAllowlist must be an array of hosts.", "invalid");
-  }
-  const hosts: string[] = [];
-  for (const entry of value) {
-    if (typeof entry !== "string" || entry.trim() === "") {
-      throw new FsError("execNetworkAllowlist entries must be non-empty strings.", "invalid");
-    }
-    hosts.push(entry.trim());
-  }
-  return [...new Set(hosts)];
-}
-
 /** `ip` adds all-IP networking; both modes get the local resolver sockets. */
 export function applyNetworkPolicy(doc: PolicyDocument, mode: ExecNetworkMode): void {
   doc.ipc.unix_sockets = [...RESOLVER_SOCKETS];
@@ -201,7 +186,7 @@ export const execTool: ToolSpec<Input> = {
         ? input.stdin === undefined ? undefined : Buffer.from(input.stdin)
         : await collect(io.stdin);
       let networkMode = ctx.execNetworkMode;
-      const proxyHosts = [...ctx.execNetworkAllowlist];
+      const proxyHosts: string[] = [];
       let ipNetwork = false;
       const approved: Array<{ full: string }> = [];
       let outcome: ExecOutcome | undefined;
@@ -343,7 +328,7 @@ async function runCaged(ctx: RunContext, input: CagedInput): Promise<ExecOutcome
     acceptSpawnSnapshot: true,
     relax: ["waive:trust-handoff", "signals-same-user", "no-unix-sockets"] as Relaxation[],
     ...(input.networkMode === "proxy"
-      ? { proxy: { allowlist: input.proxyHosts.length === 0 ? [PROXY_SENTINEL] : [...input.proxyHosts] } }
+      ? { proxy: { allowlist: [...input.proxyHosts, PROXY_SENTINEL] } }
       : {}),
   };
 

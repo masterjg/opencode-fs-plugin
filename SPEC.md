@@ -89,10 +89,10 @@ Aliases are accepted only where noted: `path` for one `paths` element (`stat`,
   Network is proxy-only and external paths are denied by default; there are no
   per-call grants.
 - Network is proxy-only by default: the cage gets a procage proxy whose
-  allowlist is the configured `execNetworkAllowlist` plus the hosts approved
-  in this run. A refused host asks `fs_exec_network` with the host as the
-  resource, then the run retries with it added. The decision comes from
-  `opencode.jsonc`.
+  allowlist is the hosts approved through `fs_exec_network` in this run. A
+  refused host asks with the host as the resource, then the run retries with it
+  added. The permission rules are the only allowlist; there is no plugin option
+  for it.
 - `execNetworkMode: "ip"` opts into all-IP networking after `fs_exec_network`
   approval. In `ip` mode the policy also opens the resolver sockets used by
   systemd-resolved, nscd, and SSSD. Plain UDP DNS needs none; other Unix

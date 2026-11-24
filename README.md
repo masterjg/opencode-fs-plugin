@@ -140,22 +140,26 @@ work, fan out with `Promise.all` over `tools.fs.*` (or one multi-path call).
 ```
 
 The workspace (project) is read/write/exec. **Network is proxy-only by
-default**: every run gets its own egress proxy, no direct route, and only
-allowlisted hosts are reachable. Pre-approve hosts in the plugin options:
+default**: every run gets its own egress proxy, no direct route, and every host
+must be approved through `fs_exec_network`. There is no separate allowlist
+option; the permission rules are the allowlist:
 
 ```jsonc
 {
-  "options": {
-    "execNetworkAllowlist": ["registry.npmjs.org", "*.npmjs.org"]
-  }
+  "permissions": [
+    { "action": "fs_exec_network", "resource": "*", "effect": "deny" },
+    { "action": "fs_exec_network", "resource": "registry.npmjs.org", "effect": "allow" },
+    { "action": "fs_exec_network", "resource": "pypi.org", "effect": "allow" }
+  ]
 }
 ```
 
 A host the proxy refuses asks `fs_exec_network` with that host, and the run
-retries with it added. `execNetworkMode: "ip"` opts into all-IP networking after
-the same approval instead. External paths are separate: a blocked path asks
-`external_directory` for its containing directory (or the nearest existing
-ancestor), and the sandbox grants read/write there.
+retries with it added. With no rule (base allow), that happens silently; with a
+`*` deny the host fails closed instead. `execNetworkMode: "ip"` opts into all-IP
+networking after the same approval instead. External paths are separate: a
+blocked path asks `external_directory` for its containing directory (or the
+nearest existing ancestor), and the sandbox grants read/write there.
 
 The decision comes from your `opencode.jsonc` rules (`ask`, `allow`, `deny`), the
 same as every other tool. If a path stays blocked after approval, the result
@@ -280,18 +284,18 @@ Add the registry package directly to the plugin list:
 
 ```jsonc
 {
-  "plugins": ["opencode-fs-plugin@1.11.0"]
+  "plugins": ["opencode-fs-plugin@2.0.0"]
 }
 ```
 
-`opencode plugin add opencode-fs-plugin@1.11.0` installs it and writes the config
+`opencode plugin add opencode-fs-plugin@2.0.0` installs it and writes the config
 entry. A bare `opencode-fs-plugin` follows the `latest` tag.
 
 OpenCode manages the package under its cache, so the path is not stable. If you
 also want the packaged skill, install it into a project instead:
 
 ```bash
-npm install opencode-fs-plugin@1.11.0
+npm install opencode-fs-plugin@2.0.0
 ```
 
 ```jsonc
@@ -306,7 +310,7 @@ npm install opencode-fs-plugin@1.11.0
 Download the release tarball, then install it as a normal npm package:
 
 ```bash
-VERSION=1.11.0
+VERSION=2.0.0
 curl -L -o "opencode-fs-plugin-${VERSION}.tgz" \
   "https://github.com/masterjg/opencode-fs-plugin/releases/download/v${VERSION}/opencode-fs-plugin-${VERSION}.tgz"
 npm install "./opencode-fs-plugin-${VERSION}.tgz"
@@ -335,20 +339,20 @@ OpenCode installs it from Git:
 
 ```jsonc
 {
-  "plugins": ["github:masterjg/opencode-fs-plugin#v1.11.0"]
+  "plugins": ["github:masterjg/opencode-fs-plugin#v2.0.0"]
 }
 ```
 
-`opencode plugin add 'github:masterjg/opencode-fs-plugin#v1.11.0'` installs the
+`opencode plugin add 'github:masterjg/opencode-fs-plugin#v2.0.0'` installs the
 same spec and writes the config entry. The equivalent full URL is
-`git+https://github.com/masterjg/opencode-fs-plugin.git#v1.11.0`. A tag is
+`git+https://github.com/masterjg/opencode-fs-plugin.git#v2.0.0`. A tag is
 checked for updates; use a full commit hash to pin it.
 
 Git plugins are installed under OpenCode's cache, so their package path is not
 stable. If you also want the packaged skill, install with npm instead:
 
 ```bash
-npm install "github:masterjg/opencode-fs-plugin#v1.11.0"
+npm install "github:masterjg/opencode-fs-plugin#v2.0.0"
 ```
 
 Then use `./node_modules/opencode-fs-plugin` in `plugins` and
@@ -414,7 +418,8 @@ or `*` in ip mode) before retrying:
 {
   "permissions": [
     { "action": "external_directory", "resource": "$HOME/.npm/**", "effect": "ask" },
-    { "action": "fs_exec_network", "resource": "*", "effect": "ask" }
+    { "action": "fs_exec_network", "resource": "*", "effect": "deny" },
+    { "action": "fs_exec_network", "resource": "registry.npmjs.org", "effect": "allow" }
   ]
 }
 ```

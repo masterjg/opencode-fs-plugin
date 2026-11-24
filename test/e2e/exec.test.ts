@@ -21,7 +21,6 @@ import {
   isProxyGap,
   isSandboxBlocked,
   normalizeExecAllowlist,
-  normalizeExecNetworkAllowlist,
   normalizeExecNetworkMode,
   proxyHostOf,
   type ExecOutcome,
@@ -336,24 +335,29 @@ describe("exec", () => {
     expect(parsed(result)).toMatchObject({ network: true, networkMode: "ip" });
   });
 
-  it("forces network through the proxy and asks for a refused host", async () => {
+  it("forces network through the proxy and asks for every host", async () => {
     const { sb } = await setup();
     const allowed = await runSpec(
       execTool,
       { command: "curl", args: ["-sS", "-o", "/dev/null", "-w", "%{http_code}", "https://example.com"] },
       sb,
-      { execAllowlist: ["curl"], execNetworkAllowlist: ["example.com"] },
+      { execAllowlist: ["curl"] },
     );
     // Linux T2 has no proxy-only route; the run falls back to all-IP.
     if (parsed(allowed).networkMode !== "proxy") return;
     expect(parsed(allowed)).toMatchObject({ exitCode: 0, network: true, networkMode: "proxy" });
-    expect(parsed(allowed).networkHosts).toEqual(["example.com"]);
+    expect(parsed(allowed).networkHosts).toEqual(["example.com:443"]);
+    expect(
+      allowed.requests.some(
+        (request) => request.action === "fs_exec_network" && request.resources.includes("example.com"),
+      ),
+    ).toBe(true);
 
     const refused = await runSpec(
       execTool,
       { command: "curl", args: ["-sS", "https://example.org"] },
       sb,
-      { execAllowlist: ["curl"], execNetworkAllowlist: ["example.com"] },
+      { execAllowlist: ["curl"] },
     );
     expect(
       refused.requests.some(
@@ -389,7 +393,7 @@ describe("exec", () => {
       execTool,
       { command: "curl", args: ["--noproxy", "*", "-sS", "https://example.com"] },
       sb,
-      { execAllowlist: ["curl"], execNetworkAllowlist: ["example.com"] },
+      { execAllowlist: ["curl"] },
     );
     if (parsed(result).networkMode !== "proxy") return;
     expect(parsed(result).exitCode).not.toBe(0);
@@ -622,14 +626,10 @@ describe("exec sandbox helpers", () => {
     expect(blockedHint("ip")).toMatch(/permission prompt/);
   });
 
-  it("normalizes the network options", () => {
+  it("normalizes the network mode", () => {
     expect(normalizeExecNetworkMode(undefined)).toBe("proxy");
     expect(normalizeExecNetworkMode("ip")).toBe("ip");
     expect(() => normalizeExecNetworkMode("nope")).toThrow(FsError);
-    expect(normalizeExecNetworkAllowlist(undefined)).toEqual([]);
-    expect(normalizeExecNetworkAllowlist([" a.com ", "a.com", "b.com"])).toEqual(["a.com", "b.com"]);
-    expect(() => normalizeExecNetworkAllowlist("a.com")).toThrow(FsError);
-    expect(() => normalizeExecNetworkAllowlist([""])).toThrow(FsError);
   });
 });
 

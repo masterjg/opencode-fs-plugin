@@ -158,9 +158,10 @@ override it with the fs plugin option `execAllowlist` in `opencode.jsonc`:
 
 The project is read/write/exec. **Network is proxy-only by default, and there
 are no per-call grants.** The run gets its own egress proxy with no direct
-route; a refused host asks `fs_exec_network` with the host and the run retries
-with it added. Pre-approve hosts with `execNetworkAllowlist`; set
-`execNetworkMode: "ip"` to opt into all-IP after approval instead. On Linux T2
+route; every host must be approved through `fs_exec_network`, which asks with
+the host as the resource and retries with it added. The permission rules are
+the allowlist: a `*` deny plus host allows fails closed for everything else.
+`execNetworkMode: "ip"` opts into all-IP after approval instead. On Linux T2
 (no network namespace) the run falls back to `ip`.
 
 ```js

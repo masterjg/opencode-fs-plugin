@@ -34,8 +34,6 @@ export interface RunContext {
   readonly execAllowlist: readonly string[];
   /** `proxy` forces egress through the run's allowlist proxy; `ip` is all-IP. */
   readonly execNetworkMode: "proxy" | "ip";
-  /** Hosts pre-approved for every `fs.exec` proxy run. */
-  readonly execNetworkAllowlist: readonly string[];
 }
 
 export interface ToolSpec<I> {

@@ -33,7 +33,6 @@ import { findTool } from "./tools/find.js";
 import {
   execTool,
   normalizeExecAllowlist,
-  normalizeExecNetworkAllowlist,
   normalizeExecNetworkMode,
 } from "./tools/exec.js";
 import { findmntTool } from "./tools/findmnt.js";
@@ -205,7 +204,6 @@ export default Plugin.define({
     );
     const execAllowlist = normalizeExecAllowlist(ctx.options?.execAllowlist);
     const execNetworkMode = normalizeExecNetworkMode(ctx.options?.execNetworkMode);
-    const execNetworkAllowlist = normalizeExecNetworkAllowlist(ctx.options?.execNetworkAllowlist);
     const maxOutputBytes =
       typeof ctx.options?.maxOutputBytes === "number" && ctx.options.maxOutputBytes > 0
         ? Math.trunc(ctx.options.maxOutputBytes)
@@ -260,7 +258,6 @@ export default Plugin.define({
                     maxOutputBytes,
                     execAllowlist,
                     execNetworkMode,
-                    execNetworkAllowlist,
                   },
                   parsed,
                   {},
