@@ -156,18 +156,20 @@ override it with the fs plugin option `execAllowlist` in `opencode.jsonc`:
 { "package": "./repos/opencode-fs-plugin", "options": { "execAllowlist": ["npm", "uv"] } }
 ```
 
-The project is read/write/exec. **Network and external paths are denied by
-default, and there are no per-call grants.** When the sandbox blocks something,
-`fs.exec` asks `external_directory` for the path or `fs_exec_network` for a
-socket, then retries; the decision comes from `opencode.jsonc`:
+The project is read/write/exec. **Network is proxy-only by default, and there
+are no per-call grants.** The run gets its own egress proxy with no direct
+route; a refused host asks `fs_exec_network` with the host and the run retries
+with it added. Pre-approve hosts with `execNetworkAllowlist`; set
+`execNetworkMode: "ip"` to opt into all-IP after approval instead. On Linux T2
+(no network namespace) the run falls back to `ip`.
 
 ```js
 await tools.fs.exec({ command: "npm", args: ["install"], timeoutMs: 300000 })
 ```
 
-Denied access returns `violations` and a `hint`; approval covers the denied
-path's containing directory (or nearest existing ancestor), and a path still
-blocked after approval is reported. With network approved, DNS works through the
+Denied paths ask `external_directory` and approval covers the denied path's
+containing directory (or nearest existing ancestor). Denied access returns
+`violations` and a `hint`. In `ip` mode DNS works through the
 systemd-resolved, nscd, or SSSD sockets where the kernel can scope them; other
 Unix sockets stay blocked and plain UDP DNS works everywhere.
 `command` is a bare name, `args` are literal, and `cwd` is sandboxed. Direct
@@ -419,8 +421,8 @@ await tools.fs.http_request({
 - Linux only; there is no Windows branch.
 - `fs.sed` supports `s<delim>pattern<delim>replacement<delim>flags` with `g`,
   `i` and `p`. It is not a full sed interpreter.
-- `fs.exec` requires procage: Linux x64/arm64, glibc 2.28+, Node 22.12+. Network
-  and external paths are denied until approved.
+- `fs.exec` requires procage: Linux x64/arm64, glibc 2.28+, Node 22.12+.
+  Network is proxy-only by default; external paths are denied until approved.
 - `fs.find` has no arbitrary `-exec`; use `action: "delete"`/`"trash"` for the
   common cleanup case, or `fs.rm`/`fs.trash` separately.
 - No `xz`, `zstd`, `7z`, `rar`, `chattr`, ACLs, xattrs, or `rsync`.
@@ -475,9 +477,9 @@ in agent rules. `fs.pipe` asserts each stage's action; a denied stage cannot be
 hidden inside a pipeline. Do not work around a denied tool with shell.
 
 `fs_exec` runs only exact allowlisted names in a procage sandbox. It asserts
-`fs_exec`, then asks `external_directory` for a blocked path or `fs_exec_network`
-for a blocked socket and retries; there are no per-call grants. There is no
-shell.
+`fs_exec`, asks `external_directory` for a blocked path, and asks
+`fs_exec_network` with the refused host (or `*` in `ip` mode), then retries.
+There are no per-call grants and no shell.
 
 `fs_http_request` is allowed by default, like `fetch`. Its resource is the
 request host; rules can allow one host and ask or deny the rest. Each redirect

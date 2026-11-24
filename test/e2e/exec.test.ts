@@ -12,12 +12,18 @@ import {
   DEFAULT_EXEC_ALLOWLIST,
   RESOLVER_SOCKETS,
   applyNetworkPolicy,
+  approveProxyHosts,
+  blockedHint,
   detectsNetworkDenial,
   discoverExternalPaths,
   execTool,
   filterViolations,
+  isProxyGap,
   isSandboxBlocked,
   normalizeExecAllowlist,
+  normalizeExecNetworkAllowlist,
+  normalizeExecNetworkMode,
+  proxyHostOf,
   type ExecOutcome,
 } from "../../src/tools/exec.js";
 import { pipeTool } from "../../src/tools/pipe.js";
@@ -317,17 +323,77 @@ describe("exec", () => {
     expect(parsed(result).externalPaths).toContain(outside.dir);
   });
 
-  it("auto-approves network access and records it", async () => {
+  it("asks for all-IP network in ip mode", async () => {
     const { sb } = await setup();
     const script = "const n=require('net');try{const s=n.connect(9,'127.0.0.1');s.on('error',()=>process.exit(0));}catch(e){process.exit(0)}";
     const result = await runSpec(
       execTool,
       { command: "node", args: ["-e", script] },
       sb,
-      { execAllowlist: ["node"] },
+      { execAllowlist: ["node"], execNetworkMode: "ip" },
     );
     expect(result.requests.some((request) => request.action === "fs_exec_network")).toBe(true);
-    expect(parsed(result).network).toBe(true);
+    expect(parsed(result)).toMatchObject({ network: true, networkMode: "ip" });
+  });
+
+  it("forces network through the proxy and asks for a refused host", async () => {
+    const { sb } = await setup();
+    const allowed = await runSpec(
+      execTool,
+      { command: "curl", args: ["-sS", "-o", "/dev/null", "-w", "%{http_code}", "https://example.com"] },
+      sb,
+      { execAllowlist: ["curl"], execNetworkAllowlist: ["example.com"] },
+    );
+    // Linux T2 has no proxy-only route; the run falls back to all-IP.
+    if (parsed(allowed).networkMode !== "proxy") return;
+    expect(parsed(allowed)).toMatchObject({ exitCode: 0, network: true, networkMode: "proxy" });
+    expect(parsed(allowed).networkHosts).toEqual(["example.com"]);
+
+    const refused = await runSpec(
+      execTool,
+      { command: "curl", args: ["-sS", "https://example.org"] },
+      sb,
+      { execAllowlist: ["curl"], execNetworkAllowlist: ["example.com"] },
+    );
+    expect(
+      refused.requests.some(
+        (request) => request.action === "fs_exec_network" && request.resources.includes("example.org"),
+      ),
+    ).toBe(true);
+    expect(parsed(refused).exitCode).toBe(0);
+    expect(parsed(refused).networkHosts).toContain("example.org:443");
+  });
+
+  it("runs npm through the proxy after approving its host", async () => {
+    const { sb } = await setup();
+    const result = await runSpec(
+      execTool,
+      { command: "npm", args: ["view", "npm", "version", "--fetch-retries=0"], timeoutMs: 60_000 },
+      sb,
+      { execAllowlist: ["npm"] },
+    );
+    if (parsed(result).networkMode !== "proxy") return;
+    expect(parsed(result).exitCode).toBe(0);
+    expect(
+      result.requests.some(
+        (request) =>
+          request.action === "fs_exec_network" && request.resources.includes("registry.npmjs.org"),
+      ),
+    ).toBe(true);
+    expect(parsed(result).networkHosts).toContain("registry.npmjs.org:443");
+  }, 90_000);
+
+  it("has no direct route in proxy mode", async () => {
+    const { sb } = await setup();
+    const result = await runSpec(
+      execTool,
+      { command: "curl", args: ["--noproxy", "*", "-sS", "https://example.com"] },
+      sb,
+      { execAllowlist: ["curl"], execNetworkAllowlist: ["example.com"] },
+    );
+    if (parsed(result).networkMode !== "proxy") return;
+    expect(parsed(result).exitCode).not.toBe(0);
+    expect(parsed(result).sandboxBlocked).toBe(true);
   });
 
   it("handles an unapprovable path and a repeated denial", async () => {
@@ -428,15 +494,16 @@ describe("exec", () => {
 });
 
 describe("exec sandbox helpers", () => {
-  it("enables the resolver sockets only with network", () => {
+  it("sets resolver sockets in both modes and IP networking only for ip", () => {
     const on = { fs: [], net: "none", ipc: { unix_sockets: [] as string[] } };
-    applyNetworkPolicy(on, true);
+    applyNetworkPolicy(on, "ip");
     expect(on.net).toBe("ip");
     expect(on.ipc.unix_sockets).toEqual([...RESOLVER_SOCKETS]);
 
-    const off = { fs: [], net: "ip", ipc: { unix_sockets: ["/run/systemd/resolve"] } };
-    applyNetworkPolicy(off, false);
-    expect(off).toEqual({ fs: [], net: "none", ipc: { unix_sockets: ["/run/systemd/resolve"] } });
+    const proxy = { fs: [], net: "none", ipc: { unix_sockets: [] as string[] } };
+    applyNetworkPolicy(proxy, "proxy");
+    expect(proxy.net).toBe("none");
+    expect(proxy.ipc.unix_sockets).toEqual([...RESOLVER_SOCKETS]);
   });
 
   const outcome = (overrides: Partial<ExecOutcome> = {}): ExecOutcome => ({
@@ -448,6 +515,7 @@ describe("exec sandbox helpers", () => {
     aborted: false,
     stdoutTruncated: false,
     stderrTruncated: false,
+    networkMode: "ip",
     violations: [],
     ...overrides,
   });
@@ -488,6 +556,75 @@ describe("exec sandbox helpers", () => {
     expect(detectsNetworkDenial(outcome({ violations: [{ ...violation("family AF_INET"), target: null }] }))).toBe(false);
     expect(detectsNetworkDenial(outcome())).toBe(false);
   });
+
+  const proxyViolation = (target: string) => ({
+    ...violation(target),
+    pid: 0,
+    process: "proxy",
+    operation: "network-outbound",
+    deniedBy: "refused by the proxy's allowlist",
+  });
+
+  it("reads the refused host from a proxy violation", () => {
+    expect(proxyHostOf(proxyViolation("example.org:443 (not on the allowlist)"))).toEqual({
+      host: "example.org",
+      entry: "example.org:443",
+    });
+    expect(proxyHostOf(proxyViolation("[::1]:8080 (not on the allowlist)"))).toEqual({
+      host: "[::1]",
+      entry: "[::1]:8080",
+    });
+    expect(proxyHostOf(proxyViolation("example.org (not on the allowlist)"))).toEqual({
+      host: "example.org",
+      entry: "example.org",
+    });
+    expect(proxyHostOf(violation("/home/a"))).toBeUndefined();
+    expect(proxyHostOf(proxyViolation("nonsense"))).toBeUndefined();
+    expect(proxyHostOf({ ...proxyViolation("nonsense"), target: null })).toBeUndefined();
+  });
+
+  it("approves each refused host once", async () => {
+    const asked: string[][] = [];
+    const ctx = {
+      permissionFor: () => ({
+        assertTrusted: async (resources: string[]) => {
+          asked.push(resources);
+        },
+      }),
+    } as never;
+    const hosts = ["example.com"];
+    const refused = outcome({
+      networkMode: "proxy",
+      violations: [
+        proxyViolation("example.org:443 (not on the allowlist)"),
+        proxyViolation("example.org:443 (not on the allowlist)"),
+      ],
+    });
+    expect(await approveProxyHosts(ctx, refused, hosts)).toBe(true);
+    expect(asked).toEqual([["example.org"]]);
+    expect(hosts).toEqual(["example.com", "example.org:443"]);
+    expect(await approveProxyHosts(ctx, refused, hosts)).toBe(false);
+    expect(await approveProxyHosts(ctx, outcome({ violations: refused.violations }), hosts)).toBe(false);
+  });
+
+  it("detects the proxy gap and explains a blocked run", async () => {
+    const api = await import("procage");
+    expect(isProxyGap(new api.CapabilityGapError("gap", [{ construct: "net-proxy" }]), api)).toBe(true);
+    expect(isProxyGap(new api.CapabilityGapError("gap", [{ construct: "net-ip" }]), api)).toBe(false);
+    expect(isProxyGap(new Error("gap"), api)).toBe(false);
+    expect(blockedHint("proxy")).toMatch(/proxy-only/);
+    expect(blockedHint("ip")).toMatch(/permission prompt/);
+  });
+
+  it("normalizes the network options", () => {
+    expect(normalizeExecNetworkMode(undefined)).toBe("proxy");
+    expect(normalizeExecNetworkMode("ip")).toBe("ip");
+    expect(() => normalizeExecNetworkMode("nope")).toThrow(FsError);
+    expect(normalizeExecNetworkAllowlist(undefined)).toEqual([]);
+    expect(normalizeExecNetworkAllowlist([" a.com ", "a.com", "b.com"])).toEqual(["a.com", "b.com"]);
+    expect(() => normalizeExecNetworkAllowlist("a.com")).toThrow(FsError);
+    expect(() => normalizeExecNetworkAllowlist([""])).toThrow(FsError);
+  });
 });
 
 describe("exec allowlist", () => {
@@ -503,7 +640,7 @@ describe("exec allowlist", () => {
     expect(() => normalizeExecAllowlist(["../npm"])).toThrow(FsError);
   });
 
-  it("keeps path and IP violations only", () => {
+  it("keeps actionable violations only", () => {
     const base = {
       pid: 1,
       process: "node",
@@ -515,10 +652,21 @@ describe("exec allowlist", () => {
     const kept = filterViolations([
       { ...base, target: "/home/user/secret" },
       { ...base, operation: "socket", target: "family AF_INET" },
+      {
+        ...base,
+        pid: 0,
+        process: "proxy",
+        operation: "network-outbound",
+        target: "example.org:443 (not on the allowlist)",
+      },
       { ...base, target: null },
       { ...base, target: "family AF_NETLINK" },
     ]);
-    expect(kept.map((violation) => violation.target)).toEqual(["/home/user/secret", "family AF_INET"]);
+    expect(kept.map((violation) => violation.target)).toEqual([
+      "/home/user/secret",
+      "family AF_INET",
+      "example.org:443 (not on the allowlist)",
+    ]);
   });
 
   it("rejects a command when PATH is unavailable", async () => {

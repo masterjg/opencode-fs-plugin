@@ -139,26 +139,38 @@ work, fan out with `Promise.all` over `tools.fs.*` (or one multi-path call).
 }
 ```
 
-The workspace (project) is read/write/exec, but **network and external paths are
-denied by default**. There are no per-call grants: when the sandbox blocks a
-path or a socket, `fs.exec` asks the matching permission and retries the run.
+The workspace (project) is read/write/exec. **Network is proxy-only by
+default**: every run gets its own egress proxy, no direct route, and only
+allowlisted hosts are reachable. Pre-approve hosts in the plugin options:
 
-- blocked path → `external_directory` for its containing directory; the sandbox
-  then grants read/write there. A missing or `***`-redacted path resolves to the
-  nearest existing ancestor.
-- blocked socket → `fs_exec_network`
+```jsonc
+{
+  "options": {
+    "execNetworkAllowlist": ["registry.npmjs.org", "*.npmjs.org"]
+  }
+}
+```
+
+A host the proxy refuses asks `fs_exec_network` with that host, and the run
+retries with it added. `execNetworkMode: "ip"` opts into all-IP networking after
+the same approval instead. External paths are separate: a blocked path asks
+`external_directory` for its containing directory (or the nearest existing
+ancestor), and the sandbox grants read/write there.
 
 The decision comes from your `opencode.jsonc` rules (`ask`, `allow`, `deny`), the
-same as every other tool. If a path is still blocked after approval, the result
+same as every other tool. If a path stays blocked after approval, the result
 reports `violations` and a `hint`. `fs.exec` also kills every process it started
 when the run ends, including detached descendants.
 
-With network enabled, the policy also opens the resolver sockets used by
-systemd-resolved, nscd, and SSSD (`/run/systemd/resolve`, `/run/nscd`,
-`/var/lib/sss/pipes`), so DNS works across common Linux distributions. Plain
-UDP DNS needs none of them; other Unix sockets stay blocked. On kernels where
-procage cannot scope Unix sockets (T2 below Landlock ABI 9), the policy drops
-them via `no-unix-sockets`; DNS then works only through a plain UDP resolver.
+Proxy mode needs Linux T1 (user namespaces) or macOS. On Linux T2 there is no
+network namespace, so `fs.exec` falls back to all-IP: a socket denial asks
+`fs_exec_network` and retries with `ip`. In `ip` mode the policy also opens the
+resolver sockets used by systemd-resolved, nscd, and SSSD
+(`/run/systemd/resolve`, `/run/nscd`, `/var/lib/sss/pipes`), so DNS works across
+common Linux distributions. Plain UDP DNS needs none of them; other Unix sockets
+stay blocked. On kernels where procage cannot scope Unix sockets (T2 below
+Landlock ABI 9), the policy drops them via `no-unix-sockets`; DNS then works only
+through a plain UDP resolver.
 
 ```js
 await tools.fs.exec({ command: "npm", args: ["install"], timeoutMs: 300000 })
@@ -268,18 +280,18 @@ Add the registry package directly to the plugin list:
 
 ```jsonc
 {
-  "plugins": ["opencode-fs-plugin@1.10.1"]
+  "plugins": ["opencode-fs-plugin@1.11.0"]
 }
 ```
 
-`opencode plugin add opencode-fs-plugin@1.10.1` installs it and writes the config
+`opencode plugin add opencode-fs-plugin@1.11.0` installs it and writes the config
 entry. A bare `opencode-fs-plugin` follows the `latest` tag.
 
 OpenCode manages the package under its cache, so the path is not stable. If you
 also want the packaged skill, install it into a project instead:
 
 ```bash
-npm install opencode-fs-plugin@1.10.1
+npm install opencode-fs-plugin@1.11.0
 ```
 
 ```jsonc
@@ -294,7 +306,7 @@ npm install opencode-fs-plugin@1.10.1
 Download the release tarball, then install it as a normal npm package:
 
 ```bash
-VERSION=1.10.1
+VERSION=1.11.0
 curl -L -o "opencode-fs-plugin-${VERSION}.tgz" \
   "https://github.com/masterjg/opencode-fs-plugin/releases/download/v${VERSION}/opencode-fs-plugin-${VERSION}.tgz"
 npm install "./opencode-fs-plugin-${VERSION}.tgz"
@@ -323,20 +335,20 @@ OpenCode installs it from Git:
 
 ```jsonc
 {
-  "plugins": ["github:masterjg/opencode-fs-plugin#v1.10.1"]
+  "plugins": ["github:masterjg/opencode-fs-plugin#v1.11.0"]
 }
 ```
 
-`opencode plugin add 'github:masterjg/opencode-fs-plugin#v1.10.1'` installs the
+`opencode plugin add 'github:masterjg/opencode-fs-plugin#v1.11.0'` installs the
 same spec and writes the config entry. The equivalent full URL is
-`git+https://github.com/masterjg/opencode-fs-plugin.git#v1.10.1`. A tag is
+`git+https://github.com/masterjg/opencode-fs-plugin.git#v1.11.0`. A tag is
 checked for updates; use a full commit hash to pin it.
 
 Git plugins are installed under OpenCode's cache, so their package path is not
 stable. If you also want the packaged skill, install with npm instead:
 
 ```bash
-npm install "github:masterjg/opencode-fs-plugin#v1.10.1"
+npm install "github:masterjg/opencode-fs-plugin#v1.11.0"
 ```
 
 Then use `./node_modules/opencode-fs-plugin` in `plugins` and
@@ -395,7 +407,8 @@ external targets first require `external_directory` on the absolute boundary.
 `allow always` persists the same patterns as the built-in tools.
 
 `fs.exec` asserts `fs_exec` for the run, then asks `external_directory` for any
-blocked path and `fs_exec_network` for blocked sockets before retrying:
+blocked path and `fs_exec_network` for a refused host (the resource is the host,
+or `*` in ip mode) before retrying:
 
 ```jsonc
 {

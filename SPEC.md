@@ -86,21 +86,28 @@ Aliases are accepted only where noted: `path` for one `paths` element (`stat`,
   Default: `npm`, `npx`, `uv`, `uvx`, `pip`, `pip3`. Override with the plugin
   option `execAllowlist`; an empty list disables execution.
 - The policy is procage `agent_workspace` v3: the project is read/write/exec.
-  Network and external paths are denied by default; there are no per-call
-  grants.
-- When network is enabled, the policy is `ip` (IPv4/IPv6) plus the resolver
-  sockets used by systemd-resolved, nscd, and SSSD. Plain UDP DNS needs none;
-  other Unix sockets stay blocked. Landlock ignores paths absent on the host.
-  On T2 below Landlock ABI 9 the sockets cannot be scoped, so the
-  `no-unix-sockets` relaxation drops them and only UDP DNS remains.
-- Denied access is handled by asserting the configured permission and retrying,
-  bounded to six attempts: a blocked path asks `external_directory` on its
-  containing directory (or the nearest existing ancestor for a missing or
-  redacted path), a blocked socket asks `fs_exec_network`. The `allow`/`ask`/`deny`
-  decision comes from `opencode.jsonc`, not from the tool call.
+  Network is proxy-only and external paths are denied by default; there are no
+  per-call grants.
+- Network is proxy-only by default: the cage gets a procage proxy whose
+  allowlist is the configured `execNetworkAllowlist` plus the hosts approved
+  in this run. A refused host asks `fs_exec_network` with the host as the
+  resource, then the run retries with it added. The decision comes from
+  `opencode.jsonc`.
+- `execNetworkMode: "ip"` opts into all-IP networking after `fs_exec_network`
+  approval. In `ip` mode the policy also opens the resolver sockets used by
+  systemd-resolved, nscd, and SSSD. Plain UDP DNS needs none; other Unix
+  sockets stay blocked. Landlock ignores paths absent on the host. On T2 below
+  Landlock ABI 9 the sockets cannot be scoped, so `no-unix-sockets` drops them
+  and only UDP DNS remains.
+- Proxy mode needs Linux T1 or macOS. On T2 the cage fails with the `net-proxy`
+  gap; `fs.exec` retries in `ip` mode and asks on a socket denial.
+- Denied paths ask `external_directory` on their containing directory (or the
+  nearest existing ancestor for a missing or redacted path). Access handling is
+  bounded to twelve attempts.
 - If a path or socket stays blocked after approval, the result reports
   `violations` plus a `hint`; stderr containing EACCES/EPERM/EROFS marks
-  `sandboxBlocked`.
+  `sandboxBlocked`. Results carry `network`, `networkMode`, `networkHosts`, and
+  `externalPaths`.
 - `args` are passed verbatim. `cwd` resolves inside the sandbox and asserts
   `external_directory` when it leaves the project; the action is `fs_exec`.
 - Timeout defaults to 120000 ms, capped at 600000. Procage ends the run and kills

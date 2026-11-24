@@ -21,6 +21,8 @@ export interface RunSpecOptions {
   maxOutputBytes?: number;
   stdin?: AsyncIterable<Buffer>;
   execAllowlist?: readonly string[];
+  execNetworkMode?: "proxy" | "ip";
+  execNetworkAllowlist?: readonly string[];
 }
 
 export interface RunSpecResult<I> {
@@ -76,6 +78,8 @@ export async function runSpec<I>(
       tmpdir: options.tmpdir ?? os.tmpdir(),
       maxOutputBytes: options.maxOutputBytes ?? 1024 * 1024,
       execAllowlist: options.execAllowlist ?? DEFAULT_EXEC_ALLOWLIST,
+      execNetworkMode: options.execNetworkMode ?? "proxy",
+      execNetworkAllowlist: options.execNetworkAllowlist ?? [],
     },
     input,
     options.stdin === undefined ? {} : { stdin: options.stdin },
