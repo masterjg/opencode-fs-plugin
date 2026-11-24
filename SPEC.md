@@ -67,8 +67,9 @@ Aliases are accepted only where noted: `path` for one `paths` element (`stat`,
 
 - `fs.http_request` supports `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, and `HEAD`
   over `http:`/`https:` only; other schemes fail with `unsupported`.
-- Requests are allowed by default. The permission resource is the request host,
-  and every redirect hop re-asserts `fs_http_request` for the new host.
+- Requests are allowed by default. `fs.http_request` asserts the built-in
+  `webfetch` action with the requested URL as the resource; there is no separate
+  `fs_http_request` action. Every redirect hop re-asserts it for the new URL.
 - Redirects are followed manually: 301/302 rewrite `POST` to `GET`, 303 always
   does, and the hop count is bounded by `maxRedirects`.
 - `output` streams the response to a temporary file in the target directory and

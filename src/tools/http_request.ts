@@ -194,13 +194,13 @@ async function request(
   url: URL,
   options: RequestOptions,
 ): Promise<{ response: Response; finalUrl: string }> {
-  const gate = ctx.permissionFor("fs_http_request");
+  const gate = ctx.permissionFor("webfetch");
   let current = url;
   let method = options.method;
   let body = options.body;
 
   for (let redirects = 0; ; redirects++) {
-    await gate.assertTrusted([current.host]);
+    await gate.assertTrusted([current.toString()]);
     const response = await fetch(current, {
       method,
       headers: options.headers,

@@ -284,18 +284,18 @@ Add the registry package directly to the plugin list:
 
 ```jsonc
 {
-  "plugins": ["opencode-fs-plugin@2.0.0"]
+  "plugins": ["opencode-fs-plugin@3.0.0"]
 }
 ```
 
-`opencode plugin add opencode-fs-plugin@2.0.0` installs it and writes the config
+`opencode plugin add opencode-fs-plugin@3.0.0` installs it and writes the config
 entry. A bare `opencode-fs-plugin` follows the `latest` tag.
 
 OpenCode manages the package under its cache, so the path is not stable. If you
 also want the packaged skill, install it into a project instead:
 
 ```bash
-npm install opencode-fs-plugin@2.0.0
+npm install opencode-fs-plugin@3.0.0
 ```
 
 ```jsonc
@@ -310,7 +310,7 @@ npm install opencode-fs-plugin@2.0.0
 Download the release tarball, then install it as a normal npm package:
 
 ```bash
-VERSION=2.0.0
+VERSION=3.0.0
 curl -L -o "opencode-fs-plugin-${VERSION}.tgz" \
   "https://github.com/masterjg/opencode-fs-plugin/releases/download/v${VERSION}/opencode-fs-plugin-${VERSION}.tgz"
 npm install "./opencode-fs-plugin-${VERSION}.tgz"
@@ -339,20 +339,20 @@ OpenCode installs it from Git:
 
 ```jsonc
 {
-  "plugins": ["github:masterjg/opencode-fs-plugin#v2.0.0"]
+  "plugins": ["github:masterjg/opencode-fs-plugin#v3.0.0"]
 }
 ```
 
-`opencode plugin add 'github:masterjg/opencode-fs-plugin#v2.0.0'` installs the
+`opencode plugin add 'github:masterjg/opencode-fs-plugin#v3.0.0'` installs the
 same spec and writes the config entry. The equivalent full URL is
-`git+https://github.com/masterjg/opencode-fs-plugin.git#v2.0.0`. A tag is
+`git+https://github.com/masterjg/opencode-fs-plugin.git#v3.0.0`. A tag is
 checked for updates; use a full commit hash to pin it.
 
 Git plugins are installed under OpenCode's cache, so their package path is not
 stable. If you also want the packaged skill, install with npm instead:
 
 ```bash
-npm install "github:masterjg/opencode-fs-plugin#v2.0.0"
+npm install "github:masterjg/opencode-fs-plugin#v3.0.0"
 ```
 
 Then use `./node_modules/opencode-fs-plugin` in `plugins` and
@@ -406,7 +406,8 @@ The skill ID is `filesystem`; `@filesystem` loads it explicitly.
 ## Permissions
 
 Every tool asserts an action named after the tool (`fs_cp`, `fs_rm`,
-`fs_pipe` stages, and so on). Internal paths use project-relative resources;
+`fs_pipe` stages, and so on), except `fs.http_request`, which reuses the
+built-in `webfetch` action. Internal paths use project-relative resources;
 external targets first require `external_directory` on the absolute boundary.
 `allow always` persists the same patterns as the built-in tools.
 
@@ -429,19 +430,19 @@ Keep both rules explicit. Plugin actions match OpenCode's base
 `fs_exec_network` or `external_directory` resource is allowed without a prompt,
 not asked.
 
-`fs.http_request` is allowed by default, like `fetch`. Its resource is the
-request host (`example.com:8443`), so requests can be restricted per host:
+`fs.http_request` reuses the built-in `webfetch` permission, with the requested
+URL as the resource, so one rule set covers both tools:
 
 ```jsonc
 {
   "permissions": [
-    { "action": "fs_http_request", "resource": "api.github.com", "effect": "allow" },
-    { "action": "fs_http_request", "resource": "*", "effect": "ask" }
+    { "action": "webfetch", "resource": "*", "effect": "deny" },
+    { "action": "webfetch", "resource": "https://api.github.com/*", "effect": "allow" }
   ]
 }
 ```
 
-Redirects re-assert the rule against each new host.
+Redirects re-assert the rule against each new URL.
 
 Agent rules can use wildcards:
 

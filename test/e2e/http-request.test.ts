@@ -148,8 +148,8 @@ describe("http_request", () => {
     });
     expect((text.result.metadata.headers as Record<string, string>)["x-test"]).toBe("yes");
     expect(text.requests[0]).toMatchObject({
-      action: "fs_http_request",
-      resources: [new URL(base).host],
+      action: "webfetch",
+      resources: [`${base}/text`],
     });
 
     const json = await run({ url: `${base}/json` });
@@ -218,6 +218,10 @@ describe("http_request", () => {
     const followed = await run({ url: `${base}/redirect` });
     expect(followed.result.stdout.toString()).toBe("hello world\n");
     expect(followed.result.metadata.url).toBe(`${base}/text`);
+    expect(followed.requests.map((request) => request.resources[0])).toEqual([
+      `${base}/redirect`,
+      `${base}/text`,
+    ]);
 
     const posted = await run({
       url: `${base}/redirect-303`,
@@ -366,7 +370,7 @@ describe("http_request", () => {
       sb,
     );
     expect(result.result.stdout.toString().trim()).toBe("1");
-    expect(result.requests.map((request) => request.action)).toContain("fs_http_request");
-    expect(result.requests[0]).toMatchObject({ resources: [new URL(base).host] });
+    expect(result.requests.map((request) => request.action)).toContain("webfetch");
+    expect(result.requests[0]).toMatchObject({ resources: [`${base}/text`] });
   });
 });

@@ -482,10 +482,9 @@ hidden inside a pipeline. Do not work around a denied tool with shell.
 `fs_exec_network` with the refused host (or `*` in `ip` mode), then retries.
 There are no per-call grants and no shell.
 
-`fs_http_request` is allowed by default, like `fetch`. Its resource is the
-request host; rules can allow one host and ask or deny the rest. Each redirect
-hop is checked against the new host. Nothing blocks localhost or private
-addresses by default.
+`fs_http_request` reuses the built-in `webfetch` permission with the requested
+URL as the resource, so one rule set covers both; each redirect hop is checked
+against its URL. Nothing blocks localhost or private addresses by default.
 
 ## Errors and output
 
