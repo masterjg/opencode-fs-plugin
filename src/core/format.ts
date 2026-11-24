@@ -34,16 +34,22 @@ export function renderResult(result: ToolResult): RenderedResult {
     return { content: "", metadata };
   }
 
-  metadata.bytes = result.stdout.length;
+  if (metadata.bytes === undefined) metadata.bytes = result.stdout.length;
 
   if (isBinary(result.stdout)) {
     metadata.encoding = "base64";
-    return { content: result.stdout.toString("base64"), metadata };
+    return { content: spillNote(metadata, result.stdout.toString("base64")), metadata };
   }
 
   let content = result.stdout.toString("utf8");
   if (result.stderr) content += `${content.endsWith("\n") ? "" : "\n"}[stderr]\n${result.stderr}`;
-  return { content, metadata };
+  return { content: spillNote(metadata, content), metadata };
+}
+
+function spillNote(metadata: Record<string, unknown>, content: string): string {
+  const outputPath = metadata.outputPath;
+  if (typeof outputPath !== "string") return content;
+  return `${content}${content.endsWith("\n") ? "" : "\n"}[output spilled to ${outputPath}; ${String(metadata.bytes)} bytes]`;
 }
 
 export function renderError(error: FsError, blocked: boolean): RenderedResult {

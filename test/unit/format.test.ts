@@ -44,6 +44,18 @@ describe("format helpers", () => {
     expect(full.content).toBe("abcdef");
     expect(full.metadata.bytes).toBe(6);
 
+    const spilled = renderResult({
+      stdout: Buffer.from("preview"),
+      metadata: { outputPath: "/tmp/spill", bytes: 100 },
+    });
+    expect(spilled.content).toContain("[output spilled to /tmp/spill; 100 bytes]");
+
+    const spilledNewline = renderResult({
+      stdout: Buffer.from("preview\n"),
+      metadata: { outputPath: "/tmp/spill", bytes: 100 },
+    });
+    expect(spilledNewline.content).toContain("preview\n[output spilled to /tmp/spill; 100 bytes]");
+
     const failed = renderResult({ stdout: Buffer.from("x"), exitCode: 1 });
     expect(failed.metadata.ok).toBe(false);
     expect(failed.metadata.exitCode).toBe(1);

@@ -48,7 +48,39 @@ describe("cat, head, tail, wc and tee", () => {
     expect(squeezed.result.stdout.toString()).toBe("a\n\nb\n");
   });
 
-  it("takes heads and tails by lines and bytes", async () => {
+    it("spills a large direct read and returns a preview path", async () => {
+    const { root, sb } = await setup();
+    const content = "x".repeat(1024 * 1024 + 10);
+    await fs.writeFile(path.join(root, "big"), content);
+    const result = await runSpec(catTool, { paths: ["big"] }, sb);
+    const metadata = result.result.metadata as Record<string, unknown>;
+    expect(metadata.spilled).toBe(true);
+    expect(metadata.bytes).toBe(content.length);
+    expect(result.result.stdout.length).toBe(64 * 1024);
+    const outputPath = metadata.outputPath as string;
+    await expect(fs.readFile(outputPath, "utf8")).resolves.toBe(content);
+    await fs.rm(outputPath, { force: true });
+  });
+
+  it("keeps a large pipe in memory", async () => {
+    const { root, sb } = await setup();
+    const content = "x".repeat(1024 * 1024 + 10);
+    await fs.writeFile(path.join(root, "big"), content);
+    const result = await runSpec(
+      pipeTool,
+      {
+        stages: [
+          { tool: "cat", args: { paths: ["big"] } },
+          { tool: "wc", args: { bytes: true } },
+        ],
+      },
+      sb,
+    );
+    expect(result.result.metadata).not.toHaveProperty("outputPath");
+    expect(result.result.stdout.toString()).toContain(String(content.length));
+  });
+
+it("takes heads and tails by lines and bytes", async () => {
     const { root, sb } = await setup();
     await fs.writeFile(path.join(root, "a"), "1\n2\n3\n4\n5\n");
     const head = await runSpec(headTool, { paths: ["a"], lines: 2 }, sb);
