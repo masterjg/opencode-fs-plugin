@@ -190,7 +190,6 @@ export default Plugin.define({
   id: "opencode-fs-plugin",
   async setup(ctx) {
     const rawRoot =
-      (typeof ctx.options?.root === "string" && ctx.options.root) ||
       ctx.location?.project?.canonical ||
       ctx.location?.directory ||
       "";
@@ -204,10 +203,7 @@ export default Plugin.define({
     );
     const execAllowlist = normalizeExecAllowlist(ctx.options?.execAllowlist);
     const execNetworkMode = normalizeExecNetworkMode(ctx.options?.execNetworkMode);
-    const maxOutputBytes =
-      typeof ctx.options?.maxOutputBytes === "number" && ctx.options.maxOutputBytes > 0
-        ? Math.trunc(ctx.options.maxOutputBytes)
-        : DEFAULT_MAX_OUTPUT;
+    const maxOutputBytes = DEFAULT_MAX_OUTPUT;
     const jobs = new JobManager(
       typeof ctx.options?.jobDir === "string" ? { dir: ctx.options.jobDir } : {},
     );

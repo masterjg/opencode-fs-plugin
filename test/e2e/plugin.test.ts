@@ -42,22 +42,20 @@ describe("plugin registration", () => {
     await expect(plugin.setup(harness.context as never)).rejects.toThrow(/sandbox root/);
   });
 
-  it("honors the root option and custom limits", async () => {
+  it("uses the session location as the root, ignoring a root option", async () => {
     const root = await makeRoot();
-    roots.push(root);
-    const harness = makePluginHarness(root, {
-      root,
-      maxOutputBytes: 3,
-      concurrency: 2,
-    });
+    const elsewhere = await makeRoot();
+    roots.push(root, elsewhere);
+    const harness = makePluginHarness(root, { root: elsewhere, maxOutputBytes: 3 });
     await plugin.setup(harness.context as never);
     const mkdir = harness.editor.tools.find((tool) => tool.name === "mkdir");
     const result = (await mkdir?.execute({ path: "one", verbose: true }, makeToolContext())) as {
       content: string;
       metadata: Record<string, unknown>;
     };
-    expect(result.metadata.bytes).toBeGreaterThan(3);
-    expect(result.metadata.truncated).toBe(true);
+    expect(result.metadata.truncated).toBeUndefined();
+    expect(await pathExists(path.join(root, "one"))).toBe(true);
+    expect(await pathExists(path.join(elsewhere, "one"))).toBe(false);
   });
 
   it("rejects invalid concurrency", async () => {
