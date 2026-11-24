@@ -88,6 +88,11 @@ Prefer the canonical names.
 
 ## Pipe
 
+Direct results larger than 1 MiB are written to `/tmp/opencode/fs-spill`
+and returned as a 64 KiB preview plus `outputPath`, `bytes`, and `spilled`
+metadata; the rendered result points at the file. Pipe stages keep whole
+buffers so bytes pass unchanged.
+
 `fs.pipe` joins registered tools through byte buffers. Stages run in order;
 only pipeable tools can be used. Each stage asserts its own `fs_<tool>` action
 before it runs, so a disabled stage cannot be hidden inside a pipe. `output` and

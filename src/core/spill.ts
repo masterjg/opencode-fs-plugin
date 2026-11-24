@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import * as path from "node:path";
+import type { ToolResult } from "./types.js";
 
 /** Bytes kept in memory before a direct call spills to a temporary file. */
 export const SPILL_THRESHOLD = 1024 * 1024;
@@ -95,5 +96,26 @@ export class SpillSink {
       await fs.rm(this.filePath, { force: true }).catch(() => undefined);
       this.filePath = undefined;
     }
+  }
+}
+
+/**
+ * Spill a finished tool result that is larger than the threshold. Tools that
+ * already streamed into a sink carry `outputPath` and pass through.
+ */
+export async function spillResult(result: ToolResult, name: string, tmpdir: string): Promise<ToolResult> {
+  if (result.stdout.length <= SPILL_THRESHOLD || result.metadata?.outputPath !== undefined) return result;
+  const sink = new SpillSink(spillDirectory(tmpdir), name, false, 0);
+  try {
+    await sink.write(result.stdout);
+    const out = await sink.finish();
+    return {
+      ...result,
+      stdout: out.preview,
+      metadata: { ...result.metadata, bytes: out.bytes, outputPath: out.path, spilled: true },
+    };
+  } catch (error) {
+    await sink.abort();
+    throw error;
   }
 }

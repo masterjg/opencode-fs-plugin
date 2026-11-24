@@ -12,6 +12,7 @@ import { JobManager } from "./core/jobs.js";
 import { PermissionGate, type PermissionAssert } from "./core/permissions.js";
 import { clampConcurrency } from "./core/parallel.js";
 import { Sandbox } from "./core/sandbox.js";
+import { spillResult } from "./core/spill.js";
 import { parseSchema } from "./core/schema.js";
 import type { ToolSpec } from "./core/types.js";
 import { arTool } from "./tools/ar.js";
@@ -254,7 +255,7 @@ export default Plugin.define({
                   parsed,
                   {},
                 );
-                return renderResult(result);
+                return renderResult(await spillResult(result, spec.name, os.tmpdir()));
               };
 
               if ((parsed as { background?: unknown }).background === true) {

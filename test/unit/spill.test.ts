@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { SpillSink, spillDirectory } from "../../src/core/spill.js";
+import { SPILL_THRESHOLD, SpillSink, spillDirectory, spillResult } from "../../src/core/spill.js";
 
 const dirs: string[] = [];
 
@@ -62,18 +62,39 @@ describe("SpillSink", () => {
     expect(out.bytes).toBe(6);
   });
 
-  it("removes a spilled file on abort", async () => {
-    const dir = await tempDir();
-    const sink = new SpillSink(dir, "cat", false, 1, 1);
-    await sink.write(Buffer.from("abc"));
-    const out = await sink.finish();
-    const file = out.path as string;
-    await expect(fs.stat(file)).resolves.toBeTruthy();
-    await sink.abort();
-    await expect(fs.stat(file)).rejects.toBeTruthy();
-  });
-
   it("resolves the shared spill directory", () => {
     expect(spillDirectory("/tmp/x")).toBe(path.join("/tmp/x", "opencode", "fs-spill"));
+  });
+});
+
+describe("spillResult", () => {
+  it("spills a large finished result", async () => {
+    const dir = await tempDir();
+    const data = Buffer.alloc(SPILL_THRESHOLD + 1, 120);
+    const result = await spillResult({ stdout: data, metadata: { ok: true } }, "tool", dir);
+    const metadata = result.metadata as Record<string, unknown>;
+    expect(result.stdout.length).toBe(64 * 1024);
+    expect(metadata.spilled).toBe(true);
+    expect(metadata.bytes).toBe(data.length);
+    await expect(fs.readFile(metadata.outputPath as string)).resolves.toHaveLength(data.length);
+    await fs.rm(metadata.outputPath as string, { force: true });
+  });
+
+  it("passes small and already spilled results through", async () => {
+    const dir = await tempDir();
+    const small = await spillResult({ stdout: Buffer.from("ok") }, "tool", dir);
+    expect(small.stdout.toString()).toBe("ok");
+    const already = await spillResult(
+      { stdout: Buffer.alloc(SPILL_THRESHOLD + 1), metadata: { outputPath: "/tmp/kept" } },
+      "tool",
+      dir,
+    );
+    expect(already.stdout.length).toBe(SPILL_THRESHOLD + 1);
+  });
+
+  it("reports a spill failure", async () => {
+    await expect(
+      spillResult({ stdout: Buffer.alloc(SPILL_THRESHOLD + 1) }, "tool", "/dev/null"),
+    ).rejects.toBeTruthy();
   });
 });

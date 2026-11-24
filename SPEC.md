@@ -126,6 +126,14 @@ Aliases are accepted only where noted: `path` for one `paths` element (`stat`,
   The trust-handoff class is waived so package tools can update workspace files
   such as `.git/hooks`; the executable allowlist remains the trust boundary.
 
+## Large output
+
+A direct tool result larger than 1 MiB is written to
+`/tmp/opencode/fs-spill/<tool>-<uuid>.out`. The tool returns a 64 KiB preview,
+`outputPath`, `bytes`, and `spilled: true`, and `renderResult` appends a note
+with the path. `fs.cat` streams into the spill sink; other tools spill their
+finished result. Pipe stages stay in memory so bytes pass between stages.
+
 ## Deliberate gaps
 
 These are not implemented:
