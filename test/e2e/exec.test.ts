@@ -535,7 +535,13 @@ describe("exec sandbox helpers", () => {
       { sandbox: sb } as never,
       outcome({
         stderr: Buffer.from("EACCES: permission denied, open '/home/a/x'\nEACCES: open '/home/c/***'\n"),
-        violations: [violation("/home/b"), violation("/home/a/x"), violation(`${root}/inside`)],
+        violations: [
+          violation("/home/b"),
+          violation("/home/a/x"),
+          violation(`${root}/inside`),
+          { ...violation(""), target: null },
+          violation("family AF_INET"),
+        ],
       }),
     );
     expect(found.sort()).toEqual(["/home/a/x", "/home/b", "/home/c"]);
