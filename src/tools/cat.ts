@@ -5,9 +5,8 @@
 
 import { Type, type Static } from "@sinclair/typebox";
 import { pathsFrom } from "../core/aliases.js";
-import { SpillSink, dynamicSpillThreshold, spillDirectory } from "../core/spill.js";
-import { inputStream, lines } from "../core/stream.js";
-import type { ToolSpec } from "../core/types.js";
+import { collect, inputStream, lines } from "../core/stream.js";
+import { textResult, type ToolSpec } from "../core/types.js";
 
 const Schema = Type.Object(
   {
@@ -36,52 +35,38 @@ export const catTool: ToolSpec<Input> = {
     const paths = pathsFrom(input) ?? [];
     const targets = await resolvePaths(ctx, paths);
     const stream = inputStream(targets.map((entry) => entry.full), io.stdin);
-    const sink = new SpillSink(spillDirectory(ctx.tmpdir), "cat", io.piped === true, ctx.spillThreshold ?? dynamicSpillThreshold());
-    try {
-      if (
-        input.number !== true &&
-        input.numberNonBlank !== true &&
-        input.squeezeBlank !== true &&
-        input.showEnds !== true &&
-        input.showTabs !== true &&
-        input.showNonPrinting !== true
-      ) {
-        for await (const chunk of stream) await sink.write(chunk);
-      } else {
-        let number = 0;
-        let blank = false;
-        for await (const line of lines(stream)) {
-          if (input.squeezeBlank === true && line.text === "") {
-            if (blank) continue;
-            blank = true;
-          } else {
-            blank = false;
-          }
-          let text = line.text;
-          if (input.showTabs === true || input.showNonPrinting === true) text = text.replaceAll("\t", "^I");
-          if (input.showNonPrinting === true) text = visible(text);
-          if (input.showEnds === true) text += "$";
-          if ((input.number === true || input.numberNonBlank === true) && (input.numberNonBlank !== true || text.length > 0)) {
-            number++;
-            text = `${String(number).padStart(6)}  ${text}`;
-          }
-          await sink.write(Buffer.from(text + (line.newline ? "\n" : "")));
-        }
-      }
-      const out = await sink.finish();
-      return {
-        stdout: out.preview,
-        exitCode: 0,
-        metadata: {
-          paths,
-          bytes: out.bytes,
-          ...(out.path === undefined ? {} : { outputPath: out.path, spilled: true }),
-        },
-      };
-    } catch (error) {
-      await sink.abort();
-      throw error;
+    if (
+      input.number !== true &&
+      input.numberNonBlank !== true &&
+      input.squeezeBlank !== true &&
+      input.showEnds !== true &&
+      input.showTabs !== true &&
+      input.showNonPrinting !== true
+    ) {
+      return { stdout: await collect(stream), exitCode: 0, metadata: { paths } };
     }
+
+    const output: string[] = [];
+    let number = 0;
+    let blank = false;
+    for await (const line of lines(stream)) {
+      if (input.squeezeBlank === true && line.text === "") {
+        if (blank) continue;
+        blank = true;
+      } else {
+        blank = false;
+      }
+      let text = line.text;
+      if (input.showTabs === true || input.showNonPrinting === true) text = text.replaceAll("\t", "^I");
+      if (input.showNonPrinting === true) text = visible(text);
+      if (input.showEnds === true) text += "$";
+      if ((input.number === true || input.numberNonBlank === true) && (input.numberNonBlank !== true || text.length > 0)) {
+        number++;
+        text = `${String(number).padStart(6)}  ${text}`;
+      }
+      output.push(text + (line.newline ? "\n" : ""));
+    }
+    return textResult(output.join(""), { paths });
   },
 };
 

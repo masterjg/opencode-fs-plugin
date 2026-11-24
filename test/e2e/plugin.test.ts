@@ -46,7 +46,7 @@ describe("plugin registration", () => {
     const root = await makeRoot();
     const elsewhere = await makeRoot();
     roots.push(root, elsewhere);
-    const harness = makePluginHarness(root, { root: elsewhere, spillThresholdBytes: 1024 });
+    const harness = makePluginHarness(root, { root: elsewhere });
     await plugin.setup(harness.context as never);
     const mkdir = harness.editor.tools.find((tool) => tool.name === "mkdir");
     const result = (await mkdir?.execute({ path: "one", verbose: true }, makeToolContext())) as {

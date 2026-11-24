@@ -12,7 +12,6 @@ import { JobManager } from "./core/jobs.js";
 import { PermissionGate, type PermissionAssert } from "./core/permissions.js";
 import { clampConcurrency } from "./core/parallel.js";
 import { Sandbox } from "./core/sandbox.js";
-import { normalizeSpillThreshold, spillResult } from "./core/spill.js";
 import { parseSchema } from "./core/schema.js";
 import type { ToolSpec } from "./core/types.js";
 import { arTool } from "./tools/ar.js";
@@ -201,7 +200,6 @@ export default Plugin.define({
       typeof ctx.options?.concurrency === "number" ? ctx.options.concurrency : undefined,
     );
     const execAllowlist = normalizeExecAllowlist(ctx.options?.execAllowlist);
-    const spillThreshold = normalizeSpillThreshold(ctx.options?.spillThresholdBytes);
     const execNetworkMode = normalizeExecNetworkMode(ctx.options?.execNetworkMode);
     const jobs = new JobManager(
       typeof ctx.options?.jobDir === "string" ? { dir: ctx.options.jobDir } : {},
@@ -252,12 +250,11 @@ export default Plugin.define({
                     tmpdir: os.tmpdir(),
                     execAllowlist,
                     execNetworkMode,
-                    ...(spillThreshold === undefined ? {} : { spillThreshold }),
                   },
                   parsed,
                   {},
                 );
-                return renderResult(await spillResult(result, spec.name, os.tmpdir(), spillThreshold));
+                return renderResult(result);
               };
 
               if ((parsed as { background?: unknown }).background === true) {

@@ -126,15 +126,6 @@ Aliases are accepted only where noted: `path` for one `paths` element (`stat`,
   The trust-handoff class is waived so package tools can update workspace files
   such as `.git/hooks`; the executable allowlist remains the trust boundary.
 
-## Large output
-
-A direct tool result larger than the spill threshold is written to
-`/tmp/opencode/fs-spill/<tool>-<uuid>.out`. The threshold is a quarter of free
-memory, clamped to 16 MiB..512 MiB, or the `spillThresholdBytes` plugin option.
-The tool returns a 64 KiB preview, `outputPath`, `bytes`, and `spilled: true`,
-and `renderResult` appends a note with the path. `fs.cat` streams into the sink;
-other tools spill their finished result. Pipe stages stay in memory.
-
 ## Deliberate gaps
 
 These are not implemented:

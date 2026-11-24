@@ -88,13 +88,6 @@ Prefer the canonical names.
 
 ## Pipe
 
-Direct results larger than the spill threshold are written to
-`/tmp/opencode/fs-spill` and returned as a 64 KiB preview plus `outputPath`,
-`bytes`, and `spilled` metadata; the rendered result points at the file. The
-threshold defaults to a quarter of free memory, clamped between 16 MiB and
-512 MiB; set `spillThresholdBytes` in the plugin options to fix it. Pipe stages
-keep whole buffers so bytes pass unchanged.
-
 `fs.pipe` joins registered tools through byte buffers. Stages run in order;
 only pipeable tools can be used. Each stage asserts its own `fs_<tool>` action
 before it runs, so a disabled stage cannot be hidden inside a pipe. `output` and

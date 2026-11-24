@@ -21,7 +21,6 @@ export interface RunSpecOptions {
   stdin?: AsyncIterable<Buffer>;
   execAllowlist?: readonly string[];
   execNetworkMode?: "proxy" | "ip";
-  spillThresholdBytes?: number;
 }
 
 export interface RunSpecResult<I> {
@@ -77,7 +76,6 @@ export async function runSpec<I>(
       tmpdir: options.tmpdir ?? os.tmpdir(),
       execAllowlist: options.execAllowlist ?? DEFAULT_EXEC_ALLOWLIST,
       execNetworkMode: options.execNetworkMode ?? "proxy",
-      ...(options.spillThresholdBytes === undefined ? {} : { spillThreshold: options.spillThresholdBytes }),
     },
     input,
     options.stdin === undefined ? {} : { stdin: options.stdin },
