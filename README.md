@@ -89,7 +89,9 @@ Prefer the canonical names.
 ## Pipe
 
 `fs.pipe` joins registered tools through byte buffers. Stages run in order;
-only pipeable tools can be used. `output` and `append` behave like a final
+only pipeable tools can be used. Each stage asserts its own `fs_<tool>` action
+before it runs, so a disabled stage cannot be hidden inside a pipe. `output` and
+`append` behave like a final
 `tee`.
 
 ```js

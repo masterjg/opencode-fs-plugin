@@ -169,7 +169,9 @@ These are not implemented:
 - `sort -k` accepts field/character ranges with modifiers `bdfghiMnrV`.
 - `tar`/`zip` extraction rejects path traversal and escaping links.
 - `pipe` passes raw bytes and only accepts registered pipeable stages; `tar` and
-  `zip` are sink stages. It is sequential and not a batch primitive: independent
+  `zip` are sink stages. Each stage asserts its own `fs_<tool>` action before it
+  runs, so per-tool denial also applies inside a pipe. It is sequential and not a
+  batch primitive: independent
   calls fan out with `Promise.all` in `execute`.
 
 ## Coverage policy

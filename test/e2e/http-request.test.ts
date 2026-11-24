@@ -370,7 +370,11 @@ describe("http_request", () => {
       sb,
     );
     expect(result.result.stdout.toString().trim()).toBe("1");
-    expect(result.requests.map((request) => request.action)).toContain("webfetch");
-    expect(result.requests[0]).toMatchObject({ resources: [`${base}/text`] });
+    expect(result.requests[0]).toMatchObject({ action: "fs_http_request", resources: ["*"] });
+    expect(
+      result.requests.some(
+        (request) => request.action === "webfetch" && request.resources[0] === `${base}/text`,
+      ),
+    ).toBe(true);
   });
 });
