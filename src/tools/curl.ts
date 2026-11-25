@@ -65,12 +65,12 @@ interface Checksum {
   digest: string;
 }
 
-export const httpRequestTool: ToolSpec<Input> = {
-  name: "http_request",
+export const curlTool: ToolSpec<Input> = {
+  name: "curl",
   description:
     "Make an HTTP(S) request and either return the body or stream it to a file (`output`). " +
-    "Supports methods, headers, a text or JSON body, redirects, timeouts, `maxBytes`, and " +
-    "`checksum` verification. Usable as a `pipe` source.",
+    "Uses structured options, not curl CLI flags. Supports methods, headers, a text or JSON " +
+    "body, redirects, timeouts, `maxBytes`, and `checksum` verification. Usable as a `pipe` source.",
   schema: Schema,
   pipeable: "source",
   mutates: true,

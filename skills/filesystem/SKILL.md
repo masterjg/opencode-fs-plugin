@@ -24,7 +24,7 @@ With `execute` allowed, call it as `tools.fs.<command>`; agents without
 | Metadata/predicate search | `fs.find` |
 | Regex substitution or in-place edit | `fs.sed` |
 | Recoverable deletion | `fs.trash` |
-| HTTP(S) fetch, API call, or file download | `fs.http_request` |
+| `curl` fetch, API call, or file download | `fs.curl` |
 | Allowlisted package CLI | `fs.exec` (no shell; default npm/npx/uv/uvx/pip/pip3) |
 | Many independent fs calls | one multi-path call, else `Promise.all` in `execute` |
 | Sequential byte pipeline | `fs.pipe` |
@@ -53,7 +53,7 @@ what `fs.stat`, `fs.ls`, `fs.hash`, `fs.diff`, or `fs.cat` can confirm.
 | Temp and trash | `fs.mktemp`, `fs.trash` |
 | Text filters | `fs.cat`, `fs.head`, `fs.tail`, `fs.grep`, `fs.sed`, `fs.sort`, `fs.uniq`, `fs.cut`, `fs.tr`, `fs.wc`, `fs.tee`, `fs.tac`, `fs.rev`, `fs.nl`, `fs.paste`, `fs.comm`, `fs.split`, `fs.shuf`, `fs.fold` |
 | Compose filters | `fs.pipe` |
-| HTTP(S) | `fs.http_request` (`output`, `checksum`, `maxBytes`, `json`) |
+| curl | `fs.curl` (`output`, `checksum`, `maxBytes`, `json`) |
 | Allowlisted package CLI | `fs.exec` (`command`, `args`, `cwd`, `stdin`, `timeoutMs`) |
 | Processes | `fs.ps`, `fs.pgrep`, `fs.kill` (`dryRun` available) |
 | System info | `fs.id`, `fs.uname`, `fs.uptime`, `fs.date`, `fs.findmnt`, `fs.mountpoint` |
@@ -98,7 +98,7 @@ host drops unknown fields, so a name typo runs with defaults.
 | `input` + `output` | `fs.dd` (`blockSize`, `count`, `skip`, `seek`) |
 | `content` | `fs.tee` when there is no stdin |
 | `paths` + optional `keep`/`force`/`stdout`/`level`/`suffix` | `fs.gzip`, `fs.gunzip` |
-| `url` + optional `output` | `fs.http_request` |
+| `url` + optional `output` | `fs.curl` |
 | `stages` + optional `input`/`output` | `fs.pipe` |
 | `command` + `args` + optional `cwd`/`stdin`/`timeoutMs` | `fs.exec` |
 
@@ -290,15 +290,15 @@ await tools.fs.pipe({
 | `output` | Write final stdout to a file (final `tee`) |
 | `append` | Append to `output` instead of overwriting |
 
-The first stage must be a source (`cat`, `http_request`, `dd`, or a path-reading
+The first stage must be a source (`cat`, `curl`, `dd`, or a path-reading
 text tool such as `tac`, `rev`, `nl`, `base64`, `od`, `strings`) or receive
 `input`. A filter first (`grep`, `sort`, `head`, `wc`) emits
 `ERROR: no input files and no stdin` as pipeline data. Archive writers (`tar`,
 `zip`, `cpio`) emit nothing downstream, so put them last. `wc` and `hash` also
 emit their result text, so they can end a chain or feed a later stage.
 
-Stages exchange whole buffers. Set `maxBytes` on `http_request`; for large
-downloads prefer `fs.http_request({ output })`, which streams to disk. In-memory
+Stages exchange whole buffers. Set `maxBytes` on `curl`; for large
+downloads prefer `fs.curl({ output })`, which streams to disk. In-memory
 text is allowed:
 
 ```js
@@ -311,7 +311,7 @@ await tools.fs.pipe({
 ```js
 await tools.fs.pipe({
   stages: [
-    { tool: "http_request", args: { url: "https://example.com/app.log", maxBytes: 8_000_000 } },
+    { tool: "curl", args: { url: "https://example.com/app.log", maxBytes: 8_000_000 } },
     { tool: "grep", args: { pattern: "ERROR" } },
   ],
 })
@@ -436,8 +436,8 @@ await tools.fs.cpio({ mode: "create", archive: "bundle.cpio", paths: ["dist"] })
 await tools.fs.ar({ mode: "list", archive: "lib.a" })
 
 // API call, then a verified download
-await tools.fs.http_request({ url: "https://api.github.com/repos/owner/repo/releases/latest" })
-await tools.fs.http_request({
+await tools.fs.curl({ url: "https://api.github.com/repos/owner/repo/releases/latest" })
+await tools.fs.curl({
   url: "https://example.com/tool-1.0.0.tgz",
   output: "tool-1.0.0.tgz",
   checksum: "sha256:<hex>",
@@ -461,12 +461,12 @@ await tools.fs.http_request({
 - `fs.tail` has bounded `follow` only; unbounded `tail -f` is not supported.
 - `cp -a` preserves mode and timestamps but not ACLs or xattrs.
 - `fs.tar`/`fs.zip` create from `input` or stdin; extraction is file-backed.
-- `fs.http_request` is HTTP(S) only: no FTP/SFTP, cookie jars, client
+- `fs.curl` is HTTP(S) only: no FTP/SFTP, cookie jars, client
   certificates, proxies, multipart uploads, or resumable downloads.
 - Only `fs.exec` starts processes, and only exact allowlisted names; `nohup`,
   `setsid`, and `timeout` wrappers are unavailable. `fs.kill` rejects pid 0,
   pid 1, and process groups.
-- No ICMP ping; use `fs.http_request` or a TCP port check. No ACL, xattr, or
+- No ICMP ping; use `fs.curl` or a TCP port check. No ACL, xattr, or
   `chattr` support. `rsync`/`scp` are out of scope; use the SSH MCP.
 - `fs.comm` expects sorted input. `fs.ar` uses GNU short names (16 bytes max);
   `fs.cpio` reads and writes newc only. `fs.dd` has no conversion flags.
@@ -513,7 +513,7 @@ hidden inside a pipeline. Do not work around a denied tool with shell.
 There is no `*` fallback and no direct-IP mode; networking that cannot use the
 relay is disabled. There are no per-call grants and no shell.
 
-`fs_http_request` reuses the built-in `webfetch` permission with the requested
+`fs_curl` reuses the built-in `webfetch` permission with the requested
 URL as the resource, so one rule set covers both; each redirect hop is checked
 against its URL. Nothing blocks localhost or private addresses by default.
 

@@ -22,6 +22,7 @@ import { chownTool } from "./tools/chown.js";
 import { commTool } from "./tools/comm.js";
 import { cpTool } from "./tools/cp.js";
 import { cpioTool } from "./tools/cpio.js";
+import { curlTool } from "./tools/curl.js";
 import { cutTool } from "./tools/cut.js";
 import { dateTool } from "./tools/date.js";
 import { ddTool } from "./tools/dd.js";
@@ -37,7 +38,6 @@ import { grepTool } from "./tools/grep.js";
 import { gunzipTool, gzipTool } from "./tools/gzip.js";
 import { hashTool } from "./tools/hash.js";
 import { headTool } from "./tools/head.js";
-import { httpRequestTool } from "./tools/http_request.js";
 import { idTool } from "./tools/id.js";
 import { killTool } from "./tools/kill.js";
 import { lnTool } from "./tools/ln.js";
@@ -88,6 +88,7 @@ const TOOLS: readonly AnyTool[] = [
   commTool,
   cpTool,
   cpioTool,
+  curlTool,
   cutTool,
   dateTool,
   ddTool,
@@ -104,7 +105,6 @@ const TOOLS: readonly AnyTool[] = [
   gzipTool,
   hashTool,
   headTool,
-  httpRequestTool,
   idTool,
   killTool,
   lnTool,

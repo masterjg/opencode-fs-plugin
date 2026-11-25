@@ -11,6 +11,7 @@ import { textResult, type ToolSpec, type ToolResult } from "../core/types.js";
 import { base64Tool } from "./base64.js";
 import { catTool } from "./cat.js";
 import { cpioTool } from "./cpio.js";
+import { curlTool } from "./curl.js";
 import { cutTool } from "./cut.js";
 import { ddTool } from "./dd.js";
 import { execTool } from "./exec.js";
@@ -19,7 +20,6 @@ import { grepTool } from "./grep.js";
 import { gunzipTool, gzipTool } from "./gzip.js";
 import { hashTool } from "./hash.js";
 import { headTool } from "./head.js";
-import { httpRequestTool } from "./http_request.js";
 import { nlTool } from "./nl.js";
 import { odTool } from "./od.js";
 import { pasteTool } from "./paste.js";
@@ -60,9 +60,9 @@ type AnyTool = ToolSpec<any>;
 
 const REGISTRY: ReadonlyMap<string, AnyTool> = new Map(
   [
-    base64Tool, catTool, cpioTool, cutTool, ddTool, execTool,
-    foldTool, grepTool, gunzipTool, gzipTool, hashTool, headTool,
-    httpRequestTool, nlTool, odTool, pasteTool, revTool, sedTool,
+    base64Tool, catTool, cpioTool, curlTool, cutTool, ddTool,
+    execTool, foldTool, grepTool, gunzipTool, gzipTool, hashTool,
+    headTool, nlTool, odTool, pasteTool, revTool, sedTool,
     shufTool, sortTool, stringsTool, tacTool, tailTool, tarTool,
     teeTool, trTool, uniqTool, wcTool, zipTool,
   ].map((tool) => [tool.name, tool]),

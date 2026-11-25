@@ -65,11 +65,11 @@ Aliases are accepted only where noted: `path` for one `paths` element (`stat`,
 
 ## HTTP requests
 
-- `fs.http_request` supports `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, and `HEAD`
+- `fs.curl` supports `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, and `HEAD`
   over `http:`/`https:` only; other schemes fail with `unsupported`.
-- Requests are allowed by default. `fs.http_request` asserts the built-in
+- Requests are allowed by default. `fs.curl` asserts the built-in
   `webfetch` action with the requested URL as the resource; there is no separate
-  `fs_http_request` action. Every redirect hop re-asserts it for the new URL.
+  `fs_curl` action. Every redirect hop re-asserts it for the new URL.
 - Redirects are followed manually: 301/302 rewrite `POST` to `GET`, 303 always
   does, and the hop count is bounded by `maxRedirects`.
 - `output` streams the response to a temporary file in the target directory and
@@ -171,7 +171,7 @@ These are not implemented:
 - cross-filesystem `trash`; use `rm` or a mount-trash helper
 - curl protocols beyond HTTP(S), cookie jars, client certificates, proxies,
   multipart uploads, and resumable/range downloads
-- true streaming through pipe stages; `http_request` buffers unless `output` is set
+- true streaming through pipe stages; `curl` buffers unless `output` is set
 - worker threads for CPU-bound stages (`sort`, `sed`, text diffing)
 - parallel member reads inside a single `tar`/`zip` archive; member order is fixed
 - process start beyond the allowlisted `exec` tool; `nohup`, `setsid`, and

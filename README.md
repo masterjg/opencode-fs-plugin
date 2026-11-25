@@ -18,6 +18,7 @@ unit, end-to-end and coverage tests.
 | `comm` | `fs.comm` | `suppress1`/`2`/`3`, `outputDelimiter` |
 | `cp` | `fs.cp` | `recursive`, `archive`, `force`, `noClobber`, `update`, `preserve`, `dereference`, `verbose` |
 | `cpio` | `fs.cpio` | `create`/`list`/`extract` (newc), `directory`, `members`, `input`, `member`, `verbose` |
+| `curl` | `fs.curl` | `url`, `method`, `headers`, `body`, `json`, `output`, `checksum`, `maxBytes`, `timeoutMs`, `failOnError`, `followRedirects`, `maxRedirects` |
 | `cut` | `fs.cut` | `fields`, `characters`, `bytes`, `delimiter`, `outputDelimiter`, `complement`, `onlyDelimited` |
 | `date` | `fs.date` | `value`, `utc`, `format` (`iso`, `unix`, `rfc`, `date`) |
 | `dd` | `fs.dd` | `input`, `output`, `blockSize`, `count`, `skip`, `seek`, `status` |
@@ -34,7 +35,6 @@ unit, end-to-end and coverage tests.
 | `gzip` | `fs.gzip` | `keep`, `force`, `stdout`, `level` |
 | `sha256sum`/`md5sum` | `fs.hash` | `algorithm`, `tag`; hashes files or stdin |
 | `head` | `fs.head` | `lines`, `skip`, `bytes`, `quiet`, `verbose` |
-| HTTP(S) | `fs.http_request` | `url`, `method`, `headers`, `body`, `json`, `output`, `checksum`, `maxBytes`, `timeoutMs`, `failOnError`, `followRedirects`, `maxRedirects` |
 | `id` | `fs.id` | `only` (`user`, `group`, `groups`) |
 | jobs | `fs.job` | `id`, `wait`, `cancel`, `list`, `timeoutMs` |
 | `kill` | `fs.kill` | `pids`, `signal`, `dryRun`; pid 0/1 and groups rejected |
@@ -109,19 +109,19 @@ await tools.fs.pipe({
 Filter stages: `base64`, `exec`, `fold`, `nl`, `od`, `paste`, `rev`, `shuf`, `tac`,
 and `strings`; `dd` and `cpio` are source/sink stages like `tar`.
 
-`fs.http_request` is a pipe source, so network data can feed the same stages:
+`fs.curl` is a pipe source, so network data can feed the same stages:
 
 ```js
 await tools.fs.pipe({
   stages: [
-    { tool: "http_request", args: { url: "https://example.com/app.log" } },
+    { tool: "curl", args: { url: "https://example.com/app.log" } },
     { tool: "grep", args: { pattern: "ERROR" } },
   ],
 })
 ```
 
 Pipe stages exchange whole buffers, so use `maxBytes` for large responses. For
-large downloads prefer `fs.http_request({ output })`, which streams to disk.
+large downloads prefer `fs.curl({ output })`, which streams to disk.
 
 There is no shell, redirection operator, nested pipe, or arbitrary `find -exec`.
 
@@ -447,7 +447,7 @@ The skill ID is `filesystem`; `@filesystem` loads it explicitly.
 ## Permissions
 
 Every tool asserts an action named after the tool (`fs_cp`, `fs_rm`,
-`fs_pipe` stages, and so on), except `fs.http_request`, which reuses the
+`fs_pipe` stages, and so on), except `fs.curl`, which reuses the
 built-in `webfetch` action. Internal paths use project-relative resources;
 external targets first require `external_directory` on the absolute boundary.
 `allow always` saves the exact resources the call asserted — project-relative
@@ -474,7 +474,7 @@ Keep both rules explicit. Plugin actions match OpenCode's base
 `fs_exec_network` or `external_directory` resource is allowed without a prompt,
 not asked.
 
-`fs.http_request` reuses the built-in `webfetch` permission, with the requested
+`fs.curl` reuses the built-in `webfetch` permission, with the requested
 URL as the resource, so one rule set covers both tools:
 
 ```jsonc
@@ -520,7 +520,7 @@ when only some agents should be shell-free.
   project requires `external_directory`; removing or renaming the link itself is
   internal.
 - Archive extraction rejects absolute paths, `..`, and escaping symlinks.
-- `http_request` accepts only `http:` and `https:`, keeps TLS verification on,
+- `curl` accepts only `http:` and `https:`, keeps TLS verification on,
   re-checks permissions on redirect hops, and writes downloads to a temporary
   file before renaming. Localhost and private addresses are not blocked by
   default.

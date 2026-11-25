@@ -10,7 +10,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import * as path from "node:path";
 import type { FsError } from "../../src/core/errors.js";
 import { Sandbox } from "../../src/core/sandbox.js";
-import { httpRequestTool } from "../../src/tools/http_request.js";
+import { curlTool } from "../../src/tools/curl.js";
 import { pipeTool } from "../../src/tools/pipe.js";
 import { makeRoot, runSpec } from "../helpers.js";
 
@@ -125,18 +125,18 @@ function route(request: IncomingMessage, response: ServerResponse): void {
 }
 
 async function setup() {
-  const root = await makeRoot("fs-http-request-");
+  const root = await makeRoot("fs-curl-");
   roots.push(root);
   return { root, sb: await Sandbox.create(root) };
 }
 
 async function run(input: Record<string, unknown>) {
   const { root, sb } = await setup();
-  const result = await runSpec(httpRequestTool, input, sb);
+  const result = await runSpec(curlTool, input, sb);
   return { root, ...result };
 }
 
-describe("http_request", () => {
+describe("curl", () => {
   it("fetches text, json and binary bodies", async () => {
     const text = await run({ url: `${base}/text` });
     expect(text.result.stdout.toString()).toBe("hello world\n");
@@ -167,7 +167,7 @@ describe("http_request", () => {
     const { root, sb } = await setup();
     await fs.mkdir(path.join(root, "downloads"));
     const download = await runSpec(
-      httpRequestTool,
+      curlTool,
       { url: `${base}/text`, output: "downloads/text.txt", checksum: `sha256:${digest}` },
       sb,
     );
@@ -176,7 +176,7 @@ describe("http_request", () => {
     expect(download.result.metadata).toMatchObject({ bytes: 12, sha256: digest });
 
     const bare = await runSpec(
-      httpRequestTool,
+      curlTool,
       { url: `${base}/text`, output: "bare.txt", checksum: digest },
       sb,
     );
@@ -185,7 +185,7 @@ describe("http_request", () => {
 
     const md5 = crypto.createHash("md5").update("hello world\n").digest("hex");
     const other = await runSpec(
-      httpRequestTool,
+      curlTool,
       { url: `${base}/text`, output: "md5.txt", checksum: `md5:${md5}` },
       sb,
     );
@@ -193,7 +193,7 @@ describe("http_request", () => {
 
     await expect(
       runSpec(
-        httpRequestTool,
+        curlTool,
         { url: `${base}/text`, output: "mismatch.txt", checksum: "sha256:deadbeef" },
         sb,
       ),
@@ -206,7 +206,7 @@ describe("http_request", () => {
     await fs.mkdir(path.join(root, "out"));
     await expect(
       runSpec(
-        httpRequestTool,
+        curlTool,
         { url: `${base}/big`, output: "out/big.txt", maxBytes: 5 },
         sb,
       ),
@@ -335,7 +335,7 @@ describe("http_request", () => {
     const controller = new AbortController();
     setTimeout(() => controller.abort(), 50);
     await expect(
-      runSpec(httpRequestTool, { url: `${base}/slow`, timeoutMs: 5_000 }, sb, {
+      runSpec(curlTool, { url: `${base}/slow`, timeoutMs: 5_000 }, sb, {
         signal: controller.signal,
       }),
     ).rejects.toMatchObject({ code: "interrupted" });
@@ -343,7 +343,7 @@ describe("http_request", () => {
     const aborted = new AbortController();
     aborted.abort();
     await expect(
-      runSpec(httpRequestTool, { url: `${base}/text` }, sb, { signal: aborted.signal }),
+      runSpec(curlTool, { url: `${base}/text` }, sb, { signal: aborted.signal }),
     ).rejects.toMatchObject({ code: "interrupted" });
 
     await expect(run({ url: "http://127.0.0.1:1/" })).rejects.toMatchObject({ code: "io" });
@@ -352,7 +352,7 @@ describe("http_request", () => {
   it("propagates permission denials", async () => {
     const { sb } = await setup();
     await expect(
-      runSpec(httpRequestTool, { url: `${base}/text` }, sb, { deny: true }),
+      runSpec(curlTool, { url: `${base}/text` }, sb, { deny: true }),
     ).rejects.toThrow(/permission denied/);
   });
 
@@ -362,7 +362,7 @@ describe("http_request", () => {
       pipeTool,
       {
         stages: [
-          { tool: "http_request", args: { url: `${base}/text` } },
+          { tool: "curl", args: { url: `${base}/text` } },
           { tool: "grep", args: { pattern: "hello" } },
           { tool: "wc", args: { lines: true } },
         ],
@@ -376,7 +376,7 @@ describe("http_request", () => {
       ),
     ).toBe(true);
     expect(
-      result.requests.some((request) => request.action === "fs_http_request"),
+      result.requests.some((request) => request.action === "fs_curl"),
     ).toBe(false);
   });
 });
