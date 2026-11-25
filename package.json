@@ -36,7 +36,7 @@
     "@sinclair/typebox": "^0.34.52",
     "diff": "^9.0.0",
     "picomatch": "^4.0.7",
-    "procage": "https://github.com/masterjg/procage/releases/download/node-proxy-v1/procage-0.8.0.tgz",
+    "procage": "https://github.com/masterjg/procage/releases/download/node-proxy-v2/procage-0.8.0.tgz",
     "tar-stream": "^3.2.2",
     "yauzl": "^3.4.0",
     "yazl": "^3.3.1"
