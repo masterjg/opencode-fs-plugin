@@ -330,9 +330,10 @@ Common pipe mistakes:
 - There is no shell, redirection operator, nested pipe, `find -exec`, or
   `xargs`.
 
-Pipeable filters include `exec`, `head`, `tail`, `grep`, `sed`, `sort`, `uniq`,
-`cut`, `tr`, `tee`, `gzip`, `gunzip`, `tac`, `rev`, `nl`, `paste`, `shuf`,
-`fold`, `base64`, `od`, and `strings`. Unknown stage names fail with `unsupported`.
+Pipeable filters include `base64`, `cut`, `exec`, `fold`, `grep`, `gunzip`,
+`gzip`, `head`, `nl`, `od`, `paste`, `rev`, `sed`, `shuf`, `sort`, `strings`,
+`tac`, `tail`, `tee`, `tr`, and `uniq`. Unknown stage names fail with
+`unsupported`.
 
 ## Background jobs
 

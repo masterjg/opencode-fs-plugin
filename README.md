@@ -106,7 +106,7 @@ await tools.fs.pipe({
 })
 ```
 
-Filter stages: `exec`, `tac`, `rev`, `nl`, `paste`, `shuf`, `fold`, `base64`, `od`,
+Filter stages: `base64`, `exec`, `fold`, `nl`, `od`, `paste`, `rev`, `shuf`, `tac`,
 and `strings`; `dd` and `cpio` are source/sink stages like `tar`.
 
 `fs.http_request` is a pipe source, so network data can feed the same stages:
