@@ -25,7 +25,7 @@ unit, end-to-end and coverage tests.
 | `df` | `fs.df` | `human`, `inodes`, `printType`, `all` |
 | `diff` | `fs.diff` | `unified`, `brief`, `recursive`, `ignoreWhitespace`, `ignoreCase`, `exclude` |
 | `du` | `fs.du` | `summarize`, `all`, `human`, `total`, `maxDepth`, `follow`, `oneFileSystem` |
-| process | `fs.exec` | `command`, `args`, `cwd`, `stdin`, `timeoutMs`; exact allowlist, procage sandbox, no shell |
+| `command` | `fs.exec` | `command`, `args`, `cwd`, `stdin`, `timeoutMs`; exact allowlist, procage sandbox, no shell |
 | `file` | `fs.file` | `paths`, `mime`; content magic detection |
 | `find` | `fs.find` | `name`, `iname`, `pathPattern`, `lname`, `ilname`, `regex`, `iregex`, `type`, `size`, `mtime`, `mmin`, `maxDepth`, `minDepth`, `empty`, `perm`, `uid`, `gid`, `user`, `group`, `links`, `inum`, `samefile`, `fstype`, `newer`, `newerXY`, `printf`, `follow`, `print0`, `sort`, `action` (`print`/`delete`/`trash`), `recursive` |
 | `findmnt` | `fs.findmnt` | `paths`, `fsType`, `noHeader` |
@@ -132,8 +132,10 @@ work, fan out with `Promise.all` over `tools.fs.*` (or one multi-path call).
 ## Exec
 
 `fs.exec` runs one allowlisted executable inside a procage sandbox with
-`shell: false`. The default allowlist is `npm`, `npx`, `uv`, `uvx`, `pip`,
-`pip3`; override it in the plugin options:
+`shell: false`. It is closest to the shell's `command <prog>`: one program with
+literal argv, not `exec` (which replaces the calling shell) and not `sh -c`
+(which parses shell syntax). The default allowlist is `npm`, `npx`, `uv`, `uvx`,
+`pip`, `pip3`; override it in the plugin options:
 
 ```jsonc
 {

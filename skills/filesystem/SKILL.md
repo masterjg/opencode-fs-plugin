@@ -149,7 +149,9 @@ remove them explicitly.
 ## Exec
 
 `fs.exec` runs an allowlisted executable in a **procage sandbox** without a
-shell. The default allowlist is `npm`, `npx`, `uv`, `uvx`, `pip`, `pip3`;
+shell. It is closest to the shell's `command <prog>`: one program with literal
+argv, not `exec` (which replaces the shell) or `sh -c` (which parses shell
+syntax). The default allowlist is `npm`, `npx`, `uv`, `uvx`, `pip`, `pip3`;
 override it with the fs plugin option `execAllowlist` in `opencode.jsonc`:
 
 ```jsonc
