@@ -60,10 +60,11 @@ type AnyTool = ToolSpec<any>;
 
 const REGISTRY: ReadonlyMap<string, AnyTool> = new Map(
   [
-    catTool, headTool, tailTool, grepTool, sedTool, sortTool, uniqTool, cutTool,
-    trTool, wcTool, teeTool, hashTool, gzipTool, gunzipTool, tarTool, zipTool,
-    httpRequestTool, base64Tool, odTool, stringsTool, tacTool, revTool, nlTool,
-    pasteTool, shufTool, foldTool, ddTool, cpioTool, execTool,
+    base64Tool, catTool, cpioTool, cutTool, ddTool, execTool,
+    foldTool, grepTool, gunzipTool, gzipTool, hashTool, headTool,
+    httpRequestTool, nlTool, odTool, pasteTool, revTool, sedTool,
+    shufTool, sortTool, stringsTool, tacTool, tailTool, tarTool,
+    teeTool, trTool, uniqTool, wcTool, zipTool,
   ].map((tool) => [tool.name, tool]),
 );
 

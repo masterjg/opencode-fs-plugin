@@ -30,7 +30,8 @@ describe("plugin registration", () => {
     expect(editor.tools.map((tool) => tool.name)).toEqual(
       expect.arrayContaining(["mkdir", "rmdir", "rm", "cp", "mv", "pipe"]),
     );
-    expect(editor.tools[0]?.options).toMatchObject({
+    const mkdir = editor.tools.find((tool) => tool.name === "mkdir");
+    expect(mkdir?.options).toMatchObject({
       namespace: "fs",
       permission: "fs_mkdir",
     });
