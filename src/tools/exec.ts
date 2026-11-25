@@ -5,14 +5,42 @@
 
 import * as fs from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
+import { randomBytes } from "node:crypto";
 import * as path from "node:path";
 import { Type, type Static } from "@sinclair/typebox";
-import type { Relaxation, Violation } from "procage";
-import { FsError } from "../core/errors.js";
+import type { CageOptions, Relaxation, Violation } from "procage";
+import { FsError, errorMessage } from "../core/errors.js";
+import { RelayControlServer } from "../core/relay-control.js";
 import { collect } from "../core/stream.js";
 import { textResult, type RunContext, type ToolSpec } from "../core/types.js";
 
 export const DEFAULT_EXEC_ALLOWLIST = ["npm", "npx", "uv", "uvx", "pip", "pip3"] as const;
+
+/**
+ * Proxy settings the child may inherit in addition to the preset's own
+ * environment allowlist. They are passed explicitly because the policy's
+ * allowlist does not name them. No other caller environment variable is
+ * forwarded explicitly, but the preset's allowlist still applies, and a proxy
+ * variable may itself carry proxy credentials.
+ */
+export const EXEC_PROXY_ENV = [
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "ALL_PROXY",
+  "NO_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "all_proxy",
+  "no_proxy",
+  "npm_config_proxy",
+  "npm_config_https_proxy",
+  "npm_config_http_proxy",
+  "npm_config_noproxy",
+  "NPM_CONFIG_PROXY",
+  "NPM_CONFIG_HTTPS_PROXY",
+  "NPM_CONFIG_HTTP_PROXY",
+  "NPM_CONFIG_NOPROXY",
+] as const;
 
 const EXEC_NAME = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/;
 
@@ -56,135 +84,40 @@ export interface PolicyDocument {
 }
 
 /**
- * Sockets used by the name-service resolvers on common Linux systems:
- * systemd-resolved, nscd, and SSSD. Plain glibc/musl DNS over UDP needs none.
- * Landlock ignores paths that do not exist on the host.
+ * How a run reaches the network: procage's transparent relay on Linux T1, or
+ * no networking at all. There is no proxy or all-IP fallback.
  */
-export const RESOLVER_SOCKETS = ["/run/systemd/resolve", "/run/nscd", "/var/lib/sss/pipes"] as const;
+export type NetworkMode = "relay" | "disabled";
 
-/** The proxy allowlist must not be empty; this name never resolves. */
-export const PROXY_SENTINEL = "procage.invalid";
-
-/** How a run reaches the network: the per-host proxy, or all-IP. */
-export type NetworkMode = "proxy" | "ip";
-
-/** `ip` adds all-IP networking; both modes get the local resolver sockets. */
-export function applyNetworkPolicy(doc: PolicyDocument, mode: NetworkMode): void {
-  doc.ipc.unix_sockets = [...RESOLVER_SOCKETS];
-  if (mode === "ip") doc.net = "ip";
+/** A relay control endpoint handed to procage's cage options. */
+export interface RelaySettings {
+  readonly socketPath: string;
+  /** Unsigned 64-bit run id, as a decimal string on the wire. */
+  readonly runId: bigint;
 }
 
-/** A host the run's proxy refused. */
-export interface ProxyHost {
-  /** Host without a port, for the permission resource. */
-  host: string;
-  /** `host:port`, for the allowlist entry. */
-  entry: string;
+/** The `net-relay` gap an unsupported backend reports, if this error is one. */
+export function relayGapReason(error: unknown, api: typeof import("procage")): string | undefined {
+  if (!(error instanceof api.CapabilityGapError)) return undefined;
+  const unsupported = error.gaps.some((gap) => gap.construct === "net-relay" && gap.kind === "unsupported");
+  if (!unsupported) return undefined;
+  const message = error.message.trim();
+  return message.length > 0 ? message : "the transparent relay is unavailable on this host";
 }
 
-/** The refused host in a proxy violation, if this violation is one. */
-export function proxyHostOf(violation: Violation): ProxyHost | undefined {
-  if (violation.operation !== "network-outbound") return undefined;
-  const match = /^(\[[^\]]+\]|[^\s:]+)(?::(\d+))? \(not on the allowlist\)$/.exec(violation.target ?? "");
-  if (match === null) return undefined;
-  const raw = match[1]!;
-  const host = raw.startsWith("[") ? raw.slice(1, -1) : raw;
-  return { host, entry: match[2] === undefined ? raw : `${raw}:${match[2]}` };
-}
-
-/**
- * Ask `fs_exec_network` for every host the run's proxy refused, and add the
- * approved ones to `hosts`. Returns whether the list grew.
- */
-export async function approveProxyHosts(
-  ctx: Pick<RunContext, "permissionFor">,
-  outcome: ExecOutcome,
-  hosts: string[],
-): Promise<boolean> {
-  if (outcome.networkMode !== "proxy") return false;
-  let added = false;
-  for (const violation of outcome.violations) {
-    const host = proxyHostOf(violation);
-    if (host === undefined || hosts.includes(host.entry)) continue;
-    await ctx.permissionFor("fs_exec_network").assertTrusted([host.host]);
-    hosts.push(host.entry);
-    added = true;
+/** A recognized unsupported relay backend; the run retries with networking off. */
+class RelayUnsupportedError extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = "RelayUnsupportedError";
   }
-  return added;
-}
-
-/** Whether the host cannot keep a run to a proxy-only route (Linux T2). */
-export function isProxyGap(error: unknown, api: typeof import("procage")): boolean {
-  return error instanceof api.CapabilityGapError && error.gaps.some((gap) => gap.construct === "net-proxy");
-}
-
-/** The host cannot build a proxy-only route, so the run needs all-IP. */
-export class ProxyUnavailableError extends Error {
-  constructor() {
-    super("egress proxy is unavailable on this host");
-    this.name = "ProxyUnavailableError";
-  }
-}
-
-/** Whether a failed proxy attempt should retry with all-IP networking. */
-export function shouldEscalateIp(error: unknown, mode: NetworkMode): boolean {
-  return mode === "proxy" && error instanceof ProxyUnavailableError;
-}
-
-const IPV4 = /\b\d{1,3}(?:\.\d{1,3}){3}\b/g;
-const IPV6 = /\[[0-9a-fA-F:]+\]/g;
-const URL_HOST = /[a-z][a-z0-9+.-]*:\/\/(\[[^\]]+\]|[^/\s:'"?#]+)/gi;
-const HOST_PORT = /\b((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}|localhost):\d{1,5}\b/gi;
-const CONNECT_HOST = /\b(?:connect(?:ing|ion)? to|host|url|address)[\s'"]+((?:[a-z0-9-]+\.)+[a-z]{2,})\b/gi;
-const GETADDRINFO_HOST = /\bgetaddrinfo\b[^\n]*?\b((?:[a-z0-9-]+\.)+[a-z]{2,})\b/gi;
-const AT_HOST = /(?:^|\s)@(?:\[([^\]]+)\]|((?:[a-z0-9-]+\.)+[a-z]{2,}))/gi;
-const ADDRESS = /^(?:\d{1,3}(?:\.\d{1,3}){3}|[0-9a-f:]+)$/i;
-
-function stripBrackets(value: string): string {
-  const host = value.startsWith("[") && value.endsWith("]") ? value.slice(1, -1) : value;
-  return host.toLowerCase().replace(/\.$/, "");
-}
-
-/** Addresses that name no peer: unspecified binds, never approval targets. */
-function isUnspecified(host: string): boolean {
-  return host === "0.0.0.0" || host === "::" || host === "::0";
-}
-
-/** Hosts and addresses named in run output or arguments, for network approval. */
-export function networkTargetsOf(...texts: readonly string[]): string[] {
-  const found = new Set<string>();
-  for (const text of texts) {
-    for (const match of text.matchAll(URL_HOST)) found.add(stripBrackets(match[1]!));
-    for (const match of text.matchAll(HOST_PORT)) found.add(match[1]!.toLowerCase());
-    for (const match of text.matchAll(CONNECT_HOST)) found.add(match[1]!.toLowerCase());
-    for (const match of text.matchAll(GETADDRINFO_HOST)) found.add(match[1]!.toLowerCase());
-    for (const match of text.matchAll(AT_HOST)) found.add(stripBrackets((match[1] ?? match[2])!.toLowerCase()));
-    for (const match of text.matchAll(IPV4)) found.add(match[0]);
-    for (const match of text.matchAll(IPV6)) found.add(stripBrackets(match[0]));
-  }
-  return [...found].filter((target) => !isUnspecified(target));
-}
-
-/** Prefer named hosts over addresses when both appear; addresses are the fallback. */
-export function escalationTargets(...texts: readonly string[]): string[] {
-  const targets = networkTargetsOf(...texts);
-  const named = targets.filter((target) => !ADDRESS.test(target));
-  return named.length > 0 ? named : targets;
-}
-
-/** Ask for all-IP networking after the run cannot use the proxy. */
-export async function approveIpFallback(
-  ctx: Pick<RunContext, "permissionFor">,
-  targets: readonly string[],
-): Promise<void> {
-  await ctx.permissionFor("fs_exec_network").assertTrusted(targets.length === 0 ? ["*"] : [...targets]);
 }
 
 /** Why a blocked run failed, and what to do about it. */
 export function blockedHint(mode: NetworkMode): string {
-  return mode === "proxy"
-    ? "The run's network is proxy-only and a program tried to bypass it. Approve the refused host, or allow all networking (`fs_exec_network` resource `*`) to retry with all-IP."
-    : "The sandbox denied an external path or network access. Approve the path or network in the permission prompt and retry.";
+  return mode === "relay"
+    ? "The sandbox denied a path or refused a network flow. Approve the denied path, or the refused resource in fs_exec_network, and retry."
+    : "Networking is disabled in this sandbox. Approve the denied external path in the permission prompt and retry; relayed networking needs Linux tier T1.";
 }
 
 export interface ExecOutcome {
@@ -210,8 +143,9 @@ export const execTool: ToolSpec<Input> = {
   name: "exec",
   description:
     "Run an allowlisted executable in a procage sandbox without a shell. Direct calls return JSON; " +
-    "pipe stages pass raw stdout. Default allowlist: npm, npx, uv, uvx, pip, pip3. Network is forced " +
-    "through the run's allowlist proxy by default; a refused host asks fs_exec_network.",
+    "pipe stages pass raw stdout. Default allowlist: npm, npx, uv, uvx, pip, pip3. On Linux tier T1 " +
+    "every network flow is named to the transparent relay, which asks fs_exec_network for its exact " +
+    "resource; elsewhere networking is disabled.",
   schema: Schema,
   pipeable: "filter",
   mutates: true,
@@ -241,49 +175,29 @@ export const execTool: ToolSpec<Input> = {
       const inputData = io.stdin === undefined
         ? input.stdin === undefined ? undefined : Buffer.from(input.stdin)
         : await collect(io.stdin);
-      let networkMode: NetworkMode = "proxy";
-      const proxyHosts: string[] = [];
+      const approvedResources: string[] = [];
       const approved: Array<{ full: string }> = [];
-      let outcome: ExecOutcome | undefined;
+      const assertNetwork = async (resource: string) => {
+        await ctx.permissionFor("fs_exec_network").assertTrusted([resource]);
+        if (!approvedResources.includes(resource)) approvedResources.push(resource);
+      };
+      const base = {
+        command,
+        executable,
+        args,
+        cwd: cwdTarget.full,
+        timeoutMs: input.timeoutMs ?? 120_000,
+        allowed: approved,
+        tempDir,
+        input: inputData,
+      };
 
-      for (let attempt = 0; attempt < 12; attempt++) {
-        try {
-          outcome = await runCaged(ctx, {
-            command,
-            executable,
-            args,
-            cwd: cwdTarget.full,
-            timeoutMs: input.timeoutMs ?? 120_000,
-            networkMode,
-            proxyHosts,
-            allowed: approved,
-            tempDir,
-            input: inputData,
-          });
-        } catch (error) {
-          /* v8 ignore start -- Linux T2 has no proxy route to trigger this here */
-          if (shouldEscalateIp(error, networkMode)) {
-            await approveIpFallback(ctx, escalationTargets(...args));
-            networkMode = "ip";
-            continue;
-          }
-          /* v8 ignore stop */
-          /* v8 ignore next */
-          throw error;
-        }
-
-        if (networkMode === "proxy") {
-          if (await approveProxyHosts(ctx, outcome, proxyHosts)) continue;
-          if (detectsNetworkDenial(outcome)) {
-            await approveIpFallback(ctx, escalationTargets(outcome.stderr.toString("utf8"), ...args));
-            networkMode = "ip";
-            continue;
-          }
-        }
-
-        let added = false;
-        const deniedPaths = discoverExternalPaths(ctx, outcome)
+      let attempt: RelayAttempt | undefined;
+      for (let round = 0; round < 12; round++) {
+        attempt = await runAttempt(ctx, base, assertNetwork);
+        const deniedPaths = discoverExternalPaths(ctx, attempt.outcome)
           .filter((candidate) => !approved.some((entry) => entry.full === candidate));
+        let added = false;
         for (const candidate of deniedPaths) {
           const target = await existingBoundary(ctx, candidate);
           if (target === undefined) continue;
@@ -302,7 +216,11 @@ export const execTool: ToolSpec<Input> = {
       }
 
       /* v8 ignore next */
-      if (outcome === undefined) throw new FsError("exec produced no result.", "io");
+      if (attempt === undefined) throw new FsError("exec produced no result.", "io");
+      const outcome = attempt.outcome;
+      const networkMode = attempt.mode;
+      const networkReason = attempt.reason;
+
       const metadata = {
         command,
         args,
@@ -312,9 +230,10 @@ export const execTool: ToolSpec<Input> = {
         aborted: outcome.aborted,
         sandboxBlocked: isSandboxBlocked(outcome),
         violations: outcome.violations.length,
-        network: networkMode === "ip" || proxyHosts.length > 0,
+        network: networkMode === "relay",
         networkMode,
-        networkHosts: proxyHosts,
+        networkHosts: approvedResources,
+        ...(networkReason === undefined ? {} : { networkReason }),
         externalPaths: approved.map((entry) => entry.full),
       };
       if (io.piped === true) {
@@ -351,11 +270,62 @@ interface CagedInput {
   args: string[];
   cwd: string;
   timeoutMs: number;
-  networkMode: NetworkMode;
-  proxyHosts: readonly string[];
   allowed: Array<{ full: string }>;
   tempDir: string;
   input: Buffer | undefined;
+  relay?: RelaySettings;
+}
+
+interface RelayAttempt {
+  outcome: ExecOutcome;
+  mode: NetworkMode;
+  reason?: string;
+}
+
+/**
+ * One spawn attempt. The relay control server starts before the cage is built
+ * and stays open until the run ends; a recognized unsupported relay backend
+ * closes it and retries the same attempt with networking off. A control server
+ * that cannot start is treated the same way: without it every flow is refused,
+ * so the run keeps networking off instead of failing outright.
+ */
+async function runAttempt(
+  ctx: RunContext,
+  base: Omit<CagedInput, "relay">,
+  assertNetwork: (resource: string) => Promise<void>,
+): Promise<RelayAttempt> {
+  if (ctx.signal.aborted) throw interruptedError();
+  const runId = randomBytes(8).readBigUInt64BE(0);
+  const control = new RelayControlServer({ runId, assertNetwork });
+  let socketPath: string;
+  try {
+    socketPath = await control.start();
+  } catch (error) {
+    // An abort during relay setup must not fall through to an offline child.
+    if (ctx.signal.aborted) throw interruptedError();
+    // Nothing is granted without the relay, so this fallback cannot mask a
+    // denial; it only reports why networking is disabled.
+    return {
+      outcome: await runCaged(ctx, base),
+      mode: "disabled",
+      reason: errorMessage(error),
+    };
+  }
+  try {
+    if (ctx.signal.aborted) throw interruptedError();
+    try {
+      return { outcome: await runCaged(ctx, { ...base, relay: { runId, socketPath } }), mode: "relay" };
+    } catch (error) {
+      if (!(error instanceof RelayUnsupportedError)) throw error;
+      return { outcome: await runCaged(ctx, base), mode: "disabled", reason: error.message };
+    }
+  } finally {
+    await control.close();
+  }
+}
+
+function interruptedError(): FsError {
+  return new FsError("exec interrupted.", "interrupted");
 }
 
 async function runCaged(ctx: RunContext, input: CagedInput): Promise<ExecOutcome> {
@@ -368,33 +338,30 @@ async function runCaged(ctx: RunContext, input: CagedInput): Promise<ExecOutcome
   }
 
   const doc = api.Policy.preset("agent_workspace", 3, { workspace: ctx.sandbox.root }).toJSON() as PolicyDocument;
-  applyNetworkPolicy(doc, input.networkMode);
+  // Networking is off unless procage's relay replaces this policy value with
+  // `Network::Relay`; the plugin never grants IP networking or resolver sockets.
+  doc.net = "none";
   addRule(doc, "exec", path.dirname(input.executable.path));
   addRule(doc, "exec", path.dirname(input.executable.real));
   addRule(doc, "exec", path.dirname(process.execPath));
   addRule(doc, "exec", path.resolve(path.dirname(process.execPath), ".."));
   addRule(doc, "exec", path.dirname(input.executable.real));
   addRule(doc, "exec", path.resolve(path.dirname(input.executable.real), ".."));
-  for (const root of ["/home/linuxbrew", "/var/home/linuxbrew"]) {
-    try {
-      await fs.access(root);
-      addRule(doc, "read", root);
-      addRule(doc, "exec", root);
-    } catch {
-      // Homebrew is optional.
-    }
-  }
+  await addOptionalRoots(doc, ["/home/linuxbrew", "/var/home/linuxbrew"], (root) => fs.access(root));
   addRule(doc, "write", input.tempDir);
   addRule(doc, "write", input.cwd);
   for (const allowed of input.allowed) addRule(doc, "write", allowed.full);
 
-  const cageOptions = {
+  const cageOptions: CageOptions = {
     violations: true,
     acceptSpawnSnapshot: true,
     relax: ["waive:trust-handoff", "signals-same-user", "no-unix-sockets"] as Relaxation[],
-    ...(input.networkMode === "proxy"
-      ? { proxy: { allowlist: [...input.proxyHosts, PROXY_SENTINEL] } }
-      : {}),
+    ...(input.relay === undefined
+      ? {}
+      : {
+          relay_control_socket: input.relay.socketPath,
+          relay_run_id: input.relay.runId.toString(),
+        }),
   };
 
   let cage: InstanceType<typeof api.Cage>;
@@ -403,67 +370,90 @@ async function runCaged(ctx: RunContext, input: CagedInput): Promise<ExecOutcome
     policy = api.Policy.fromJSON(doc);
     cage = new api.Cage(policy, cageOptions);
   } catch (error) {
-    /* v8 ignore next */
-    if (input.networkMode === "proxy" && isProxyGap(error, api)) throw new ProxyUnavailableError();
-    /* v8 ignore next */
-    throw new FsError(`exec policy rejected: ${String(error)}`, "unsupported");
+    if (input.relay !== undefined) {
+      const reason = relayGapReason(error, api);
+      if (reason !== undefined) throw new RelayUnsupportedError(reason);
+    }
+    throw new FsError(`exec policy rejected: ${errorMessage(error)}`, "unsupported");
   }
 
-  const env = Object.fromEntries(
-    Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
-  );
-  env.TMPDIR = input.tempDir;
-
-  let child;
-  try {
-    child = await cage.spawn([input.executable.path, ...input.args], {
-      cwd: input.cwd,
-      env,
-      stdin: input.input !== undefined,
-    });
-  } catch (error) {
-    /* v8 ignore next */
-    throw new FsError(`exec spawn failed: ${String(error)}`, "unsupported");
+  // The policy's allowlist supplies HOME, LANG, LC_ALL, PATH, TERM, TMPDIR and
+  // USER. Explicit values win over that allowlist, so pass only the tool's own
+  // TMPDIR and proxy settings: forwarding process.env would defeat the
+  // preset's secret filtering. The transparent relay treats a connection to the
+  // proxy as the proxy's own destination (never its CONNECT target), so the
+  // proxy's address, or its cached DNS name, is authorized through
+  // fs_exec_network; the target URL behind the proxy is never treated as
+  // approved.
+  const env: Record<string, string> = { TMPDIR: input.tempDir };
+  for (const name of EXEC_PROXY_ENV) {
+    const value = process.env[name];
+    if (value !== undefined) env[name] = value;
   }
 
-  let aborted = false;
+  // Attach the listener before the spawn: an abort during the spawn await must
+  // still reach the child once it exists. The flag also captures an abort that
+  // already arrived during relay setup or cage construction, which a listener
+  // attached afterwards would never see.
+  let child!: Awaited<ReturnType<typeof cage.spawn>>;
+  let aborted = ctx.signal.aborted;
   const onAbort = () => {
     aborted = true;
     child?.kill();
   };
   ctx.signal.addEventListener("abort", onAbort, { once: true });
   try {
-    const out = await child.output({ timeout: input.timeoutMs, ...(input.input === undefined ? {} : { input: input.input }) });
-    const violations = filterViolations(await child.violations());
-    return {
-      stdout: out.stdout,
-      stderr: out.stderr,
-      exitCode: out.timedOut ? 124 : aborted ? 130 : (out.exitCode ?? 1),
-      signal: out.signal,
-      timedOut: out.timedOut,
-      aborted,
-      networkMode: input.networkMode,
-      violations,
-    };
-  } catch (error) {
-    /* v8 ignore next 15 */
-    if (aborted || ctx.signal.aborted) {
-      return {
-        stdout: Buffer.alloc(0),
-        stderr: Buffer.alloc(0),
-        exitCode: 130,
-        signal: null,
-        timedOut: false,
-        aborted: true,
-        networkMode: input.networkMode,
-        violations: [],
-      };
+    // An abort that arrived during relay setup or cage construction must not
+    // start a child at all.
+    if (aborted) throw interruptedError();
+    try {
+      child = await cage.spawn([input.executable.path, ...input.args], {
+        cwd: input.cwd,
+        env,
+        stdin: input.input !== undefined,
+      });
+    } catch (error) {
+      if (aborted || ctx.signal.aborted) throw interruptedError();
+      throw new FsError(`exec spawn failed: ${String(error)}`, "unsupported");
     }
-    /* v8 ignore next */
-    throw new FsError(`exec failed: ${String(error)}`, "unsupported");
+
+    // The abort listener could not kill a child that did not exist yet.
+    if (aborted) child.kill();
+
+    try {
+      const out = await child.output({ timeout: input.timeoutMs, ...(input.input === undefined ? {} : { input: input.input }) });
+      const violations = filterViolations(await child.violations());
+      return {
+        stdout: out.stdout,
+        stderr: out.stderr,
+        exitCode: out.timedOut ? 124 : aborted ? 130 : (out.exitCode ?? 1),
+        signal: out.signal,
+        timedOut: out.timedOut,
+        aborted,
+        networkMode: input.relay === undefined ? "disabled" : "relay",
+        violations,
+      };
+    } catch (error) {
+      /* v8 ignore next 15 */
+      if (aborted || ctx.signal.aborted) {
+        return {
+          stdout: Buffer.alloc(0),
+          stderr: Buffer.alloc(0),
+          exitCode: 130,
+          signal: null,
+          timedOut: false,
+          aborted: true,
+          networkMode: input.relay === undefined ? "disabled" : "relay",
+          violations: [],
+        };
+      }
+      /* v8 ignore next */
+      throw new FsError(`exec failed: ${String(error)}`, "unsupported");
+    } finally {
+      child.close();
+    }
   } finally {
     ctx.signal.removeEventListener("abort", onAbort);
-    child.close();
   }
 }
 
@@ -490,9 +480,30 @@ function addRule(doc: PolicyDocument, access: string, target: string): void {
   doc.fs.push({ access, target: { subpath } });
 }
 
+/**
+ * Grant read and exec on each optional root that exists on this host. The
+ * predicate is injected so tests can simulate present and absent roots without
+ * touching the real filesystem layout.
+ */
+export async function addOptionalRoots(
+  doc: PolicyDocument,
+  roots: readonly string[],
+  access: (root: string) => Promise<void>,
+): Promise<void> {
+  for (const root of roots) {
+    try {
+      await access(root);
+      addRule(doc, "read", root);
+      addRule(doc, "exec", root);
+    } catch {
+      // Optional root: the preset stays portable without it.
+    }
+  }
+}
+
 export function filterViolations(violations: readonly Violation[]): Violation[] {
   return violations.filter((violation) => {
-    if (proxyHostOf(violation) !== undefined) return true;
+    if (violation.operation === "network-outbound") return true;
     if (violation.target?.startsWith("/")) return true;
     return /AF_INET|AF_INET6/.test(violation.target ?? "");
   });
@@ -504,32 +515,19 @@ export function isSandboxBlocked(outcome: ExecOutcome): boolean {
   return /EACCES|EPERM|EROFS|Permission denied|Read-only file system/i.test(outcome.stderr.toString("utf8"));
 }
 
-export function detectsNetworkDenial(outcome: ExecOutcome): boolean {
-  if (outcome.violations.some((violation) => /AF_INET|AF_INET6/.test(violation.target ?? ""))) return true;
-  const text = `${outcome.stderr.toString("utf8")}\n${outcome.stdout.toString("utf8")}`;
-  return /(?:EACCES|EPERM|Operation not permitted)[^\n]*(?:connect|bind|socket)|(?:connect|bind|socket)[^\n]*(?:EACCES|EPERM|Operation not permitted)|EAI_AGAIN|getaddrinfo|ENETUNREACH|EHOSTUNREACH|Failed to connect|Could not connect|Network is unreachable/i.test(
-    text,
-  );
-}
-
 export function discoverExternalPaths(ctx: RunContext, outcome: ExecOutcome): string[] {
   const found = new Set<string>();
   for (const violation of outcome.violations) {
+    // Only a structured write denial may become a write grant. Seatbelt names
+    // that family `file-write-*`; a read, exec, network, or unknown operation
+    // must never widen the boundary, even when its target is an absolute path.
+    if (!violation.operation.startsWith("file-write-")) continue;
     if (violation.target?.startsWith("/")) found.add(violation.target);
   }
 
-  const stderr = outcome.stderr.toString("utf8");
-  if (/EACCES|EPERM|EROFS|Permission denied|Read-only file system|error writing|not written|cannot open|failed to open/i.test(stderr)) {
-    for (const line of stderr.split("\n")) {
-      for (const match of line.matchAll(/(?:^|[\s'"`(])(\/[^\s'"`),]+)/g)) {
-        found.add(match[1]!);
-      }
-    }
-  }
-  for (const match of stderr.matchAll(/path:\s*['"]([^'"]+)['"]/g)) {
-    found.add(match[1]!);
-  }
-
+  // Only structured violation targets are grant candidates. The child controls
+  // stdout and stderr, so a path printed there (even next to an EACCES string)
+  // must never widen the permission boundary.
   const root = ctx.sandbox.root;
   return [...found]
     .map((candidate) => path.resolve(candidate))

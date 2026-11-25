@@ -36,7 +36,7 @@ describe("PermissionGate", () => {
     expect(requests[0]).toMatchObject({
       action: "fs_cp",
       resources: ["dir/file"],
-      save: ["*"],
+      save: ["dir/file"],
     });
   });
 
@@ -67,6 +67,7 @@ describe("PermissionGate", () => {
     expect(requests[1]).toMatchObject({
       action: "fs_rm",
       resources: [outside.file],
+      save: [outside.file],
     });
   });
 
@@ -93,6 +94,7 @@ describe("PermissionGate", () => {
     ]);
     expect(requests).toHaveLength(2);
     expect((requests[1] as { resources: string[] }).resources).toEqual([outside.file]);
+    expect((requests[1] as { save: string[] }).save).toEqual([outside.file]);
   });
 
   it("asserts a wildcard action for an empty target list", async () => {
@@ -109,7 +111,7 @@ describe("PermissionGate", () => {
       },
     );
     await gate.assert([]);
-    expect(requests[0]).toMatchObject({ action: "fs_pipe", resources: ["*"] });
+    expect(requests[0]).toMatchObject({ action: "fs_pipe", resources: ["*"], save: ["*"] });
   });
 
   it("asserts trusted tool paths without an external gate", async () => {
@@ -126,8 +128,73 @@ describe("PermissionGate", () => {
       },
     );
     await gate.assertTrusted(["/tmp/opencode/*"]);
-    expect(requests[0]).toMatchObject({ action: "fs_mktemp", resources: ["/tmp/opencode/*"] });
+    expect(requests[0]).toMatchObject({
+      action: "fs_mktemp",
+      resources: ["/tmp/opencode/*"],
+      save: ["/tmp/opencode/*"],
+    });
+    // An empty list is a deliberate wildcard, not a broadening of a list.
     await gate.assertTrusted([]);
-    expect(requests[1]).toMatchObject({ resources: ["*"] });
+    expect(requests[1]).toMatchObject({ resources: ["*"], save: ["*"] });
+  });
+
+  it("saves an exact trusted host instead of a wildcard", async () => {
+    const root = await makeRoot();
+    roots.push(root);
+    const sb = await Sandbox.create(root);
+    const requests: unknown[] = [];
+    const gate = new PermissionGate(
+      { sessionID: "s", agent: "a", messageID: "m", id: "i" },
+      "fs_exec_network",
+      (full) => sb.resource(full),
+      async (request) => {
+        requests.push(request);
+      },
+    );
+    await gate.assertTrusted(["registry.npmjs.org"]);
+    expect(requests[0]).toMatchObject({
+      action: "fs_exec_network",
+      resources: ["registry.npmjs.org"],
+      save: ["registry.npmjs.org"],
+    });
+  });
+
+  it("keeps a caller-supplied wildcard resource as a wildcard save", async () => {
+    const root = await makeRoot();
+    roots.push(root);
+    const sb = await Sandbox.create(root);
+    const requests: unknown[] = [];
+    const gate = new PermissionGate(
+      { sessionID: "s", agent: "a", messageID: "m", id: "i" },
+      "fs_uname",
+      (full) => sb.resource(full),
+      async (request) => {
+        requests.push(request);
+      },
+    );
+    await gate.assertTrusted(["*"]);
+    expect(requests[0]).toMatchObject({ resources: ["*"], save: ["*"] });
+  });
+
+  it("saves an exact path resource from assert", async () => {
+    const root = await makeRoot();
+    roots.push(root);
+    const sb = await Sandbox.create(root);
+    const requests: unknown[] = [];
+    const gate = new PermissionGate(
+      { sessionID: "s", agent: "a", messageID: "m", id: "i" },
+      "fs_tar",
+      (full) => sb.resource(full),
+      async (request) => {
+        requests.push(request);
+      },
+    );
+    const target = await sb.resolveForCreate("archive.tar");
+    await gate.assert([{ target, boundary: target.full, resource: "archive.tar" }]);
+    expect(requests[0]).toMatchObject({
+      action: "fs_tar",
+      resources: ["archive.tar"],
+      save: ["archive.tar"],
+    });
   });
 });

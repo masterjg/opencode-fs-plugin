@@ -87,30 +87,57 @@ Aliases are accepted only where noted: `path` for one `paths` element (`stat`,
   Default: `npm`, `npx`, `uv`, `uvx`, `pip`, `pip3`. Override with the plugin
   option `execAllowlist`; an empty list disables execution.
 - The policy is procage `agent_workspace` v3: the project is read/write/exec.
-  Egress starts proxy-only and external paths are denied by default; there are
-  no per-call grants.
-- Egress starts proxy-only: the cage gets a procage proxy whose allowlist is the
-  hosts approved through `fs_exec_network` in this run. A refused host asks with
-  the host as the resource, then the run retries with it added. The permission
-  rules are the only allowlist; there is no plugin option for it.
-- When the proxy cannot carry the run - a client that ignores it, UDP/ICMP, or a
-  host without proxy support (Linux T2) - `fs.exec` escalates to all-IP. It asks
-  `fs_exec_network` with the target named in stderr/arguments, or `*` when no
-  target is known, then retries with `net: "ip"`. All-IP is not host-scoped:
-  approval records intent, not per-host enforcement.
-- All-IP mode also opens the resolver sockets used by systemd-resolved, nscd,
-  and SSSD. Plain UDP DNS needs none; other Unix sockets stay blocked. Landlock
-  ignores paths absent on the host. On T2 below Landlock ABI 9 the sockets cannot
-  be scoped, so `no-unix-sockets` drops them and only UDP DNS remains.
-- Proxy egress needs Linux T1 or macOS. On T2 the cage reports the `net-proxy`
-  gap and the plugin takes the all-IP path above.
+  External paths are denied by default and there are no per-call grants.
+- Network egress uses procage's transparent relay on Linux tier T1. A per-run
+  `AF_UNIX` control server in a 0700 directory accepts exactly one connection,
+  validates HELLO against the run id, and multiplexes at most 64 decisions over
+  the length-prefixed protocol in `src/core/relay-protocol.ts`.
+- Every TCP/UDP flow is named as a DNS QNAME, TLS SNI, HTTP `Host`, QUIC SNI, or
+  IP literal. That exact resource is asserted with `fs_exec_network`; the port,
+  protocol, URL, headers, and payload never reach the permission. The rules are
+  the only allowlist; there is no plugin option for it.
+- DNS queries are decisions too. An allowed QNAME is forwarded to the parent
+  resolver; procage's discovery reads `/etc/resolv.conf` and systemd-resolved
+  paths, including a loopback stub, and the plugin leaves `relay_dns_upstream`
+  and `relay_resolv_conf` unset. A denied QNAME gets `REFUSED`. An allowed
+  answer feeds procage's bounded per-run address-to-name cache. A nameless flow
+  to an address is authorized by a fresh allowed name bound to it, else by the
+  address. A named flow requires the exact `(name, address)` from an allowed
+  answer plus the allowed name, or both name and address explicitly allowed; a
+  denied named identity is never rescued by an allowed address. Allow an address
+  in addition to the name when a program connects to an IP literal, or when a
+  named flow's exact `(name, address)` was not returned by an allowed DNS
+  answer. TCP/853 and the finite list of known DoH names are refused without
+  asking; custom or unknown DoH endpoints on other names or ports may not be
+  recognized, so DoH blocking is best-effort. ECH detected in TLS or QUIC is
+  visibly refused.
+- Denials, a closed control link, a failed handshake, an oversized or malformed
+  frame, an exhausted in-flight window, and a decision timeout all refuse the
+  flow. Completed decision ids are retained in a bounded 1024-entry window so a
+  replay is rejected without unbounded memory. There is no direct-route
+  fallback.
+- On Linux T2 and macOS procage reports the `net-relay` gap; a relay control
+  server that cannot start is treated the same way. The run retries once with
+  networking off (`net: "none"`), no resolver sockets, and no macOS resolver
+  exception, and reports `networkMode: "disabled"` plus `networkReason`.
+- External proxy variables (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`,
+  `NO_PROXY`, lowercase forms, and npm proxy variables) are passed explicitly
+  because they are not in the preset environment allowlist. The relay treats
+  the proxy as the destination, never its `CONNECT` target, so the proxy's
+  address or cached DNS name must be allowed in `fs_exec_network`. No other
+  caller environment variable is forwarded explicitly; the preset's own
+  allowlist still applies, and a proxy variable may itself carry credentials.
 - Denied paths ask `external_directory` on their containing directory (or the
-  nearest existing ancestor for a missing or redacted path). Access handling is
-  bounded to twelve attempts.
+  nearest existing ancestor for a missing or redacted path) only when procage
+  reports a structured **write** violation (`file-write-*`). Read, exec,
+  network, and unknown operations never add a write rule; without a write
+  violation no path grant is inferred and access stays denied — pre-grant the
+  path or configure a rule. Child stdout/stderr is never parsed for paths.
+  Access handling is bounded to twelve attempts.
 - If a path or socket stays blocked after approval, the result reports
   `violations` plus a `hint`; stderr containing EACCES/EPERM/EROFS marks
-  `sandboxBlocked`. Results carry `network`, `networkMode`, `networkHosts`, and
-  `externalPaths`.
+  `sandboxBlocked`. Results carry `network`, `networkMode`, `networkHosts`,
+  `networkReason` when the relay was unavailable, and `externalPaths`.
 - `args` are passed verbatim. `cwd` resolves inside the sandbox and asserts
   `external_directory` when it leaves the project; the action is `fs_exec`.
 - Timeout defaults to 120000 ms, capped at 600000. Procage ends the run and kills

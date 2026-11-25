@@ -141,10 +141,12 @@ work, fan out with `Promise.all` over `tools.fs.*` (or one multi-path call).
 }
 ```
 
-The workspace (project) is read/write/exec. **Egress starts proxy-only**: every
-run gets its own egress proxy, no direct route, and every host must be approved
-through `fs_exec_network`. There is no separate allowlist option; the permission
-rules are the allowlist:
+The workspace (project) is read/write/exec. **Network egress needs Linux tier
+T1** (user namespaces and TPROXY). Every run gets procage's transparent relay:
+there is no direct route, and every TCP or UDP flow is named to the plugin as a
+DNS QNAME, TLS SNI, HTTP `Host`, QUIC SNI, or an IP literal. That exact resource
+must be approved through `fs_exec_network`; the port, URL, headers, and payload
+are never part of the permission. There is no separate allowlist option:
 
 ```jsonc
 {
@@ -156,31 +158,59 @@ rules are the allowlist:
 }
 ```
 
-A host the proxy refuses asks `fs_exec_network` with that host, and the run
-retries with it added. With no rule (base allow), that happens silently; with a
-`*` deny the host fails closed instead. When the proxy cannot carry the run
-(UDP/ICMP, a client that ignores the proxy, or a host without proxy support),
-the run asks with the target named in its output or arguments, or `*` when none
-can be identified, and retries with all-IP networking. All-IP is not
-host-scoped: that approval records intent, not per-host enforcement. External
-paths are separate: a blocked path asks `external_directory` for its containing
-directory (or the nearest existing ancestor), and the sandbox grants read/write
-there.
+A flow asks with its own resource. With no rule (base allow) the request is
+approved silently; with a `*` deny an unlisted resource fails closed. DNS
+queries are flows too: an allowed QNAME is answered through the parent resolver
+(procage reads `/etc/resolv.conf` and systemd-resolved paths, including a
+loopback stub), a denied one gets `REFUSED`, and TCP/853 or a known
+encrypted-DNS endpoint is refused without asking. That DoH filtering is
+best-effort: TCP/853 and the finite list of known DoH names are blocked, but
+custom or unknown DoH endpoints on other names or ports may not be recognized.
+ECH detected in TLS or QUIC is visibly refused. Allowed answers feed a
+bounded per-run address-to-name cache: a later flow that names no host is
+authorized by a fresh allowed name bound to its address, otherwise by the
+address itself. A named flow must either match an allowed DNS answer for the
+exact `(name, address)` pair or have both its name and its address allowed; a
+denied named identity is never rescued by an allowed address. Allow the DNS
+names a program uses. Also allow an address when the program connects to IP
+literals, or when a named flow's name is allowed but that exact
+`(name, address)` was not returned by an allowed DNS answer: only the cached
+pair avoids the separate address check, so that named flow needs both
+permissions.
+
+External proxy settings are preserved: `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`,
+`NO_PROXY`, their lowercase forms, and the npm proxy variables are passed to the
+child explicitly, because they are not in the preset's environment allowlist.
+The relay treats the proxy as the destination, never its `CONNECT` target, so
+an external proxy works only when `fs_exec_network` allows the proxy's address
+(or its cached DNS name, which also needs its DNS query allowed). That approval
+lets the proxy forward to whatever it reaches; it is not scoped to the target
+URL behind the proxy. No other caller environment variable is forwarded
+explicitly, but the preset's own environment allowlist still applies, and a
+proxy variable may itself carry proxy credentials.
+
+External paths are separate: a blocked path asks `external_directory` for its
+containing directory (or the nearest existing ancestor), and the sandbox grants
+read/write there. Only procage's structured **write** violations (`file-write-*`)
+can trigger that auto-approval; read, exec, network, or unknown path failures
+never do. When procage reports no write violation, no path grant is inferred and
+access remains denied — pre-grant the path with `external_directory` or a rule.
+A path printed by the child on stdout or stderr is reported, never auto-approved.
 
 The decision comes from your `opencode.jsonc` rules (`ask`, `allow`, `deny`), the
 same as every other tool. If a path stays blocked after approval, the result
 reports `violations` and a `hint`. `fs.exec` also kills every process it started
 when the run ends, including detached descendants.
 
-Proxy egress needs Linux T1 (user namespaces) or macOS. On Linux T2 there is no
-network namespace, so `fs.exec` takes the all-IP path: it asks `fs_exec_network`
-for the named target, or `*` when none is known, and retries. In all-IP mode the
-policy also opens the resolver sockets used by systemd-resolved, nscd, and SSSD
-(`/run/systemd/resolve`, `/run/nscd`, `/var/lib/sss/pipes`), so DNS works across
-common Linux distributions. Plain UDP DNS needs none of them; other Unix sockets
-stay blocked. On kernels where procage cannot scope Unix sockets (T2 below
-Landlock ABI 9), the policy drops them via `no-unix-sockets`; DNS then works only
-through a plain UDP resolver.
+On Linux T2 and on macOS the relay is unavailable, and a relay control server
+that cannot start is treated the same way. `fs.exec` retries the same run once
+with networking off: the policy stays `net: "none"`, no resolver sockets are
+granted, and macOS gets no resolver exception. The result carries
+`networkMode: "disabled"` and a `networkReason`; there is no direct-IP fallback. Every flow decision is
+fail-closed: a denial, a closed control link, an oversized or malformed frame,
+a missing HELLO, or a decision timeout refuses the flow. The control socket
+lives in a private per-run directory and is never part of the child's known
+Unix sockets.
 
 ```js
 await tools.fs.exec({ command: "npm", args: ["install"], timeoutMs: 300000 })
@@ -415,12 +445,14 @@ Every tool asserts an action named after the tool (`fs_cp`, `fs_rm`,
 `fs_pipe` stages, and so on), except `fs.http_request`, which reuses the
 built-in `webfetch` action. Internal paths use project-relative resources;
 external targets first require `external_directory` on the absolute boundary.
-`allow always` persists the same patterns as the built-in tools.
+`allow always` saves the exact resources the call asserted — project-relative
+paths, absolute external boundaries, or network names/addresses. A specific
+resource saves narrowly; an explicitly requested `*` remains `*`.
 
-`fs.exec` asserts `fs_exec` for the run, then asks `external_directory` for any
-blocked path and `fs_exec_network` for a refused host or an all-IP fallback
-target (the resource is the host/address, or `*` when none is known) before
-retrying:
+`fs.exec` asserts `fs_exec` for the run, asks `external_directory` for any
+blocked path, and asks `fs_exec_network` for the exact DNS name or IP address
+the transparent relay named. There is no `*` fallback and no direct-IP mode;
+networking that cannot use the relay is disabled:
 
 ```jsonc
 {

@@ -156,27 +156,51 @@ override it with the fs plugin option `execAllowlist` in `opencode.jsonc`:
 { "package": "./repos/opencode-fs-plugin", "options": { "execAllowlist": ["npm", "uv"] } }
 ```
 
-The project is read/write/exec. **Egress starts proxy-only, and there are no
-per-call grants.** The run gets its own egress proxy with no direct route; every
-host must be approved through `fs_exec_network`, which asks with the host as the
-resource and retries with it added. The permission rules are the allowlist: a
-`*` deny plus host allows fails closed for everything else. When the proxy
-cannot carry the run (UDP/ICMP, a client that ignores it, or Linux T2), the run
-asks with the target from its output/arguments, or `*` when none is known, and
-retries with all-IP; that is not host-scoped.
+The project is read/write/exec. **Network egress needs Linux tier T1** and uses
+procage's transparent relay. There are no per-call grants. Every TCP/UDP flow is
+named as a DNS QNAME, TLS SNI, HTTP `Host`, QUIC SNI, or IP literal, and that
+exact resource is approved through `fs_exec_network`; ports, URLs, and payloads
+are never part of the permission. The rules are the allowlist: a `*` deny plus
+name/address allows fails closed for anything else.
+
+DNS is authorized by QNAME. Allowed answers feed a per-run address-to-name
+cache: a nameless flow is allowed by a fresh allowed name bound to its address,
+else by the address. A named flow needs the exact `(name, address)` from an
+allowed answer plus the allowed name, or both name and address allowed; a denied
+named identity is never rescued by an allowed address. Allow an address in
+addition to the name when a program connects to an IP literal, or when a named
+flow's exact `(name, address)` was not returned by an allowed DNS answer.
+
+DoH blocking is best-effort: TCP/853 and known DoH names are refused, but custom
+or unknown DoH endpoints on other names or ports may not be recognized. ECH
+detected in TLS or QUIC is visibly refused.
 
 ```js
 await tools.fs.exec({ command: "npm", args: ["install"], timeoutMs: 300000 })
 ```
 
+Proxy variables (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`, lowercase
+forms, npm proxy settings) pass through explicitly. The relay treats the proxy
+as the destination, never its `CONNECT` target, so allow the proxy's address or
+cached DNS name in `fs_exec_network`; approving it lets the proxy reach whatever
+it forwards. No other caller environment variable is forwarded explicitly, but
+the preset's own allowlist still applies, and a proxy variable may itself carry
+proxy credentials.
+
 Denied paths ask `external_directory` and approval covers the denied path's
-containing directory (or nearest existing ancestor). Denied access returns
-`violations` and a `hint`. In all-IP mode DNS works through the
-systemd-resolved, nscd, or SSSD sockets where the kernel can scope them; other
-Unix sockets stay blocked and plain UDP DNS works everywhere.
-`command` is a bare name, `args` are literal, and `cwd` is sandboxed. Direct
-calls return JSON with `exitCode`/`stdout`/`stderr` and violations; in `fs.pipe`
-the stage passes raw stdout.
+containing directory (or nearest existing ancestor) only when procage reports a
+structured **write** violation (`file-write-*`). Read, exec, network, and
+unknown operations never add a write rule; otherwise no path grant is inferred
+and access stays denied — pre-grant the path or configure a rule. A path printed
+on stdout or stderr is reported, never auto-approved. Denied access returns
+`violations` and a `hint`. On Linux T2 or macOS the relay is unavailable, and a
+relay control server that cannot start is treated the same way: the run
+retries once with networking off (`net: "none"`, no resolver sockets, no macOS
+resolver grant) and reports `networkMode: "disabled"`. A denial, lost control
+link, malformed frame, or decision timeout refuses the flow; there is no
+direct-IP fallback. `command` is a bare name, `args` are literal, and `cwd` is
+sandboxed. Direct calls return JSON with `exitCode`/`stdout`/`stderr` and
+violations; in `fs.pipe` the stage passes raw stdout.
 
 ```js
 await tools.fs.pipe({
@@ -424,8 +448,8 @@ await tools.fs.http_request({
 - `fs.sed` supports `s<delim>pattern<delim>replacement<delim>flags` with `g`,
   `i` and `p`. It is not a full sed interpreter.
 - `fs.exec` requires procage: Linux x64/arm64, glibc 2.28+, Node 22.12+.
-  Egress starts proxy-only and escalates to all-IP when the proxy cannot carry
-  it; external paths are denied until approved.
+  Network egress needs Linux T1; elsewhere networking is disabled. External
+  paths are denied until approved.
 - `fs.find` has no arbitrary `-exec`; use `action: "delete"`/`"trash"` for the
   common cleanup case, or `fs.rm`/`fs.trash` separately.
 - No `xz`, `zstd`, `7z`, `rar`, `chattr`, ACLs, xattrs, or `rsync`.
@@ -481,8 +505,9 @@ hidden inside a pipeline. Do not work around a denied tool with shell.
 
 `fs_exec` runs only exact allowlisted names in a procage sandbox. It asserts
 `fs_exec`, asks `external_directory` for a blocked path, and asks
-`fs_exec_network` with the refused host or all-IP target (or `*` when none is
-known), then retries. There are no per-call grants and no shell.
+`fs_exec_network` with the exact DNS name or IP address named by the relay.
+There is no `*` fallback and no direct-IP mode; networking that cannot use the
+relay is disabled. There are no per-call grants and no shell.
 
 `fs_http_request` reuses the built-in `webfetch` permission with the requested
 URL as the resource, so one rule set covers both; each redirect hop is checked

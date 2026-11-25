@@ -46,14 +46,19 @@ export class PermissionGate {
     private readonly assertPermission: PermissionAssert,
   ) {}
 
-  /** Assert an action on trusted tool-owned paths without an external gate. */
+  /**
+   * Assert an action on trusted tool-owned paths without an external gate.
+   * An empty list is a deliberate wildcard request; any other list saves its
+   * exact resources, so "allow always" never widens a specific host or path to
+   * every resource of the action.
+   */
   async assertTrusted(resources: readonly string[]): Promise<void> {
-    await this.assertAction(resources.length === 0 ? ["*"] : [...resources], ["*"]);
+    await this.assertAction(resources.length === 0 ? ["*"] : [...resources]);
   }
 
   async assert(entries: readonly PermissionEntry[]): Promise<void> {
     if (entries.length === 0) {
-      await this.assertAction(["*"], ["*"]);
+      await this.assertAction(["*"]);
       return;
     }
 
@@ -83,15 +88,20 @@ export class PermissionGate {
           : (entry.resource ?? this.sandboxResource(entry.target.full)),
       ),
     );
-    await this.assertAction(resources, ["*"]);
+    await this.assertAction(resources);
   }
 
-  private async assertAction(resources: string[], save: string[]): Promise<void> {
+  /**
+   * `save` mirrors the asserted resources so a persisted "allow always" rule
+   * stays as narrow as the request. The only wildcard is the explicit `*` the
+   * caller asked for (an empty-call default or a supplied wildcard).
+   */
+  private async assertAction(resources: string[]): Promise<void> {
     await this.assertPermission({
       ...this.base(),
       action: this.action,
       resources,
-      save,
+      save: [...resources],
     });
   }
 

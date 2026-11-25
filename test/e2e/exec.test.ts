@@ -5,29 +5,24 @@
 
 import { afterEach, describe, expect, it } from "vitest";
 import * as fs from "node:fs/promises";
+import * as net from "node:net";
+import * as os from "node:os";
 import * as path from "node:path";
 import { FsError } from "../../src/core/errors.js";
 import { Sandbox } from "../../src/core/sandbox.js";
 import {
   DEFAULT_EXEC_ALLOWLIST,
-  RESOLVER_SOCKETS,
-  applyNetworkPolicy,
-  approveIpFallback,
-  approveProxyHosts,
+  addOptionalRoots,
   blockedHint,
-  detectsNetworkDenial,
   discoverExternalPaths,
-  escalationTargets,
   execTool,
   filterViolations,
-  isProxyGap,
+  isSafeExecName,
   isSandboxBlocked,
-  networkTargetsOf,
   normalizeExecAllowlist,
-  proxyHostOf,
-  ProxyUnavailableError,
-  shouldEscalateIp,
+  relayGapReason,
   type ExecOutcome,
+  type PolicyDocument,
 } from "../../src/tools/exec.js";
 import { pipeTool } from "../../src/tools/pipe.js";
 import { makeOutside, makeRoot, pathExists, runSpec } from "../helpers.js";
@@ -48,6 +43,81 @@ function parsed(result: { result: { stdout: Buffer } }): Record<string, unknown>
   return JSON.parse(result.result.stdout.toString()) as Record<string, unknown>;
 }
 
+/** Ports the relay sniffs as HTTP; the fixture falls back to an ephemeral one. */
+const HTTP_PORTS = [8080, 8000, 8888, 3000, 5000] as const;
+
+/** RFC 1918 only: the fixture must never reach a public or loopback address. */
+function isPrivateIPv4(address: string): boolean {
+  const octets = address.split(".").map(Number);
+  if (octets.length !== 4 || octets.some((octet) => !Number.isInteger(octet))) return false;
+  const [a, b] = octets as [number, number, number, number];
+  return a === 10 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31);
+}
+
+/** First non-internal RFC 1918 address; undefined when the host has none. */
+function privateIPv4(): string | undefined {
+  for (const infos of Object.values(os.networkInterfaces())) {
+    for (const info of infos ?? []) {
+      if (info.family === "IPv4" && !info.internal && isPrivateIPv4(info.address)) {
+        return info.address;
+      }
+    }
+  }
+  return undefined;
+}
+
+const PRIVATE_IPV4 = privateIPv4();
+
+interface LocalFixture {
+  address: string;
+  port: number;
+  connections: () => number;
+  close: () => Promise<void>;
+}
+
+/** A LAN-only HTTP fixture; no route leaves the local network. */
+async function startLocalFixture(address: string): Promise<LocalFixture> {
+  let connections = 0;
+  for (const candidate of [...HTTP_PORTS, 0]) {
+    const sockets = new Set<net.Socket>();
+    const server = net.createServer((socket) => {
+      connections++;
+      sockets.add(socket);
+      socket.on("close", () => sockets.delete(socket));
+      socket.on("error", () => {});
+      socket.once("data", () => {
+        socket.end("HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+      });
+      socket.resume();
+    });
+    server.on("error", () => {});
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const onError = (error: Error) => reject(error);
+        server.once("error", onError);
+        server.listen(candidate, address, () => {
+          server.off("error", onError);
+          resolve();
+        });
+      });
+    } catch {
+      server.close();
+      continue;
+    }
+    const bound = server.address() as net.AddressInfo;
+    return {
+      address,
+      port: bound.port,
+      connections: () => connections,
+      close: async () => {
+        for (const socket of sockets) socket.destroy();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      },
+    };
+  }
+  throw new Error(`no local TCP fixture port available on ${address}`);
+}
+
 describe("exec", () => {
   it("runs an allowlisted command and returns JSON", async () => {
     const { sb } = await setup();
@@ -59,6 +129,48 @@ describe("exec", () => {
     );
     expect(parsed(result)).toMatchObject({ command: "node", exitCode: 0, timedOut: false, stdout: "ok", stderr: "" });
     expect(result.requests.some((request) => request.action === "fs_exec")).toBe(true);
+  });
+
+  it("passes only proxy settings beyond the preset environment allowlist", async () => {
+    const { sb } = await setup();
+    const original = {
+      HTTPS_PROXY: process.env.HTTPS_PROXY,
+      https_proxy: process.env.https_proxy,
+      npm_config_proxy: process.env.npm_config_proxy,
+      FS_EXEC_TEST_CANARY: process.env.FS_EXEC_TEST_CANARY,
+    };
+    process.env.HTTPS_PROXY = "http://proxy.example:8443";
+    process.env.https_proxy = "http://proxy.example:8443";
+    process.env.npm_config_proxy = "http://proxy.example:8443";
+    process.env.FS_EXEC_TEST_CANARY = "must-not-reach-the-child";
+    try {
+      const script =
+        "process.stdout.write(JSON.stringify({" +
+        "secret:process.env.FS_EXEC_TEST_CANARY??null," +
+        "upper:process.env.HTTPS_PROXY??null," +
+        "lower:process.env.https_proxy??null," +
+        "npm:process.env.npm_config_proxy??null," +
+        "home:process.env.HOME??null," +
+        "path:process.env.PATH??null" +
+        "}))";
+      const result = await runSpec(execTool, { command: "node", args: ["-e", script] }, sb, {
+        execAllowlist: ["node"],
+      });
+      const seen = JSON.parse(parsed(result).stdout as string) as Record<string, string | null>;
+      expect(seen).toMatchObject({
+        secret: null,
+        upper: "http://proxy.example:8443",
+        lower: "http://proxy.example:8443",
+        npm: "http://proxy.example:8443",
+      });
+      expect(seen.home).toEqual(expect.any(String));
+      expect(seen.path).toEqual(expect.any(String));
+    } finally {
+      for (const [name, value] of Object.entries(original)) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
   });
 
   it("captures stderr and a non-zero exit code", async () => {
@@ -258,9 +370,71 @@ describe("exec", () => {
       { execAllowlist: ["node"] },
     );
     expect(result.result.stdout.toString()).toBe("abc");
+    expect(
+      result.requests.some((request) => request.action === "fs_exec" && request.resources.includes("*")),
+    ).toBe(false);
   });
 
-  it("auto-approves a denied external path", async () => {
+  it.skipIf(PRIVATE_IPV4 === undefined)(
+    "a pipe exec stage asserts exact resources without a wildcard",
+    async () => {
+      const address = PRIVATE_IPV4;
+      if (address === undefined) throw new Error("no private interface for the relay fixture");
+      const fixture = await startLocalFixture(address);
+      try {
+        const { sb } = await setup();
+        const script =
+          "const n=require('net');" +
+          `const s=n.connect(${fixture.port},${JSON.stringify(fixture.address)});` +
+          `s.on('connect',()=>s.write('GET / HTTP/1.1\\r\\nHost: ${fixture.address}\\r\\nConnection: close\\r\\n\\r\\n'));` +
+          "s.on('error',(e)=>{console.error(e.code);process.exit(0)});" +
+          "s.on('close',()=>process.exit(0));" +
+          "setTimeout(()=>process.exit(0),3000);";
+        const result = await runSpec(
+          pipeTool,
+          {
+            stages: [
+              { tool: "exec", args: { command: "node", args: ["-e", script] } },
+              { tool: "cat" },
+            ],
+          },
+          sb,
+          { execAllowlist: ["node"] },
+        );
+        const execRequests = result.requests.filter((request) => request.action === "fs_exec");
+        expect(execRequests.length).toBeGreaterThan(0);
+        expect(execRequests.every((request) => !request.resources.includes("*"))).toBe(true);
+        expect(execRequests.some((request) => request.resources.includes(sb.root))).toBe(true);
+        expect(
+          result.requests.some(
+            (request) =>
+              request.action === "fs_exec_network" && request.resources.includes(fixture.address),
+          ),
+        ).toBe(true);
+        expect(fixture.connections()).toBeGreaterThan(0);
+      } finally {
+        await fixture.close();
+      }
+    },
+  );
+
+  it("aborts during setup before a relay or child starts", async () => {
+    const { sb } = await setup();
+    const controller = new AbortController();
+    async function* stdin(): AsyncGenerator<Buffer> {
+      controller.abort();
+      yield Buffer.from("x");
+    }
+    await expect(
+      runSpec(execTool, { command: "node", args: ["-e", ""] }, sb, {
+        execAllowlist: ["node"],
+        signal: controller.signal,
+        stdin: stdin(),
+      }),
+    ).rejects.toMatchObject({ code: "interrupted" });
+  });
+
+  it("does not grant an external path from the child's stderr", async () => {
     const { sb } = await setup();
     const outside = await makeOutside();
     roots.push(outside.dir);
@@ -275,25 +449,19 @@ describe("exec", () => {
       sb,
       { execAllowlist: ["node"] },
     );
-    expect(parsed(result).exitCode).toBe(0);
-    expect(result.requests.some((request) => request.action === "external_directory")).toBe(true);
-    expect(parsed(result).externalPaths).toContain(outside.dir);
-    expect(await fs.readFile(file, "utf8")).toBe("ok");
+    const body = parsed(result);
+    expect(body).toMatchObject({ exitCode: 1, sandboxBlocked: true, externalPaths: [] });
+    expect(
+      result.requests.some(
+        (request) =>
+          request.action === "external_directory" &&
+          request.resources.some((resource) => resource.includes(outside.dir)),
+      ),
+    ).toBe(false);
+    expect(await fs.readFile(file, "utf8")).toBe("old\n");
   });
 
-  it("approves a denied directory boundary", async () => {
-    const { sb } = await setup();
-    const outside = await makeOutside();
-    roots.push(outside.dir);
-    const script = `console.error('EACCES ' + ${JSON.stringify(outside.dir)}); process.exit(1);`;
-    const result = await runSpec(execTool, { command: "node", args: ["-e", script] }, sb, {
-      execAllowlist: ["node"],
-    });
-    expect(result.requests.some((request) => request.action === "external_directory")).toBe(true);
-    expect(parsed(result).externalPaths).toContain(outside.dir);
-  });
-
-  it("reports a path that remains denied after approval", async () => {
+  it("reports a denied external write without a path grant", async () => {
     const { sb } = await setup();
     const outside = await makeOutside();
     roots.push(outside.dir);
@@ -309,137 +477,86 @@ describe("exec", () => {
       sb,
       { execAllowlist: ["node"] },
     );
-    expect(parsed(result)).toMatchObject({ sandboxBlocked: true, exitCode: 1 });
-    expect(parsed(result).stderr).toMatch(/EACCES|EPERM|EROFS/);
-    expect(parsed(result).externalPaths).toContain(outside.dir);
-  });
-
-  it("approves the nearest existing ancestor of a missing path", async () => {
-    const { sb } = await setup();
-    const outside = await makeOutside();
-    roots.push(outside.dir);
-    const missing = path.join(outside.dir, "missing", "nested", "***");
-    const script = `console.error('EACCES ' + ${JSON.stringify(missing)}); process.exit(1);`;
-    const result = await runSpec(execTool, { command: "node", args: ["-e", script] }, sb, {
-      execAllowlist: ["node"],
+    expect(parsed(result)).toMatchObject({
+      sandboxBlocked: true,
+      exitCode: 1,
+      externalPaths: [],
     });
-    expect(parsed(result).externalPaths).toContain(outside.dir);
-  });
-
-  it("escalates a proxied run that needs a direct route to all-IP", async () => {
-    const { sb } = await setup();
-    const script =
-      "const n=require('net');const s=n.connect(443,'1.1.1.1');" +
-      "s.on('connect',()=>process.exit(0));" +
-      "s.on('error',(e)=>{console.error(e.message);process.exit(0)});" +
-      "setTimeout(()=>process.exit(0),3000);";
-    const result = await runSpec(
-      execTool,
-      { command: "node", args: ["-e", script] },
-      sb,
-      { execAllowlist: ["node"] },
-    );
-    expect(
-      result.requests.some(
-        (request) => request.action === "fs_exec_network" && request.resources.includes("1.1.1.1"),
-      ),
-    ).toBe(true);
-    expect(parsed(result)).toMatchObject({ network: true, networkMode: "ip" });
-  });
-
-  it("escalates UDP to all-IP for an approved address", async () => {
-    const { sb } = await setup();
-    const script =
-      "const d=require('dgram').createSocket('udp4');" +
-      "d.on('error',(e)=>{console.error(e.message);process.exit(0)});" +
-      "d.send('x',53,'8.8.8.8',(e)=>{if(e)console.error(e.message);process.exit(0)});" +
-      "setTimeout(()=>process.exit(0),3000);";
-    const result = await runSpec(
-      execTool,
-      { command: "node", args: ["-e", script] },
-      sb,
-      { execAllowlist: ["node"] },
-    );
-    expect(
-      result.requests.some(
-        (request) => request.action === "fs_exec_network" && request.resources.includes("8.8.8.8"),
-      ),
-    ).toBe(true);
-    expect(parsed(result)).toMatchObject({ network: true, networkMode: "ip" });
-  });
-
-  it("forces network through the proxy and asks for every host", async () => {
-    const { sb } = await setup();
-    const allowed = await runSpec(
-      execTool,
-      { command: "curl", args: ["-sS", "-o", "/dev/null", "-w", "%{http_code}", "https://example.com"] },
-      sb,
-      { execAllowlist: ["curl"] },
-    );
-    // Linux T2 has no proxy-only route; the run falls back to all-IP.
-    if (parsed(allowed).networkMode !== "proxy") return;
-    expect(parsed(allowed)).toMatchObject({ exitCode: 0, network: true, networkMode: "proxy" });
-    expect(parsed(allowed).networkHosts).toEqual(["example.com:443"]);
-    expect(
-      allowed.requests.some(
-        (request) => request.action === "fs_exec_network" && request.resources.includes("example.com"),
-      ),
-    ).toBe(true);
-
-    const refused = await runSpec(
-      execTool,
-      { command: "curl", args: ["-sS", "https://example.org"] },
-      sb,
-      { execAllowlist: ["curl"] },
-    );
-    expect(
-      refused.requests.some(
-        (request) => request.action === "fs_exec_network" && request.resources.includes("example.org"),
-      ),
-    ).toBe(true);
-    expect(parsed(refused).exitCode).toBe(0);
-    expect(parsed(refused).networkHosts).toContain("example.org:443");
-  });
-
-  it("runs npm through the proxy after approving its host", async () => {
-    const { sb } = await setup();
-    const result = await runSpec(
-      execTool,
-      { command: "npm", args: ["view", "npm", "version", "--fetch-retries=0"], timeoutMs: 60_000 },
-      sb,
-      { execAllowlist: ["npm"] },
-    );
-    if (parsed(result).networkMode !== "proxy") return;
-    expect(parsed(result).exitCode).toBe(0);
+    expect(parsed(result).stderr).toMatch(/EACCES|EPERM|EROFS/);
     expect(
       result.requests.some(
         (request) =>
-          request.action === "fs_exec_network" && request.resources.includes("registry.npmjs.org"),
+          request.action === "external_directory" &&
+          request.resources.some((resource) => resource.includes(outside.dir)),
       ),
-    ).toBe(true);
-    expect(parsed(result).networkHosts).toContain("registry.npmjs.org:443");
-  }, 90_000);
-
-  it("escalates a proxy-ignoring client to all-IP", async () => {
-    const { sb } = await setup();
-    const result = await runSpec(
-      execTool,
-      {
-        command: "curl",
-        args: ["--noproxy", "*", "-sS", "-o", "/dev/null", "https://example.com"],
-      },
-      sb,
-      { execAllowlist: ["curl"] },
-    );
-    expect(
-      result.requests.some(
-        (request) => request.action === "fs_exec_network" && request.resources.includes("example.com"),
-      ),
-    ).toBe(true);
-    expect(parsed(result)).toMatchObject({ network: true, networkMode: "ip" });
+    ).toBe(false);
   });
 
-  it("handles an unapprovable path and a repeated denial", async () => {
+  it("never grants paths printed by the child", async () => {
+    const { sb } = await setup();
+    const outside = await makeOutside();
+    roots.push(outside.dir);
+    const fake = path.join(outside.dir, "printed.txt");
+    const script =
+      `console.log(${JSON.stringify(fake)});` +
+      `console.error('EACCES: permission denied, open ' + ${JSON.stringify(JSON.stringify(fake))});` +
+      `console.error('path: ' + ${JSON.stringify(JSON.stringify(fake))});` +
+      "process.exit(1);";
+    const result = await runSpec(execTool, { command: "node", args: ["-e", script] }, sb, {
+      execAllowlist: ["node"],
+    });
+    expect(
+      result.requests.some(
+        (request) =>
+          request.action === "external_directory" &&
+          request.resources.some((resource) => resource.includes(fake)),
+      ),
+    ).toBe(false);
+    expect(parsed(result).externalPaths).toEqual([]);
+    expect(await fs.readFile(fake, "utf8").catch(() => "missing")).toBe("missing");
+  });
+
+  it.skipIf(PRIVATE_IPV4 === undefined)("runs without networking by default", async () => {
+    const address = PRIVATE_IPV4;
+    if (address === undefined) throw new Error("no private interface for the relay fixture");
+    const fixture = await startLocalFixture(address);
+    try {
+      expect(isPrivateIPv4(fixture.address)).toBe(true);
+      const { sb } = await setup();
+      const script =
+        "const n=require('net');" +
+        `const s=n.connect(${fixture.port},${JSON.stringify(fixture.address)});` +
+        `s.on('connect',()=>s.write('GET / HTTP/1.1\\r\\nHost: ${fixture.address}\\r\\nConnection: close\\r\\n\\r\\n'));` +
+        "s.on('error',(e)=>{console.error(e.code);process.exit(0)});" +
+        "s.on('close',()=>process.exit(0));" +
+        "setTimeout(()=>process.exit(0),3000);";
+      const result = await runSpec(execTool, { command: "node", args: ["-e", script] }, sb, {
+        execAllowlist: ["node"],
+      });
+      const body = parsed(result);
+      if (body.networkMode === "disabled") {
+        expect(result.requests.some((request) => request.action === "fs_exec_network")).toBe(false);
+        expect(body.network).toBe(false);
+      } else {
+        expect(body).toMatchObject({
+          network: true,
+          networkMode: "relay",
+          networkHosts: [fixture.address],
+        });
+        expect(fixture.connections()).toBeGreaterThan(0);
+        expect(
+          result.requests.some(
+            (request) =>
+              request.action === "fs_exec_network" && request.resources.includes(fixture.address),
+          ),
+        ).toBe(true);
+      }
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("reports a repeated denied path without inventing a grant", async () => {
     const { sb } = await setup();
     const outside = await makeOutside();
     roots.push(outside.dir);
@@ -449,7 +566,6 @@ describe("exec", () => {
     const script = [
       "const fs=require('fs');",
       `try{fs.writeFileSync(${JSON.stringify(file)},"no")}catch(e){`,
-      "console.error('EACCES /nonexistent/fs-exec/path');",
       "console.error(e.message);",
       "}",
       "process.exit(1);",
@@ -457,9 +573,18 @@ describe("exec", () => {
     const result = await runSpec(execTool, { command: "node", args: ["-e", script] }, sb, {
       execAllowlist: ["node"],
     });
-    expect(parsed(result)).toMatchObject({ sandboxBlocked: true, exitCode: 1 });
-    expect(parsed(result).externalPaths).toContain(outside.dir);
-    expect(result.requests.some((request) => request.action === "external_directory")).toBe(true);
+    expect(parsed(result)).toMatchObject({
+      sandboxBlocked: true,
+      exitCode: 1,
+      externalPaths: [],
+    });
+    expect(
+      result.requests.some(
+        (request) =>
+          request.action === "external_directory" &&
+          request.resources.some((resource) => resource.includes(outside.dir)),
+      ),
+    ).toBe(false);
   });
 
   it("kills detached descendants", async () => {
@@ -537,18 +662,6 @@ describe("exec", () => {
 });
 
 describe("exec sandbox helpers", () => {
-  it("sets resolver sockets in both modes and IP networking only for ip", () => {
-    const on = { fs: [], net: "none", ipc: { unix_sockets: [] as string[] } };
-    applyNetworkPolicy(on, "ip");
-    expect(on.net).toBe("ip");
-    expect(on.ipc.unix_sockets).toEqual([...RESOLVER_SOCKETS]);
-
-    const proxy = { fs: [], net: "none", ipc: { unix_sockets: [] as string[] } };
-    applyNetworkPolicy(proxy, "proxy");
-    expect(proxy.net).toBe("none");
-    expect(proxy.ipc.unix_sockets).toEqual([...RESOLVER_SOCKETS]);
-  });
-
   const outcome = (overrides: Partial<ExecOutcome> = {}): ExecOutcome => ({
     stdout: Buffer.alloc(0),
     stderr: Buffer.alloc(0),
@@ -556,7 +669,7 @@ describe("exec sandbox helpers", () => {
     signal: null,
     timedOut: false,
     aborted: false,
-    networkMode: "ip",
+    networkMode: "disabled",
     violations: [],
     ...overrides,
   });
@@ -572,157 +685,71 @@ describe("exec sandbox helpers", () => {
 
   it("discovers and filters blocked paths", async () => {
     const { root, sb } = await setup();
+    const write = (target: string) => ({ ...violation(target), operation: "file-write-data" });
     const found = discoverExternalPaths(
       { sandbox: sb } as never,
       outcome({
-        stderr: Buffer.from("EACCES: permission denied, open '/home/a/x'\nEACCES: open '/home/c/***'\n"),
         violations: [
-          violation("/home/b"),
-          violation("/home/a/x"),
-          violation(`${root}/inside`),
-          { ...violation(""), target: null },
-          violation("family AF_INET"),
+          write("/home/b"),
+          write("/home/a/x"),
+          write(`${root}/inside`),
+          { ...write(""), target: null },
+          write("family AF_INET"),
+          violation("/home/read"),
+          { ...violation("/home/exec"), operation: "process-exec" },
+          { ...violation("/home/qname"), operation: "network-outbound" },
         ],
       }),
     );
-    expect(found.sort()).toEqual(["/home/a/x", "/home/b", "/home/c"]);
+    expect(found.sort()).toEqual(["/home/a/x", "/home/b"]);
+  });
 
+  it("ignores paths printed by the child", async () => {
+    const { sb } = await setup();
     const ignored = discoverExternalPaths(
       { sandbox: sb } as never,
-      outcome({ stderr: Buffer.from("look at /home/z\n") }),
+      outcome({
+        stdout: Buffer.from("EACCES /home/out/evil\npath: '/home/out/evil'\n"),
+        stderr: Buffer.from(
+          "EACCES: permission denied, open '/home/a/x'\npath: '/home/err/evil'\nRead-only file system /home/err/ro\n",
+        ),
+      }),
     );
     expect(ignored).toEqual([]);
   });
 
-  it("classifies blocked and network results", () => {
+  it("never treats a relay denial as a filesystem path", async () => {
+    const { sb } = await setup();
+    const found = discoverExternalPaths(
+      { sandbox: sb } as never,
+      outcome({
+        violations: [
+          { ...violation("/home/marius/private.example"), pid: 0, process: "relay", operation: "network-outbound" },
+          { ...violation("/home/c"), operation: "file-write-data" },
+        ],
+      }),
+    );
+    expect(found).toEqual(["/home/c"]);
+  });
+
+  it("grants read and exec only for an optional root that exists", async () => {
+    const doc: PolicyDocument = { fs: [], net: "none", ipc: { unix_sockets: [] } };
+    const asked: string[] = [];
+    await addOptionalRoots(doc, ["/home/linuxbrew", "/var/home/linuxbrew"], async (root) => {
+      asked.push(root);
+      if (root === "/var/home/linuxbrew") throw new Error("absent");
+    });
+    expect(asked).toEqual(["/home/linuxbrew", "/var/home/linuxbrew"]);
+    expect(doc.fs).toEqual([
+      { access: "read", target: { subpath: "/home/linuxbrew" } },
+      { access: "exec", target: { subpath: "/home/linuxbrew" } },
+    ]);
+  });
+
+  it("classifies blocked results", () => {
     expect(isSandboxBlocked(outcome({ violations: [violation("/home/a")] }))).toBe(true);
     expect(isSandboxBlocked(outcome({ stderr: Buffer.from("EACCES"), exitCode: 1 }))).toBe(true);
     expect(isSandboxBlocked(outcome())).toBe(false);
-    expect(detectsNetworkDenial(outcome({ violations: [violation("family AF_INET")] }))).toBe(true);
-    expect(detectsNetworkDenial(outcome({ stderr: Buffer.from("EAI_AGAIN") }))).toBe(true);
-    expect(detectsNetworkDenial(outcome({ stderr: Buffer.from("connect EACCES 1.1.1.1:443") }))).toBe(true);
-    expect(detectsNetworkDenial(outcome({ stdout: Buffer.from("ERR EACCES bind 0.0.0.0") }))).toBe(true);
-    expect(
-      detectsNetworkDenial(outcome({ stderr: Buffer.from("try_proto(): socket(): Operation not permitted") })),
-    ).toBe(true);
-    expect(detectsNetworkDenial(outcome({ violations: [{ ...violation("family AF_INET"), target: null }] }))).toBe(false);
-    expect(detectsNetworkDenial(outcome())).toBe(false);
-  });
-
-  const proxyViolation = (target: string) => ({
-    ...violation(target),
-    pid: 0,
-    process: "proxy",
-    operation: "network-outbound",
-    deniedBy: "refused by the proxy's allowlist",
-  });
-
-  it("reads the refused host from a proxy violation", () => {
-    expect(proxyHostOf(proxyViolation("example.org:443 (not on the allowlist)"))).toEqual({
-      host: "example.org",
-      entry: "example.org:443",
-    });
-    expect(proxyHostOf(proxyViolation("[::1]:8080 (not on the allowlist)"))).toEqual({
-      host: "::1",
-      entry: "[::1]:8080",
-    });
-    expect(proxyHostOf(proxyViolation("example.org (not on the allowlist)"))).toEqual({
-      host: "example.org",
-      entry: "example.org",
-    });
-    expect(proxyHostOf(violation("/home/a"))).toBeUndefined();
-    expect(proxyHostOf(proxyViolation("nonsense"))).toBeUndefined();
-    expect(proxyHostOf({ ...proxyViolation("nonsense"), target: null })).toBeUndefined();
-  });
-
-  it("approves each refused host once", async () => {
-    const asked: string[][] = [];
-    const ctx = {
-      permissionFor: () => ({
-        assertTrusted: async (resources: string[]) => {
-          asked.push(resources);
-        },
-      }),
-    } as never;
-    const hosts = ["example.com"];
-    const refused = outcome({
-      networkMode: "proxy",
-      violations: [
-        proxyViolation("example.org:443 (not on the allowlist)"),
-        proxyViolation("example.org:443 (not on the allowlist)"),
-      ],
-    });
-    expect(await approveProxyHosts(ctx, refused, hosts)).toBe(true);
-    expect(asked).toEqual([["example.org"]]);
-    expect(hosts).toEqual(["example.com", "example.org:443"]);
-    expect(await approveProxyHosts(ctx, refused, hosts)).toBe(false);
-    expect(await approveProxyHosts(ctx, outcome({ violations: refused.violations }), hosts)).toBe(false);
-  });
-
-  it("detects the proxy gap and explains a blocked run", async () => {
-    const api = await import("procage");
-    expect(isProxyGap(new api.CapabilityGapError("gap", [{ construct: "net-proxy" }]), api)).toBe(true);
-    expect(isProxyGap(new api.CapabilityGapError("gap", [{ construct: "net-ip" }]), api)).toBe(false);
-    expect(isProxyGap(new Error("gap"), api)).toBe(false);
-    expect(blockedHint("proxy")).toMatch(/proxy-only/);
-    expect(blockedHint("ip")).toMatch(/permission prompt/);
-  });
-
-  it("escalates only a proxy failure", () => {
-    expect(shouldEscalateIp(new ProxyUnavailableError(), "proxy")).toBe(true);
-    expect(shouldEscalateIp(new ProxyUnavailableError(), "ip")).toBe(false);
-    expect(shouldEscalateIp(new Error("x"), "proxy")).toBe(false);
-  });
-
-  it("extracts network targets from output and arguments", () => {
-    expect(
-      networkTargetsOf(
-        "Failed to connect to example.com port 443",
-        "1.1.1.1:443",
-        "https://[::1]:8080/x",
-        "getaddrinfo api.example.org",
-      ),
-    ).toEqual(expect.arrayContaining(["example.com", "1.1.1.1", "::1", "api.example.org"]));
-    expect(networkTargetsOf("example.com:443")).toEqual(["example.com"]);
-    expect(networkTargetsOf("@example.com")).toEqual(["example.com"]);
-    expect(networkTargetsOf("EACCES bind 0.0.0.0")).toEqual([]);
-    expect(networkTargetsOf("plain words")).toEqual([]);
-  });
-
-  it("prefers named hosts over addresses when escalating", () => {
-    expect(escalationTargets("Failed to connect to example.com port 443", "1.1.1.1:443")).toEqual([
-      "example.com",
-    ]);
-    expect(escalationTargets("1.1.1.1:443")).toEqual(["1.1.1.1"]);
-    expect(escalationTargets("EACCES bind 0.0.0.0")).toEqual([]);
-  });
-
-  it("asks for all networking when no target is known", async () => {
-    const asked: string[][] = [];
-    const ctx = {
-      permissionFor: () => ({
-        assertTrusted: async (resources: string[]) => {
-          asked.push(resources);
-        },
-      }),
-    } as never;
-    await approveIpFallback(ctx, []);
-    await approveIpFallback(ctx, ["8.8.8.8"]);
-    expect(asked).toEqual([["*"], ["8.8.8.8"]]);
-  });
-});
-
-describe("exec allowlist", () => {
-  it("defaults and normalizes overrides", () => {
-    expect(normalizeExecAllowlist(undefined)).toEqual(DEFAULT_EXEC_ALLOWLIST);
-    expect(normalizeExecAllowlist(["node", "node", " uv "])).toEqual(["node", "uv"]);
-    expect(normalizeExecAllowlist([])).toEqual([]);
-  });
-
-  it("rejects malformed allowlists", () => {
-    expect(() => normalizeExecAllowlist("npm")).toThrow(FsError);
-    expect(() => normalizeExecAllowlist([42])).toThrow(FsError);
-    expect(() => normalizeExecAllowlist(["../npm"])).toThrow(FsError);
   });
 
   it("keeps actionable violations only", () => {
@@ -740,9 +767,9 @@ describe("exec allowlist", () => {
       {
         ...base,
         pid: 0,
-        process: "proxy",
+        process: "relay",
         operation: "network-outbound",
-        target: "example.org:443 (not on the allowlist)",
+        target: 'Domain("example.org"):443 from 10.10.0.2 (permission denied)',
       },
       { ...base, target: null },
       { ...base, target: "family AF_NETLINK" },
@@ -750,8 +777,56 @@ describe("exec allowlist", () => {
     expect(kept.map((violation) => violation.target)).toEqual([
       "/home/user/secret",
       "family AF_INET",
-      "example.org:443 (not on the allowlist)",
+      'Domain("example.org"):443 from 10.10.0.2 (permission denied)',
     ]);
+  });
+
+  it("recognizes only an unsupported net-relay gap", async () => {
+    const api = await import("procage");
+    const gap = (construct: string, kind: string) =>
+      ({ construct, kind, target: "linux", subject: null, accept: [] }) as never;
+    expect(relayGapReason(new Error("x"), api)).toBeUndefined();
+    expect(
+      relayGapReason(new api.CapabilityGapError("net-ip", [gap("net-ip", "unsupported")]), api),
+    ).toBeUndefined();
+    expect(
+      relayGapReason(new api.CapabilityGapError("net-relay", [gap("net-relay", "approximation")]), api),
+    ).toBeUndefined();
+    expect(
+      relayGapReason(
+        new api.CapabilityGapError("capability gaps: net-relay on tier t2", [gap("net-relay", "unsupported")]),
+        api,
+      ),
+    ).toBe("capability gaps: net-relay on tier t2");
+    expect(
+      relayGapReason(new api.CapabilityGapError("", [gap("net-relay", "unsupported")]), api),
+    ).toBe("the transparent relay is unavailable on this host");
+  });
+
+  it("explains a blocked run for each network mode", () => {
+    expect(blockedHint("relay")).toMatch(/fs_exec_network/);
+    expect(blockedHint("disabled")).toMatch(/Networking is disabled/);
+  });
+});
+
+describe("exec allowlist", () => {
+  it("defaults and normalizes overrides", () => {
+    expect(normalizeExecAllowlist(undefined)).toEqual(DEFAULT_EXEC_ALLOWLIST);
+    expect(normalizeExecAllowlist(["node", "node", " uv "])).toEqual(["node", "uv"]);
+    expect(normalizeExecAllowlist([])).toEqual([]);
+  });
+
+  it("rejects malformed allowlists", () => {
+    expect(() => normalizeExecAllowlist("npm")).toThrow(FsError);
+    expect(() => normalizeExecAllowlist([42])).toThrow(FsError);
+    expect(() => normalizeExecAllowlist(["../npm"])).toThrow(FsError);
+  });
+
+  it("accepts only bare executable names", () => {
+    expect(isSafeExecName("uv")).toBe(true);
+    expect(isSafeExecName("node-22.1_x")).toBe(true);
+    expect(isSafeExecName("../node")).toBe(false);
+    expect(isSafeExecName("-node")).toBe(false);
   });
 
   it("rejects a command when PATH is unavailable", async () => {

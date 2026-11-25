@@ -15,6 +15,8 @@ import type { ToolResult, ToolSpec } from "../src/core/types.js";
 
 export interface RunSpecOptions {
   deny?: boolean;
+  /** Reject only fs_exec_network, leaving the tool's own permissions allowed. */
+  denyNetwork?: boolean;
   concurrency?: number;
   signal?: AbortSignal;
   tmpdir?: string;
@@ -53,7 +55,7 @@ export async function runSpec<I>(
     (full) => sandbox.resource(full),
     async (request) => {
       requests.push(request);
-      if (options.deny === true) throw new Error("permission denied by test");
+      if (denied(options, request.action)) throw new Error("permission denied by test");
     },
   );
   const result = await spec.run(
@@ -67,7 +69,7 @@ export async function runSpec<I>(
           (full) => sandbox.resource(full),
           async (request) => {
             requests.push(request);
-            if (options.deny === true) throw new Error("permission denied by test");
+            if (denied(options, request.action)) throw new Error("permission denied by test");
           },
         ),
       concurrency: options.concurrency ?? 4,
@@ -79,6 +81,10 @@ export async function runSpec<I>(
     options.stdin === undefined ? {} : { stdin: options.stdin },
   );
   return { input, result, requests };
+}
+
+function denied(options: RunSpecOptions, action: string): boolean {
+  return options.deny === true || (options.denyNetwork === true && action === "fs_exec_network");
 }
 
 export async function runSchema<T>(

@@ -91,7 +91,6 @@ export const pipeTool: ToolSpec<Input> = {
       }
       const parsed = parseSchema(tool.schema, stage.args ?? {}, `${stage.tool} arguments`);
       const gate = ctx.permissionFor(`fs_${tool.name}`);
-      await gate.assertTrusted([]);
       const result = await tool.run(
         { ...ctx, permission: gate },
         parsed,
