@@ -10,70 +10,71 @@ unit, end-to-end and coverage tests.
 
 | Native command | Tool | Main options |
 |---|---|---|
-| `mkdir` | `fs.mkdir` | `parents`, `mode`, `verbose` |
-| `rmdir` | `fs.rmdir` | `parents`, `ignoreNonEmpty`, `verbose` |
-| `rm` | `fs.rm` | `recursive`, `force`, `dir`, `verbose` |
-| `cp` | `fs.cp` | `recursive`, `archive`, `force`, `noClobber`, `update`, `preserve`, `dereference`, `verbose` |
-| `mv` | `fs.mv` | `force`, `noClobber`, `update`, `verbose` |
-| `ls` | `fs.ls` | `all`, `almostAll`, `long`, `human`, `recursive`, `directory`, `inode`, `classify`, `size`, `numericIds`, `noGroup`, `noOwner`, `slash`, `quote`, `versionSort`, `extensionSort`, `fullTime`, `timeStyle`, `hide`, `ignore`, `groupDirectoriesFirst`, `sortBy`, `reverse`, `onePerLine` |
-| `stat` | `fs.stat` | `follow`, `format`, `terse`, `filesystem` |
-| `touch` | `fs.touch` | `accessOnly`, `modifyOnly`, `noCreate`, `date`, `timestamp`, `reference`, `noDereference` |
-| `truncate` | `fs.truncate` | `size`, `reference`, `noCreate`, `noDereference` |
-| `ln` | `fs.ln` | `symbolic`, `force`, `noDereference`, `relative`, `verbose` |
-| `readlink` | `fs.readlink` | `mode` (`raw`, `canonical`, `existing`, `missing`), `noNewline` |
-| `chmod` | `fs.chmod` | octal/symbolic mode, `reference`, `recursive`, `noDereference`, `verbose`, `changes`, `silent` |
-| `sha256sum`/`md5sum` | `fs.hash` | `algorithm`, `tag`; hashes files or stdin |
-| `du` | `fs.du` | `summarize`, `all`, `human`, `total`, `maxDepth`, `follow`, `oneFileSystem` |
-| `df` | `fs.df` | `human`, `inodes`, `printType`, `all` |
-| `find` | `fs.find` | `name`, `iname`, `pathPattern`, `lname`, `ilname`, `regex`, `iregex`, `type`, `size`, `mtime`, `mmin`, `maxDepth`, `minDepth`, `empty`, `perm`, `uid`, `gid`, `user`, `group`, `links`, `inum`, `samefile`, `fstype`, `newer`, `newerXY`, `printf`, `follow`, `print0`, `sort`, `action` (`print`/`delete`/`trash`), `recursive` |
-| `cat` | `fs.cat` | `number`, `numberNonBlank`, `squeezeBlank`, `showEnds`, `showTabs`, `showNonPrinting` |
-| `head` | `fs.head` | `lines`, `skip`, `bytes`, `quiet`, `verbose` |
-| `tail` | `fs.tail` | `lines`, `bytes`, `fromStart`, `quiet`, `verbose`, `follow`, `timeoutMs`, `intervalMs`, `maxBytes` |
-| `tee` | `fs.tee` | `append`, `content` |
-| `wc` | `fs.wc` | `lines`, `words`, `bytes`, `chars`, `maxLineLength` |
-| `sort` | `fs.sort` | `numeric`, `generalNumeric`, `humanNumeric`, `version`, `reverse`, `unique`, `ignoreCase`, `dictionary`, `ignoreNonPrinting`, `ignoreLeadingBlanks`, `stable`, `check`, `checkQuiet`, `zeroTerminated`, `keys`, `field`, `separator` |
-| `uniq` | `fs.uniq` | `count`, `repeated`, `uniqueOnly`, `ignoreCase`, `skipFields`, `skipChars` |
-| `cut` | `fs.cut` | `fields`, `characters`, `bytes`, `delimiter`, `outputDelimiter`, `complement`, `onlyDelimited` |
-| `tr` | `fs.tr` | `set1`, `set2`, `delete`, `squeeze`, `complement`; ranges and classes |
-| `sed` | `fs.sed` | `script`, `expressions`, `inPlace`, `extendedRegexp`, `quiet`; `s///` subset |
-| `grep` | `fs.grep` | `recursive`, `include`, `exclude`, `ignoreCase`, `invert`, `lineNumbers`, `withFilename`, `noFilename`, `filesWithMatches`, `filesWithoutMatch`, `count`, `onlyMatching`, `word`, `line`, `fixed`, `context`, `before`, `after`, `maxCount`, `noMessages` |
-| `tar` | `fs.tar` | `create`/`extract`/`list`, `gzip`, `directory`, `stripComponents`, `exclude`, `verbose`, `input`, `member` |
-| `zip` | `fs.zip` | `archive`, `paths`, `level`, `input`, `member` |
-| `unzip` | `fs.unzip` | `extract`/`list`, `directory`, `overwrite`, `noOverwrite` |
-| `gzip` | `fs.gzip` | `keep`, `force`, `stdout`, `level` |
-| `gunzip` | `fs.gunzip` | `keep`, `force`, `stdout`, `suffix` |
-| `mktemp` | `fs.mktemp` | `template`, `directory`, `tmpdir`, `suffix` |
-| `trash` | `fs.trash` | XDG home trash |
-| `diff` | `fs.diff` | `unified`, `brief`, `recursive`, `ignoreWhitespace`, `ignoreCase`, `exclude` |
-| `chown` | `fs.chown` | `user`/`uid`, `group`/`gid`, `recursive`, `noDereference` |
-| `ps` | `fs.ps` | `pids`, `user`, `command`, `sortBy`, `limit`, `noHeader`, `format` |
-| `pgrep` | `fs.pgrep` | `pattern`, `full`, `ignoreCase`, `user`, `newest`, `oldest`, `count`, `delimiter` |
-| `kill` | `fs.kill` | `pids`, `signal`, `dryRun`; pid 0/1 and groups rejected |
-| `file` | `fs.file` | `paths`, `mime`; content magic detection |
-| `base64` | `fs.base64` | `decode`, `wrap`, `ignoreGarbage` |
-| `od` | `fs.od` | `offset`, `length`, `width` |
-| `strings` | `fs.strings` | `minLength` |
-| `id` | `fs.id` | `only` (`user`, `group`, `groups`) |
-| `uname` | `fs.uname` | `kernel`, `nodename`, `release`, `version`, `machine` |
-| `uptime` | `fs.uptime` | `pretty`, `loadAverage` |
-| `date` | `fs.date` | `value`, `utc`, `format` (`iso`, `unix`, `rfc`, `date`) |
-| `findmnt` | `fs.findmnt` | `paths`, `fsType`, `noHeader` |
-| `mountpoint` | `fs.mountpoint` | `paths`, `quiet` |
-| `tac` | `fs.tac` | reverse lines |
-| `rev` | `fs.rev` | reverse characters per line |
-| `nl` | `fs.nl` | `all`, `start`, `width`, `separator` |
-| `paste` | `fs.paste` | `delimiters`, `serial` |
-| `comm` | `fs.comm` | `suppress1`/`2`/`3`, `outputDelimiter` |
-| `split` | `fs.split` | `lines`/`bytes`, `prefix`, `suffixLength`, `numeric`, `additionalSuffix` |
-| `shuf` | `fs.shuf` | `headCount`, `zeroTerminated` |
-| `fold` | `fs.fold` | `width`, `spaces` |
-| `sync` | `fs.sync` | `paths`; file/directory fsync |
-| `dd` | `fs.dd` | `input`, `output`, `blockSize`, `count`, `skip`, `seek`, `status` |
-| `cpio` | `fs.cpio` | `create`/`list`/`extract` (newc), `directory`, `members`, `input`, `member`, `verbose` |
 | `ar` | `fs.ar` | `create`/`list`/`extract`, `directory`, `members` |
-| HTTP(S) | `fs.http_request` | `url`, `method`, `headers`, `body`, `json`, `output`, `checksum`, `maxBytes`, `timeoutMs`, `failOnError`, `followRedirects`, `maxRedirects` |
+| `base64` | `fs.base64` | `decode`, `wrap`, `ignoreGarbage` |
+| `cat` | `fs.cat` | `number`, `numberNonBlank`, `squeezeBlank`, `showEnds`, `showTabs`, `showNonPrinting` |
+| `chmod` | `fs.chmod` | octal/symbolic mode, `reference`, `recursive`, `noDereference`, `verbose`, `changes`, `silent` |
+| `chown` | `fs.chown` | `user`/`uid`, `group`/`gid`, `recursive`, `noDereference` |
+| `comm` | `fs.comm` | `suppress1`/`2`/`3`, `outputDelimiter` |
+| `cp` | `fs.cp` | `recursive`, `archive`, `force`, `noClobber`, `update`, `preserve`, `dereference`, `verbose` |
+| `cpio` | `fs.cpio` | `create`/`list`/`extract` (newc), `directory`, `members`, `input`, `member`, `verbose` |
+| `cut` | `fs.cut` | `fields`, `characters`, `bytes`, `delimiter`, `outputDelimiter`, `complement`, `onlyDelimited` |
+| `date` | `fs.date` | `value`, `utc`, `format` (`iso`, `unix`, `rfc`, `date`) |
+| `dd` | `fs.dd` | `input`, `output`, `blockSize`, `count`, `skip`, `seek`, `status` |
+| `df` | `fs.df` | `human`, `inodes`, `printType`, `all` |
+| `diff` | `fs.diff` | `unified`, `brief`, `recursive`, `ignoreWhitespace`, `ignoreCase`, `exclude` |
+| `du` | `fs.du` | `summarize`, `all`, `human`, `total`, `maxDepth`, `follow`, `oneFileSystem` |
 | process | `fs.exec` | `command`, `args`, `cwd`, `stdin`, `timeoutMs`; exact allowlist, procage sandbox, no shell |
+| `file` | `fs.file` | `paths`, `mime`; content magic detection |
+| `find` | `fs.find` | `name`, `iname`, `pathPattern`, `lname`, `ilname`, `regex`, `iregex`, `type`, `size`, `mtime`, `mmin`, `maxDepth`, `minDepth`, `empty`, `perm`, `uid`, `gid`, `user`, `group`, `links`, `inum`, `samefile`, `fstype`, `newer`, `newerXY`, `printf`, `follow`, `print0`, `sort`, `action` (`print`/`delete`/`trash`), `recursive` |
+| `findmnt` | `fs.findmnt` | `paths`, `fsType`, `noHeader` |
+| `fold` | `fs.fold` | `width`, `spaces` |
+| `grep` | `fs.grep` | `recursive`, `include`, `exclude`, `ignoreCase`, `invert`, `lineNumbers`, `withFilename`, `noFilename`, `filesWithMatches`, `filesWithoutMatch`, `count`, `onlyMatching`, `word`, `line`, `fixed`, `context`, `before`, `after`, `maxCount`, `noMessages` |
+| `gunzip` | `fs.gunzip` | `keep`, `force`, `stdout`, `suffix` |
+| `gzip` | `fs.gzip` | `keep`, `force`, `stdout`, `level` |
+| `sha256sum`/`md5sum` | `fs.hash` | `algorithm`, `tag`; hashes files or stdin |
+| `head` | `fs.head` | `lines`, `skip`, `bytes`, `quiet`, `verbose` |
+| HTTP(S) | `fs.http_request` | `url`, `method`, `headers`, `body`, `json`, `output`, `checksum`, `maxBytes`, `timeoutMs`, `failOnError`, `followRedirects`, `maxRedirects` |
+| `id` | `fs.id` | `only` (`user`, `group`, `groups`) |
+| jobs | `fs.job` | `id`, `wait`, `cancel`, `list`, `timeoutMs` |
+| `kill` | `fs.kill` | `pids`, `signal`, `dryRun`; pid 0/1 and groups rejected |
+| `ln` | `fs.ln` | `symbolic`, `force`, `noDereference`, `relative`, `verbose` |
+| `ls` | `fs.ls` | `all`, `almostAll`, `long`, `human`, `recursive`, `directory`, `inode`, `classify`, `size`, `numericIds`, `noGroup`, `noOwner`, `slash`, `quote`, `versionSort`, `extensionSort`, `fullTime`, `timeStyle`, `hide`, `ignore`, `groupDirectoriesFirst`, `sortBy`, `reverse`, `onePerLine` |
+| `mkdir` | `fs.mkdir` | `parents`, `mode`, `verbose` |
+| `mktemp` | `fs.mktemp` | `template`, `directory`, `tmpdir`, `suffix` |
+| `mountpoint` | `fs.mountpoint` | `paths`, `quiet` |
+| `mv` | `fs.mv` | `force`, `noClobber`, `update`, `verbose` |
+| `nl` | `fs.nl` | `all`, `start`, `width`, `separator` |
+| `od` | `fs.od` | `offset`, `length`, `width` |
+| `paste` | `fs.paste` | `delimiters`, `serial` |
+| `pgrep` | `fs.pgrep` | `pattern`, `full`, `ignoreCase`, `user`, `newest`, `oldest`, `count`, `delimiter` |
 | shell pipe | `fs.pipe` | `stages`, `input`, `output`, `append` |
+| `ps` | `fs.ps` | `pids`, `user`, `command`, `sortBy`, `limit`, `noHeader`, `format` |
+| `readlink` | `fs.readlink` | `mode` (`raw`, `canonical`, `existing`, `missing`), `noNewline` |
+| `rev` | `fs.rev` | reverse characters per line |
+| `rm` | `fs.rm` | `recursive`, `force`, `dir`, `verbose` |
+| `rmdir` | `fs.rmdir` | `parents`, `ignoreNonEmpty`, `verbose` |
+| `sed` | `fs.sed` | `script`, `expressions`, `inPlace`, `extendedRegexp`, `quiet`; `s///` subset |
+| `shuf` | `fs.shuf` | `headCount`, `zeroTerminated` |
+| `sort` | `fs.sort` | `numeric`, `generalNumeric`, `humanNumeric`, `version`, `reverse`, `unique`, `ignoreCase`, `dictionary`, `ignoreNonPrinting`, `ignoreLeadingBlanks`, `stable`, `check`, `checkQuiet`, `zeroTerminated`, `keys`, `field`, `separator` |
+| `split` | `fs.split` | `lines`/`bytes`, `prefix`, `suffixLength`, `numeric`, `additionalSuffix` |
+| `stat` | `fs.stat` | `follow`, `format`, `terse`, `filesystem` |
+| `strings` | `fs.strings` | `minLength` |
+| `sync` | `fs.sync` | `paths`; file/directory fsync |
+| `tac` | `fs.tac` | reverse lines |
+| `tail` | `fs.tail` | `lines`, `bytes`, `fromStart`, `quiet`, `verbose`, `follow`, `timeoutMs`, `intervalMs`, `maxBytes` |
+| `tar` | `fs.tar` | `create`/`extract`/`list`, `gzip`, `directory`, `stripComponents`, `exclude`, `verbose`, `input`, `member` |
+| `tee` | `fs.tee` | `append`, `content` |
+| `touch` | `fs.touch` | `accessOnly`, `modifyOnly`, `noCreate`, `date`, `timestamp`, `reference`, `noDereference` |
+| `tr` | `fs.tr` | `set1`, `set2`, `delete`, `squeeze`, `complement`; ranges and classes |
+| `trash` | `fs.trash` | XDG home trash |
+| `truncate` | `fs.truncate` | `size`, `reference`, `noCreate`, `noDereference` |
+| `uname` | `fs.uname` | `kernel`, `nodename`, `release`, `version`, `machine` |
+| `uniq` | `fs.uniq` | `count`, `repeated`, `uniqueOnly`, `ignoreCase`, `skipFields`, `skipChars` |
+| `unzip` | `fs.unzip` | `extract`/`list`, `directory`, `overwrite`, `noOverwrite` |
+| `uptime` | `fs.uptime` | `pretty`, `loadAverage` |
+| `wc` | `fs.wc` | `lines`, `words`, `bytes`, `chars`, `maxLineLength` |
+| `zip` | `fs.zip` | `archive`, `paths`, `level`, `input`, `member` |
 
 `fs.head.skip` selects line ranges (`sed -n '20,40p'`). `fs.find` can
 `action: "delete"` or `"trash"` its matches; the starting directory itself is
@@ -105,7 +106,7 @@ await tools.fs.pipe({
 })
 ```
 
-New filter stages: `exec`, `tac`, `rev`, `nl`, `paste`, `shuf`, `fold`, `base64`, `od`,
+Filter stages: `exec`, `tac`, `rev`, `nl`, `paste`, `shuf`, `fold`, `base64`, `od`,
 and `strings`; `dd` and `cpio` are source/sink stages like `tar`.
 
 `fs.http_request` is a pipe source, so network data can feed the same stages:
@@ -217,8 +218,11 @@ await tools.fs.exec({ command: "npm", args: ["install"], timeoutMs: 300000 })
 ```
 
 `command` is a bare name, `args` are literal, and `cwd` is sandboxed. Direct
-calls return JSON with `exitCode`, `stdout`, `stderr`, and violations; a pipe
-stage returns raw stdout so it composes with `grep`, `sort`, `tee`, and the rest.
+calls return JSON with `exitCode`, `stdout`, `stderr`, `violations`, and the
+network fields `network`, `networkMode`, `networkHosts`, and `networkReason`
+(when networking was disabled); `externalPaths` lists the external roots the
+run could write to. A pipe stage returns raw stdout so it composes with `grep`,
+`sort`, `tee`, and the rest.
 
 ```js
 await tools.fs.pipe({
@@ -261,8 +265,8 @@ gap; their input/output cost is dominated by the async I/O above.
 
 ## Background jobs
 
-Every `fs.*` tool accepts `background: true`. The call returns immediately with
-a job id and a status-file path:
+Every tool except `fs.job` accepts `background: true`. The call returns
+immediately with a job id and a status-file path:
 
 ```js
 const started = JSON.parse(
@@ -308,11 +312,12 @@ await tools.wait.for({
 ```
 
 Jobs are process-local: they are lost on an OpenCode server restart, and their
-status files may remain under `/tmp/opencode/fs-jobs/<server-pid>/`. The manager
-allows 8 concurrent jobs and cleans up finished jobs after one hour. Results
-stay in memory and are returned by `fs.job`; the status file contains only the
-job state and metadata. Background permission prompts can appear after the
-starting call returns, and a denied permission fails the job.
+status files may remain under `/tmp/opencode/fs-jobs/<server-pid>/`; set the
+plugin option `jobDir` to move them. The manager allows 8 concurrent jobs and
+cleans up finished jobs after one hour. Results stay in memory and are returned
+by `fs.job`; the status file contains only the job state and metadata.
+Background permission prompts can appear after the starting call returns, and a
+denied permission fails the job.
 
 ## Installing from npm
 
@@ -320,18 +325,18 @@ Add the registry package directly to the plugin list:
 
 ```jsonc
 {
-  "plugins": ["opencode-fs-plugin@3.0.0"]
+  "plugins": ["opencode-fs-plugin@<version>"]
 }
 ```
 
-`opencode plugin add opencode-fs-plugin@3.0.0` installs it and writes the config
+`opencode plugin add opencode-fs-plugin@<version>` installs it and writes the config
 entry. A bare `opencode-fs-plugin` follows the `latest` tag.
 
 OpenCode manages the package under its cache, so the path is not stable. If you
 also want the packaged skill, install it into a project instead:
 
 ```bash
-npm install opencode-fs-plugin@3.0.0
+npm install opencode-fs-plugin@<version>
 ```
 
 ```jsonc
@@ -346,7 +351,7 @@ npm install opencode-fs-plugin@3.0.0
 Download the release tarball, then install it as a normal npm package:
 
 ```bash
-VERSION=3.0.0
+VERSION=<version>
 curl -L -o "opencode-fs-plugin-${VERSION}.tgz" \
   "https://github.com/masterjg/opencode-fs-plugin/releases/download/v${VERSION}/opencode-fs-plugin-${VERSION}.tgz"
 npm install "./opencode-fs-plugin-${VERSION}.tgz"
@@ -375,20 +380,20 @@ OpenCode installs it from Git:
 
 ```jsonc
 {
-  "plugins": ["github:masterjg/opencode-fs-plugin#v3.0.0"]
+  "plugins": ["github:masterjg/opencode-fs-plugin#v<version>"]
 }
 ```
 
-`opencode plugin add 'github:masterjg/opencode-fs-plugin#v3.0.0'` installs the
+`opencode plugin add 'github:masterjg/opencode-fs-plugin#v<version>'` installs the
 same spec and writes the config entry. The equivalent full URL is
-`git+https://github.com/masterjg/opencode-fs-plugin.git#v3.0.0`. A tag is
+`git+https://github.com/masterjg/opencode-fs-plugin.git#v<version>`. A tag is
 checked for updates; use a full commit hash to pin it.
 
 Git plugins are installed under OpenCode's cache, so their package path is not
 stable. If you also want the packaged skill, install with npm instead:
 
 ```bash
-npm install "github:masterjg/opencode-fs-plugin#v3.0.0"
+npm install "github:masterjg/opencode-fs-plugin#v<version>"
 ```
 
 Then use `./node_modules/opencode-fs-plugin` in `plugins` and

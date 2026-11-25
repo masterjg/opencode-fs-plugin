@@ -196,11 +196,13 @@ on stdout or stderr is reported, never auto-approved. Denied access returns
 `violations` and a `hint`. On Linux T2 or macOS the relay is unavailable, and a
 relay control server that cannot start is treated the same way: the run
 retries once with networking off (`net: "none"`, no resolver sockets, no macOS
-resolver grant) and reports `networkMode: "disabled"`. A denial, lost control
-link, malformed frame, or decision timeout refuses the flow; there is no
-direct-IP fallback. `command` is a bare name, `args` are literal, and `cwd` is
-sandboxed. Direct calls return JSON with `exitCode`/`stdout`/`stderr` and
-violations; in `fs.pipe` the stage passes raw stdout.
+resolver grant) and reports `networkMode: "disabled"` plus `networkReason`. A
+denial, lost control link, malformed frame, or decision timeout refuses the
+flow; there is no direct-IP fallback. `command` is a bare name, `args` are
+literal, and `cwd` is sandboxed. Direct calls return JSON with
+`exitCode`/`stdout`/`stderr`, violations, and the network fields `network`,
+`networkMode`, `networkHosts`, and `networkReason`; `externalPaths` lists the
+external roots the run could write to. In `fs.pipe` the stage passes raw stdout.
 
 ```js
 await tools.fs.pipe({
@@ -334,9 +336,9 @@ Pipeable filters include `exec`, `head`, `tail`, `grep`, `sed`, `sort`, `uniq`,
 
 ## Background jobs
 
-Every tool accepts `background: true`. It returns immediately with a job id and
-an atomic status-file path; use it for long copies, searches, archives, or
-hashes, then keep working and collect the result later.
+Every tool except `fs.job` accepts `background: true`. It returns immediately
+with a job id and an atomic status-file path; use it for long copies, searches,
+archives, or hashes, then keep working and collect the result later.
 
 ```js
 const job = JSON.parse(
@@ -357,8 +359,9 @@ await tools.fs.job({ list: true })                  // newest first
 
 `wait` returns the original tool result once the job completes; on timeout it
 returns the status with `timedOut: true`. Jobs are process-local and lost on
-server restart. Status files live under `/tmp/opencode/fs-jobs/<server-pid>/`;
-eight jobs may run at once and finished jobs are cleaned after one hour.
+server restart. Status files live under `/tmp/opencode/fs-jobs/<server-pid>/`
+by default; set the plugin option `jobDir` to move them. Eight jobs may run at
+once and finished jobs are cleaned after one hour.
 
 To wait without blocking the session, combine the status file with `wait_for`.
 Wait for any terminal state, then read the job for the result or error:
