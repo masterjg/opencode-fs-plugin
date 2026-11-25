@@ -15,7 +15,7 @@ import {
   addOptionalRoots,
   blockedHint,
   discoverExternalPaths,
-  execTool,
+  commandTool,
   filterViolations,
   isSafeExecName,
   isSandboxBlocked,
@@ -23,7 +23,7 @@ import {
   relayGapReason,
   type ExecOutcome,
   type PolicyDocument,
-} from "../../src/tools/exec.js";
+} from "../../src/tools/command.js";
 import { pipeTool } from "../../src/tools/pipe.js";
 import { makeOutside, makeRoot, pathExists, runSpec } from "../helpers.js";
 
@@ -34,7 +34,7 @@ afterEach(async () => {
 });
 
 async function setup(): Promise<{ root: string; sb: Sandbox }> {
-  const root = await makeRoot("fs-exec-");
+  const root = await makeRoot("fs-command-");
   roots.push(root);
   return { root, sb: await Sandbox.create(root) };
 }
@@ -118,17 +118,17 @@ async function startLocalFixture(address: string): Promise<LocalFixture> {
   throw new Error(`no local TCP fixture port available on ${address}`);
 }
 
-describe("exec", () => {
+describe("command", () => {
   it("runs an allowlisted command and returns JSON", async () => {
     const { sb } = await setup();
     const result = await runSpec(
-      execTool,
+      commandTool,
       { command: "node", args: ["-e", "process.stdout.write('ok')"] },
       sb,
       { execAllowlist: ["node"] },
     );
     expect(parsed(result)).toMatchObject({ command: "node", exitCode: 0, timedOut: false, stdout: "ok", stderr: "" });
-    expect(result.requests.some((request) => request.action === "fs_exec")).toBe(true);
+    expect(result.requests.some((request) => request.action === "fs_command")).toBe(true);
   });
 
   it("passes only proxy settings beyond the preset environment allowlist", async () => {
@@ -153,7 +153,7 @@ describe("exec", () => {
         "home:process.env.HOME??null," +
         "path:process.env.PATH??null" +
         "}))";
-      const result = await runSpec(execTool, { command: "node", args: ["-e", script] }, sb, {
+      const result = await runSpec(commandTool, { command: "node", args: ["-e", script] }, sb, {
         execAllowlist: ["node"],
       });
       const seen = JSON.parse(parsed(result).stdout as string) as Record<string, string | null>;
@@ -176,7 +176,7 @@ describe("exec", () => {
   it("captures stderr and a non-zero exit code", async () => {
     const { sb } = await setup();
     const result = await runSpec(
-      execTool,
+      commandTool,
       { command: "node", args: ["-e", "console.error('bad'); process.exit(3)"] },
       sb,
       { execAllowlist: ["node"] },
@@ -187,18 +187,18 @@ describe("exec", () => {
 
   it("rejects commands outside the allowlist", async () => {
     const { sb } = await setup();
-    await expect(runSpec(execTool, { command: "rm", args: ["-rf", "."] }, sb)).rejects.toMatchObject({
+    await expect(runSpec(commandTool, { command: "rm", args: ["-rf", "."] }, sb)).rejects.toMatchObject({
       code: "unsupported",
     });
     await expect(
-      runSpec(execTool, { command: "node", args: ["-e", ""] }, sb, { execAllowlist: [] }),
+      runSpec(commandTool, { command: "node", args: ["-e", ""] }, sb, { execAllowlist: [] }),
     ).rejects.toMatchObject({ code: "unsupported" });
   });
 
   it("rejects paths and shell syntax in the command name", async () => {
     const { sb } = await setup();
     for (const command of ["/bin/node", "node -e x", "node;rm", "../node"]) {
-      await expect(runSpec(execTool, { command }, sb, { execAllowlist: [command] })).rejects.toMatchObject({
+      await expect(runSpec(commandTool, { command }, sb, { execAllowlist: [command] })).rejects.toMatchObject({
         code: "invalid",
       });
     }
@@ -207,7 +207,7 @@ describe("exec", () => {
   it("passes arguments verbatim without a shell", async () => {
     const { sb } = await setup();
     const result = await runSpec(
-      execTool,
+      commandTool,
       {
         command: "node",
         args: ["-e", "console.log(process.argv.slice(1).join('|'))", "a;b", "c|d", "$HOME"],
@@ -222,7 +222,7 @@ describe("exec", () => {
     const { root, sb } = await setup();
     await fs.mkdir(path.join(root, "sub"));
     const result = await runSpec(
-      execTool,
+      commandTool,
       { command: "node", args: ["-e", "process.stdout.write(process.cwd())"], cwd: "sub" },
       sb,
       { execAllowlist: ["node"] },
@@ -230,14 +230,14 @@ describe("exec", () => {
     expect(parsed(result).stdout).toMatch(/\/sub$/);
     await fs.writeFile(path.join(root, "file"), "x");
     await expect(
-      runSpec(execTool, { command: "node", args: ["-e", ""], cwd: "file" }, sb, { execAllowlist: ["node"] }),
+      runSpec(commandTool, { command: "node", args: ["-e", ""], cwd: "file" }, sb, { execAllowlist: ["node"] }),
     ).rejects.toMatchObject({ code: "not-directory" });
   });
 
   it("feeds direct stdin", async () => {
     const { sb } = await setup();
     const result = await runSpec(
-      execTool,
+      commandTool,
       { command: "node", args: ["-e", "process.stdin.pipe(process.stdout)"], stdin: "hello" },
       sb,
       { execAllowlist: ["node"] },
@@ -248,7 +248,7 @@ describe("exec", () => {
   it("times out and kills the process", async () => {
     const { sb } = await setup();
     const result = await runSpec(
-      execTool,
+      commandTool,
       { command: "node", args: ["-e", "setTimeout(() => {}, 10000)"], timeoutMs: 100 },
       sb,
       { execAllowlist: ["node"] },
@@ -261,7 +261,7 @@ describe("exec", () => {
     const controller = new AbortController();
     setTimeout(() => controller.abort(), 100);
     const result = await runSpec(
-      execTool,
+      commandTool,
       { command: "node", args: ["-e", "setTimeout(() => {}, 10000)"], timeoutMs: 5000 },
       sb,
       { execAllowlist: ["node"], signal: controller.signal },
@@ -271,7 +271,7 @@ describe("exec", () => {
     const aborted = new AbortController();
     aborted.abort();
     await expect(
-      runSpec(execTool, { command: "node", args: ["-e", ""] }, sb, {
+      runSpec(commandTool, { command: "node", args: ["-e", ""] }, sb, {
         execAllowlist: ["node"],
         signal: aborted.signal,
       }),
@@ -281,7 +281,7 @@ describe("exec", () => {
   it("returns the full stdout", async () => {
     const { sb } = await setup();
     const result = await runSpec(
-      execTool,
+      commandTool,
       {
         command: "node",
         args: ["-e", "process.stdout.write('abc'); setTimeout(() => process.stdout.write('def'), 10)"],
@@ -295,7 +295,7 @@ describe("exec", () => {
   it("rejects an allowlisted command that does not exist", async () => {
     const { sb } = await setup();
     await expect(
-      runSpec(execTool, { command: "definitely-not-a-command" }, sb, {
+      runSpec(commandTool, { command: "definitely-not-a-command" }, sb, {
         execAllowlist: ["definitely-not-a-command"],
       }),
     ).rejects.toBeInstanceOf(FsError);
@@ -304,14 +304,14 @@ describe("exec", () => {
   it("rejects NUL bytes in arguments", async () => {
     const { sb } = await setup();
     await expect(
-      runSpec(execTool, { command: "node", args: ["a\0b"] }, sb, { execAllowlist: ["node"] }),
+      runSpec(commandTool, { command: "node", args: ["a\0b"] }, sb, { execAllowlist: ["node"] }),
     ).rejects.toMatchObject({ code: "invalid" });
   });
 
   it("returns exit code 1 when the child is killed by a signal", async () => {
     const { sb } = await setup();
     const result = await runSpec(
-      execTool,
+      commandTool,
       { command: "node", args: ["-e", "process.kill(process.pid, 'SIGTERM')"] },
       sb,
       { execAllowlist: ["node"] },
@@ -322,7 +322,7 @@ describe("exec", () => {
   it("returns the full stderr", async () => {
     const { sb } = await setup();
     const result = await runSpec(
-      execTool,
+      commandTool,
       { command: "node", args: ["-e", "process.stderr.write('abcdef')"] },
       sb,
       { execAllowlist: ["node"] },
@@ -333,7 +333,7 @@ describe("exec", () => {
   it("forces SIGKILL when the child ignores SIGTERM", async () => {
     const { sb } = await setup();
     const result = await runSpec(
-      execTool,
+      commandTool,
       {
         command: "node",
         args: ["-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"],
@@ -348,7 +348,7 @@ describe("exec", () => {
   it("survives a child closing stdin before the write completes", async () => {
     const { sb } = await setup();
     const result = await runSpec(
-      execTool,
+      commandTool,
       { command: "node", args: ["-e", "process.exit(0)"], stdin: "x".repeat(1_000_000) },
       sb,
       { execAllowlist: ["node"] },
@@ -362,7 +362,7 @@ describe("exec", () => {
       pipeTool,
       {
         stages: [
-          { tool: "exec", args: { command: "node", args: ["-e", "process.stdout.write('abc')"] } },
+          { tool: "command", args: { command: "node", args: ["-e", "process.stdout.write('abc')"] } },
           { tool: "cat" },
         ],
       },
@@ -371,7 +371,7 @@ describe("exec", () => {
     );
     expect(result.result.stdout.toString()).toBe("abc");
     expect(
-      result.requests.some((request) => request.action === "fs_exec" && request.resources.includes("*")),
+      result.requests.some((request) => request.action === "fs_command" && request.resources.includes("*")),
     ).toBe(false);
   });
 
@@ -394,17 +394,17 @@ describe("exec", () => {
           pipeTool,
           {
             stages: [
-              { tool: "exec", args: { command: "node", args: ["-e", script] } },
+              { tool: "command", args: { command: "node", args: ["-e", script] } },
               { tool: "cat" },
             ],
           },
           sb,
           { execAllowlist: ["node"] },
         );
-        const execRequests = result.requests.filter((request) => request.action === "fs_exec");
-        expect(execRequests.length).toBeGreaterThan(0);
-        expect(execRequests.every((request) => !request.resources.includes("*"))).toBe(true);
-        expect(execRequests.some((request) => request.resources.includes(sb.root))).toBe(true);
+        const commandRequests = result.requests.filter((request) => request.action === "fs_command");
+        expect(commandRequests.length).toBeGreaterThan(0);
+        expect(commandRequests.every((request) => !request.resources.includes("*"))).toBe(true);
+        expect(commandRequests.some((request) => request.resources.includes(sb.root))).toBe(true);
         expect(
           result.requests.some(
             (request) =>
@@ -426,7 +426,7 @@ describe("exec", () => {
       yield Buffer.from("x");
     }
     await expect(
-      runSpec(execTool, { command: "node", args: ["-e", ""] }, sb, {
+      runSpec(commandTool, { command: "node", args: ["-e", ""] }, sb, {
         execAllowlist: ["node"],
         signal: controller.signal,
         stdin: stdin(),
@@ -441,7 +441,7 @@ describe("exec", () => {
     const file = path.join(outside.dir, "out.txt");
     await fs.writeFile(file, "old\n");
     const result = await runSpec(
-      execTool,
+      commandTool,
       {
         command: "node",
         args: ["-e", `require('fs').writeFileSync(${JSON.stringify(file)}, "ok")`],
@@ -469,7 +469,7 @@ describe("exec", () => {
     await fs.writeFile(file, "ro\n");
     await fs.chmod(file, 0o444);
     const result = await runSpec(
-      execTool,
+      commandTool,
       {
         command: "node",
         args: ["-e", `require('fs').writeFileSync(${JSON.stringify(file)}, "no")`],
@@ -502,7 +502,7 @@ describe("exec", () => {
       `console.error('EACCES: permission denied, open ' + ${JSON.stringify(JSON.stringify(fake))});` +
       `console.error('path: ' + ${JSON.stringify(JSON.stringify(fake))});` +
       "process.exit(1);";
-    const result = await runSpec(execTool, { command: "node", args: ["-e", script] }, sb, {
+    const result = await runSpec(commandTool, { command: "node", args: ["-e", script] }, sb, {
       execAllowlist: ["node"],
     });
     expect(
@@ -530,7 +530,7 @@ describe("exec", () => {
         "s.on('error',(e)=>{console.error(e.code);process.exit(0)});" +
         "s.on('close',()=>process.exit(0));" +
         "setTimeout(()=>process.exit(0),3000);";
-      const result = await runSpec(execTool, { command: "node", args: ["-e", script] }, sb, {
+      const result = await runSpec(commandTool, { command: "node", args: ["-e", script] }, sb, {
         execAllowlist: ["node"],
       });
       const body = parsed(result);
@@ -570,7 +570,7 @@ describe("exec", () => {
       "}",
       "process.exit(1);",
     ].join("");
-    const result = await runSpec(execTool, { command: "node", args: ["-e", script] }, sb, {
+    const result = await runSpec(commandTool, { command: "node", args: ["-e", script] }, sb, {
       execAllowlist: ["node"],
     });
     expect(parsed(result)).toMatchObject({
@@ -596,7 +596,7 @@ describe("exec", () => {
       'spawn(process.execPath,["-e",code],{detached:true,stdio:"ignore"}).unref();',
       "process.exit(0);",
     ].join("");
-    await runSpec(execTool, { command: "node", args: ["-e", script] }, sb, { execAllowlist: ["node"] });
+    await runSpec(commandTool, { command: "node", args: ["-e", script] }, sb, { execAllowlist: ["node"] });
     await new Promise((resolve) => setTimeout(resolve, 1500));
     expect(await pathExists(out)).toBe(false);
   });
@@ -604,7 +604,7 @@ describe("exec", () => {
   it("reports a missing executable", async () => {
     const { sb } = await setup();
     await expect(
-      runSpec(execTool, { command: "missing-exec-command" }, sb, { execAllowlist: ["missing-exec-command"] }),
+      runSpec(commandTool, { command: "missing-exec-command" }, sb, { execAllowlist: ["missing-exec-command"] }),
     ).rejects.toMatchObject({ code: "not-found" });
   });
 
@@ -614,14 +614,14 @@ describe("exec", () => {
       pipeTool,
       {
         stages: [
-          { tool: "exec", args: { command: "node", args: ["-e", "process.exit(3)"] } },
+          { tool: "command", args: { command: "node", args: ["-e", "process.exit(3)"] } },
           { tool: "cat" },
         ],
       },
       sb,
       { execAllowlist: ["node"] },
     );
-    expect(result.result.metadata?.stages?.[0]).toMatchObject({ tool: "exec", exitCode: 1 });
+    expect(result.result.metadata?.stages?.[0]).toMatchObject({ tool: "command", exitCode: 1 });
   });
 
   it("works as a pipe filter", async () => {
@@ -632,7 +632,7 @@ describe("exec", () => {
       {
         stages: [
           { tool: "cat", args: { paths: ["in.txt"] } },
-          { tool: "exec", args: { command: "node", args: ["-e", "process.stdin.pipe(process.stdout)"] } },
+          { tool: "command", args: { command: "node", args: ["-e", "process.stdin.pipe(process.stdout)"] } },
           { tool: "cat" },
         ],
       },
@@ -649,7 +649,7 @@ describe("exec", () => {
       pipeTool,
       {
         stages: [
-          { tool: "exec", args: { command: "node", args: ["-e", "process.stdin.pipe(process.stdout)"] } },
+          { tool: "command", args: { command: "node", args: ["-e", "process.stdin.pipe(process.stdout)"] } },
           { tool: "cat" },
         ],
         input,
@@ -661,7 +661,7 @@ describe("exec", () => {
   });
 });
 
-describe("exec sandbox helpers", () => {
+describe("command sandbox helpers", () => {
   const outcome = (overrides: Partial<ExecOutcome> = {}): ExecOutcome => ({
     stdout: Buffer.alloc(0),
     stderr: Buffer.alloc(0),
@@ -809,7 +809,7 @@ describe("exec sandbox helpers", () => {
   });
 });
 
-describe("exec allowlist", () => {
+describe("command allowlist", () => {
   it("defaults and normalizes overrides", () => {
     expect(normalizeExecAllowlist(undefined)).toEqual(DEFAULT_EXEC_ALLOWLIST);
     expect(normalizeExecAllowlist(["node", "node", " uv "])).toEqual(["node", "uv"]);
@@ -835,7 +835,7 @@ describe("exec allowlist", () => {
     delete process.env.PATH;
     try {
       await expect(
-        runSpec(execTool, { command: "node", args: ["-e", ""] }, sb, { execAllowlist: ["node"] }),
+        runSpec(commandTool, { command: "node", args: ["-e", ""] }, sb, { execAllowlist: ["node"] }),
       ).rejects.toMatchObject({ code: "not-found" });
     } finally {
       if (original === undefined) delete process.env.PATH;

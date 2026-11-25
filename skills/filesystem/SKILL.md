@@ -25,7 +25,7 @@ With `execute` allowed, call it as `tools.fs.<command>`; agents without
 | Regex substitution or in-place edit | `fs.sed` |
 | Recoverable deletion | `fs.trash` |
 | `curl` fetch, API call, or file download | `fs.curl` |
-| Allowlisted package CLI | `fs.exec` (no shell; default npm/npx/uv/uvx/pip/pip3) |
+| Allowlisted package CLI | `fs.command` (no shell; default npm/npx/uv/uvx/pip/pip3) |
 | Many independent fs calls | one multi-path call, else `Promise.all` in `execute` |
 | Sequential byte pipeline | `fs.pipe` |
 
@@ -54,7 +54,7 @@ what `fs.stat`, `fs.ls`, `fs.hash`, `fs.diff`, or `fs.cat` can confirm.
 | Text filters | `fs.cat`, `fs.head`, `fs.tail`, `fs.grep`, `fs.sed`, `fs.sort`, `fs.uniq`, `fs.cut`, `fs.tr`, `fs.wc`, `fs.tee`, `fs.tac`, `fs.rev`, `fs.nl`, `fs.paste`, `fs.comm`, `fs.split`, `fs.shuf`, `fs.fold` |
 | Compose filters | `fs.pipe` |
 | curl | `fs.curl` (`output`, `checksum`, `maxBytes`, `json`) |
-| Allowlisted package CLI | `fs.exec` (`command`, `args`, `cwd`, `stdin`, `timeoutMs`) |
+| Allowlisted package CLI | `fs.command` (`command`, `args`, `cwd`, `stdin`, `timeoutMs`) |
 | Processes | `fs.ps`, `fs.pgrep`, `fs.kill` (`dryRun` available) |
 | System info | `fs.id`, `fs.uname`, `fs.uptime`, `fs.date`, `fs.findmnt`, `fs.mountpoint` |
 | Binary inspection | `fs.file`, `fs.base64`, `fs.od`, `fs.strings` |
@@ -100,7 +100,7 @@ host drops unknown fields, so a name typo runs with defaults.
 | `paths` + optional `keep`/`force`/`stdout`/`level`/`suffix` | `fs.gzip`, `fs.gunzip` |
 | `url` + optional `output` | `fs.curl` |
 | `stages` + optional `input`/`output` | `fs.pipe` |
-| `command` + `args` + optional `cwd`/`stdin`/`timeoutMs` | `fs.exec` |
+| `command` + `args` + optional `cwd`/`stdin`/`timeoutMs` | `fs.command` |
 
 `fs.head` takes `skip` for line ranges: `sed -n '20,40p'` is
 `fs.head({ paths, skip: 19, lines: 21 })`. `fs.find` takes
@@ -139,16 +139,16 @@ removed, and deletion asserts `fs_rm`/`fs_trash`.
 | `cat > f <<EOF` | built-in `write` or `fs.tee({ paths: [f], content })` |
 | `rg pattern path` | `fs.grep({ pattern, paths })` or the built-in `grep` |
 | `ls -l f` | `fs.ls({ paths: [f], long: true })` |
-| `npm ...` / `uv run ...` | `fs.exec({ command, args })` (allowlisted only) |
+| `npm ...` / `uv run ...` | `fs.command({ command, args })` (allowlisted only) |
 
 `sed -n` applied to another command's stdout has no fs equivalent; keep that in
 the command pipeline. `fs.find` has no arbitrary `-exec` by design; use
 `action: "delete"` or `"trash"` for the common cleanup case, or list the paths and
 remove them explicitly.
 
-## Exec
+## Command
 
-`fs.exec` runs an allowlisted executable in a **procage sandbox** without a
+`fs.command` runs an allowlisted executable in a **procage sandbox** without a
 shell. It is closest to the shell's `command <prog>`: one program with literal
 argv, not `exec` (which replaces the shell) or `sh -c` (which parses shell
 syntax). The default allowlist is `npm`, `npx`, `uv`, `uvx`, `pip`, `pip3`;
@@ -178,7 +178,7 @@ or unknown DoH endpoints on other names or ports may not be recognized. ECH
 detected in TLS or QUIC is visibly refused.
 
 ```js
-await tools.fs.exec({ command: "npm", args: ["install"], timeoutMs: 300000 })
+await tools.fs.command({ command: "npm", args: ["install"], timeoutMs: 300000 })
 ```
 
 Proxy variables (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`, lowercase
@@ -209,7 +209,7 @@ external roots the run could write to. In `fs.pipe` the stage passes raw stdout.
 ```js
 await tools.fs.pipe({
   stages: [
-    { tool: "exec", args: { command: "npm", args: ["test"] } },
+    { tool: "command", args: { command: "npm", args: ["test"] } },
     { tool: "grep", args: { pattern: "FAIL" } },
   ],
 })
@@ -332,7 +332,7 @@ Common pipe mistakes:
 - There is no shell, redirection operator, nested pipe, `find -exec`, or
   `xargs`.
 
-Pipeable filters include `base64`, `cut`, `exec`, `fold`, `grep`, `gunzip`,
+Pipeable filters include `base64`, `command`, `cut`, `fold`, `grep`, `gunzip`,
 `gzip`, `head`, `nl`, `od`, `paste`, `rev`, `sed`, `shuf`, `sort`, `strings`,
 `tac`, `tail`, `tee`, `tr`, and `uniq`. Unknown stage names fail with
 `unsupported`.
@@ -453,7 +453,7 @@ await tools.fs.curl({
 - Linux only; there is no Windows branch.
 - `fs.sed` supports `s<delim>pattern<delim>replacement<delim>flags` with `g`,
   `i` and `p`. It is not a full sed interpreter.
-- `fs.exec` requires procage: Linux x64/arm64, glibc 2.28+, Node 22.12+.
+- `fs.command` requires procage: Linux x64/arm64, glibc 2.28+, Node 22.12+.
   Network egress needs Linux T1; elsewhere networking is disabled. External
   paths are denied until approved.
 - `fs.find` has no arbitrary `-exec`; use `action: "delete"`/`"trash"` for the
@@ -465,7 +465,7 @@ await tools.fs.curl({
 - `fs.tar`/`fs.zip` create from `input` or stdin; extraction is file-backed.
 - `fs.curl` is HTTP(S) only: no FTP/SFTP, cookie jars, client
   certificates, proxies, multipart uploads, or resumable downloads.
-- Only `fs.exec` starts processes, and only exact allowlisted names; `nohup`,
+- Only `fs.command` starts processes, and only exact allowlisted names; `nohup`,
   `setsid`, and `timeout` wrappers are unavailable. `fs.kill` rejects pid 0,
   pid 1, and process groups.
 - No ICMP ping; use `fs.curl` or a TCP port check. No ACL, xattr, or
@@ -509,8 +509,8 @@ Command actions are `fs_<command>` (for example `fs_cp`). `fs_*` wildcards work
 in agent rules. `fs.pipe` asserts each stage's action; a denied stage cannot be
 hidden inside a pipeline. Do not work around a denied tool with shell.
 
-`fs_exec` runs only exact allowlisted names in a procage sandbox. It asserts
-`fs_exec`, asks `external_directory` for a blocked path, and asks
+`fs_command` runs only exact allowlisted names in a procage sandbox. It asserts
+`fs_command`, asks `external_directory` for a blocked path, and asks
 `fs_exec_network` with the exact DNS name or IP address named by the relay.
 There is no `*` fallback and no direct-IP mode; networking that cannot use the
 relay is disabled. There are no per-call grants and no shell.

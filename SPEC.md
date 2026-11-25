@@ -81,7 +81,7 @@ Aliases are accepted only where noted: `path` for one `paths` element (`stat`,
 
 ## Process execution
 
-- `fs.exec` is the only tool that starts processes, through `procage`; it never
+- `fs.command` is the only tool that starts processes, through `procage`; it never
   uses `child_process`, `spawn`, or a shell.
 - `command` must be a bare executable name and must match the allowlist exactly.
   Default: `npm`, `npx`, `uv`, `uvx`, `pip`, `pip3`. Override with the plugin
@@ -139,7 +139,7 @@ Aliases are accepted only where noted: `path` for one `paths` element (`stat`,
   `sandboxBlocked`. Results carry `network`, `networkMode`, `networkHosts`,
   `networkReason` when the relay was unavailable, and `externalPaths`.
 - `args` are passed verbatim. `cwd` resolves inside the sandbox and asserts
-  `external_directory` when it leaves the project; the action is `fs_exec`.
+  `external_directory` when it leaves the project; the action is `fs_command`.
 - Timeout defaults to 120000 ms, capped at 600000. Procage ends the run and kills
   every process it started, including detached descendants; `timedOut: true`
   and exit code 124 are returned.
@@ -148,7 +148,7 @@ Aliases are accepted only where noted: `path` for one `paths` element (`stat`,
   the sandbox decision. In `fs.pipe`, the stage returns raw stdout and composes as
   a source or filter.
 - A non-zero exit is a normal result, not a tool error.
-- `procage` is lazy-loaded; if the host cannot load it, `fs.exec` fails with
+- `procage` is lazy-loaded; if the host cannot load it, `fs.command` fails with
   `unsupported` while the other fs tools continue to work. Requires Linux
   x64/arm64, glibc 2.28+, and Node 22.12+. On kernels before Landlock ABI 6,
   signals are relaxed from self-and-children to same-user, as procage requires.
@@ -174,7 +174,7 @@ These are not implemented:
 - true streaming through pipe stages; `curl` buffers unless `output` is set
 - worker threads for CPU-bound stages (`sort`, `sed`, text diffing)
 - parallel member reads inside a single `tar`/`zip` archive; member order is fixed
-- process start beyond the allowlisted `exec` tool; `nohup`, `setsid`, and
+- process start beyond the allowlisted `command` tool; `nohup`, `setsid`, and
   `timeout` wrappers are unavailable
 - ICMP `ping` (raw sockets) and `ip`/netlink configuration
 - `rsync`, `scp`, and other transfer protocols; use the SSH MCP for remote work

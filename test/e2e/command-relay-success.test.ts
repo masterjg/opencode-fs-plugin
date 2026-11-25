@@ -9,7 +9,7 @@ import * as net from "node:net";
 import { once } from "node:events";
 import { Sandbox } from "../../src/core/sandbox.js";
 import { RELAY_HELLO, encodeDecisionRequest, encodeFrame } from "../../src/core/relay-protocol.js";
-import { execTool } from "../../src/tools/exec.js";
+import { commandTool } from "../../src/tools/command.js";
 import { makeRoot, runSpec } from "../helpers.js";
 
 interface MockState {
@@ -128,11 +128,11 @@ afterEach(async () => {
 });
 
 async function run(denyNetwork = false) {
-  const root = await makeRoot("fs-exec-relay-success-");
+  const root = await makeRoot("fs-command-relay-success-");
   roots.push(root);
   const sb = await Sandbox.create(root);
   const result = await runSpec(
-    execTool,
+    commandTool,
     { command: "node", args: ["-e", "process.stdout.write('unused')"] },
     sb,
     { execAllowlist: ["node"], denyNetwork },
@@ -140,7 +140,7 @@ async function run(denyNetwork = false) {
   return { result, body: JSON.parse(result.result.stdout.toString()) as Record<string, unknown> };
 }
 
-describe("exec relay success", () => {
+describe("command relay success", () => {
   it("passes the relay endpoint and authorizes the named flow", async () => {
     const { result, body } = await run();
     const socketPath = state.options?.relay_control_socket;

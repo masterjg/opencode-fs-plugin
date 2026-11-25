@@ -10,7 +10,7 @@ import type { TSchema } from "@sinclair/typebox";
 import { PermissionGate, type PermissionAssertInput } from "../src/core/permissions.js";
 import { parseSchema } from "../src/core/schema.js";
 import { Sandbox } from "../src/core/sandbox.js";
-import { DEFAULT_EXEC_ALLOWLIST } from "../src/tools/exec.js";
+import { DEFAULT_EXEC_ALLOWLIST } from "../src/tools/command.js";
 import type { ToolResult, ToolSpec } from "../src/core/types.js";
 
 export interface RunSpecOptions {

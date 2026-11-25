@@ -16,6 +16,7 @@ unit, end-to-end and coverage tests.
 | `chmod` | `fs.chmod` | octal/symbolic mode, `reference`, `recursive`, `noDereference`, `verbose`, `changes`, `silent` |
 | `chown` | `fs.chown` | `user`/`uid`, `group`/`gid`, `recursive`, `noDereference` |
 | `comm` | `fs.comm` | `suppress1`/`2`/`3`, `outputDelimiter` |
+| `command` | `fs.command` | `command`, `args`, `cwd`, `stdin`, `timeoutMs`; exact allowlist, procage sandbox, no shell |
 | `cp` | `fs.cp` | `recursive`, `archive`, `force`, `noClobber`, `update`, `preserve`, `dereference`, `verbose` |
 | `cpio` | `fs.cpio` | `create`/`list`/`extract` (newc), `directory`, `members`, `input`, `member`, `verbose` |
 | `curl` | `fs.curl` | `url`, `method`, `headers`, `body`, `json`, `output`, `checksum`, `maxBytes`, `timeoutMs`, `failOnError`, `followRedirects`, `maxRedirects` |
@@ -25,7 +26,6 @@ unit, end-to-end and coverage tests.
 | `df` | `fs.df` | `human`, `inodes`, `printType`, `all` |
 | `diff` | `fs.diff` | `unified`, `brief`, `recursive`, `ignoreWhitespace`, `ignoreCase`, `exclude` |
 | `du` | `fs.du` | `summarize`, `all`, `human`, `total`, `maxDepth`, `follow`, `oneFileSystem` |
-| `command` | `fs.exec` | `command`, `args`, `cwd`, `stdin`, `timeoutMs`; exact allowlist, procage sandbox, no shell |
 | `file` | `fs.file` | `paths`, `mime`; content magic detection |
 | `find` | `fs.find` | `name`, `iname`, `pathPattern`, `lname`, `ilname`, `regex`, `iregex`, `type`, `size`, `mtime`, `mmin`, `maxDepth`, `minDepth`, `empty`, `perm`, `uid`, `gid`, `user`, `group`, `links`, `inum`, `samefile`, `fstype`, `newer`, `newerXY`, `printf`, `follow`, `print0`, `sort`, `action` (`print`/`delete`/`trash`), `recursive` |
 | `findmnt` | `fs.findmnt` | `paths`, `fsType`, `noHeader` |
@@ -106,7 +106,7 @@ await tools.fs.pipe({
 })
 ```
 
-Filter stages: `base64`, `exec`, `fold`, `nl`, `od`, `paste`, `rev`, `shuf`, `tac`,
+Filter stages: `base64`, `command`, `fold`, `nl`, `od`, `paste`, `rev`, `shuf`, `tac`,
 and `strings`; `dd` and `cpio` are source/sink stages like `tar`.
 
 `fs.curl` is a pipe source, so network data can feed the same stages:
@@ -129,9 +129,9 @@ There is no shell, redirection operator, nested pipe, or arbitrary `find -exec`.
 work, fan out with `Promise.all` over `tools.fs.*` (or one multi-path call).
 `fs` domain errors resolve as `ERROR:`/`BLOCKED:` text; permission denials throw.
 
-## Exec
+## Command
 
-`fs.exec` runs one allowlisted executable inside a procage sandbox with
+`fs.command` runs one allowlisted executable inside a procage sandbox with
 `shell: false`. It is closest to the shell's `command <prog>`: one program with
 literal argv, not `exec` (which replaces the calling shell) and not `sh -c`
 (which parses shell syntax). The default allowlist is `npm`, `npx`, `uv`, `uvx`,
@@ -202,11 +202,11 @@ A path printed by the child on stdout or stderr is reported, never auto-approved
 
 The decision comes from your `opencode.jsonc` rules (`ask`, `allow`, `deny`), the
 same as every other tool. If a path stays blocked after approval, the result
-reports `violations` and a `hint`. `fs.exec` also kills every process it started
+reports `violations` and a `hint`. `fs.command` also kills every process it started
 when the run ends, including detached descendants.
 
 On Linux T2 and on macOS the relay is unavailable, and a relay control server
-that cannot start is treated the same way. `fs.exec` retries the same run once
+that cannot start is treated the same way. `fs.command` retries the same run once
 with networking off: the policy stays `net: "none"`, no resolver sockets are
 granted, and macOS gets no resolver exception. The result carries
 `networkMode: "disabled"` and a `networkReason`; there is no direct-IP fallback. Every flow decision is
@@ -216,7 +216,7 @@ lives in a private per-run directory and is never part of the child's known
 Unix sockets.
 
 ```js
-await tools.fs.exec({ command: "npm", args: ["install"], timeoutMs: 300000 })
+await tools.fs.command({ command: "npm", args: ["install"], timeoutMs: 300000 })
 ```
 
 `command` is a bare name, `args` are literal, and `cwd` is sandboxed. Direct
@@ -229,13 +229,13 @@ run could write to. A pipe stage returns raw stdout so it composes with `grep`,
 ```js
 await tools.fs.pipe({
   stages: [
-    { tool: "exec", args: { command: "npm", args: ["test"] } },
+    { tool: "command", args: { command: "npm", args: ["test"] } },
     { tool: "grep", args: { pattern: "FAIL" } },
   ],
 })
 ```
 
-The command asserts `fs_exec`, returns stdout/stderr in full, and treats a non-zero exit as
+The command asserts `fs_command`, returns stdout/stderr in full, and treats a non-zero exit as
 a normal result. Procage requires Linux x64/arm64, glibc 2.28+, and Node 22.12+.
 On kernels before Landlock ABI 6, signal isolation relaxes to same-user. The
 trust-handoff class is waived so package tools can update workspace files such as
@@ -456,7 +456,7 @@ external targets first require `external_directory` on the absolute boundary.
 paths, absolute external boundaries, or network names/addresses. A specific
 resource saves narrowly; an explicitly requested `*` remains `*`.
 
-`fs.exec` asserts `fs_exec` for the run, asks `external_directory` for any
+`fs.command` asserts `fs_command` for the run, asks `external_directory` for any
 blocked path, and asks `fs_exec_network` for the exact DNS name or IP address
 the transparent relay named. There is no `*` fallback and no direct-IP mode;
 networking that cannot use the relay is disabled:

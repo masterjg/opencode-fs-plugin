@@ -139,8 +139,8 @@ function loadProcage(): Promise<typeof import("procage")> {
   return procage;
 }
 
-export const execTool: ToolSpec<Input> = {
-  name: "exec",
+export const commandTool: ToolSpec<Input> = {
+  name: "command",
   description:
     "Run an allowlisted executable in a procage sandbox without a shell. Direct calls return JSON; " +
     "pipe stages pass raw stdout. Default allowlist: npm, npx, uv, uvx, pip, pip3. On Linux tier T1 " +

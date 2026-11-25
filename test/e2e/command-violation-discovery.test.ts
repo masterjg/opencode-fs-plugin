@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { Sandbox } from "../../src/core/sandbox.js";
-import { execTool } from "../../src/tools/exec.js";
+import { commandTool } from "../../src/tools/command.js";
 import { makeOutside, makeRoot, runSpec } from "../helpers.js";
 
 interface ViolationLike {
@@ -114,7 +114,7 @@ afterEach(async () => {
 });
 
 async function setup(): Promise<{ root: string; sb: Sandbox }> {
-  const root = await makeRoot("fs-exec-violation-");
+  const root = await makeRoot("fs-command-violation-");
   roots.push(root);
   return { root, sb: await Sandbox.create(root) };
 }
@@ -143,11 +143,11 @@ const filesystemDenial = (target: string, operation = "file-write-data"): Violat
   message: `node denied ${operation} ${target}`,
 });
 
-describe("exec relay violation discovery", () => {
+describe("command relay violation discovery", () => {
   it("reports a path-like relay target without granting it as a path", async () => {
     state.violations = [relayDenial("/home/marius/private.example")];
     const { sb } = await setup();
-    const result = await runSpec(execTool, { command: "node", args: ["-e", ""] }, sb, {
+    const result = await runSpec(commandTool, { command: "node", args: ["-e", ""] }, sb, {
       execAllowlist: ["node"],
     });
     const body = parsed(result);
@@ -173,7 +173,7 @@ describe("exec relay violation discovery", () => {
     await fs.writeFile(file, "x");
     state.violations = [filesystemDenial(file)];
     const { sb } = await setup();
-    const result = await runSpec(execTool, { command: "node", args: ["-e", ""] }, sb, {
+    const result = await runSpec(commandTool, { command: "node", args: ["-e", ""] }, sb, {
       execAllowlist: ["node"],
     });
     const body = parsed(result);
@@ -195,7 +195,7 @@ describe("exec relay violation discovery", () => {
     const missing = path.join(outside.dir, "missing", "nested", "file.txt");
     state.violations = [filesystemDenial(missing)];
     const { sb } = await setup();
-    const result = await runSpec(execTool, { command: "node", args: ["-e", ""] }, sb, {
+    const result = await runSpec(commandTool, { command: "node", args: ["-e", ""] }, sb, {
       execAllowlist: ["node"],
     });
     const body = parsed(result);
@@ -205,10 +205,10 @@ describe("exec relay violation discovery", () => {
   });
 
   it("ignores a structured target whose only ancestor is the filesystem root", async () => {
-    const target = `/oc-fs-exec-missing-${process.pid}/file.txt`;
+    const target = `/oc-fs-command-missing-${process.pid}/file.txt`;
     state.violations = [filesystemDenial(target)];
     const { sb } = await setup();
-    const result = await runSpec(execTool, { command: "node", args: ["-e", ""] }, sb, {
+    const result = await runSpec(commandTool, { command: "node", args: ["-e", ""] }, sb, {
       execAllowlist: ["node"],
     });
     const body = parsed(result);
@@ -218,7 +218,7 @@ describe("exec relay violation discovery", () => {
       result.requests.some(
         (request) =>
           request.action === "external_directory" &&
-          request.resources.some((resource) => resource.includes("oc-fs-exec-missing")),
+          request.resources.some((resource) => resource.includes("oc-fs-command-missing")),
       ),
     ).toBe(false);
     expect(state.calls).toHaveLength(1);
@@ -235,7 +235,7 @@ describe("exec relay violation discovery", () => {
       filesystemDenial(file, "unknown-operation"),
     ];
     const { sb } = await setup();
-    const result = await runSpec(execTool, { command: "node", args: ["-e", ""] }, sb, {
+    const result = await runSpec(commandTool, { command: "node", args: ["-e", ""] }, sb, {
       execAllowlist: ["node"],
     });
     const body = parsed(result);
@@ -257,7 +257,7 @@ describe("exec relay violation discovery", () => {
     state.abortInCage = controller;
     const { sb } = await setup();
     await expect(
-      runSpec(execTool, { command: "node", args: ["-e", ""] }, sb, {
+      runSpec(commandTool, { command: "node", args: ["-e", ""] }, sb, {
         execAllowlist: ["node"],
         signal: controller.signal,
       }),
@@ -272,7 +272,7 @@ describe("exec relay violation discovery", () => {
     state.rejectCage = true;
     const { sb } = await setup();
     await expect(
-      runSpec(execTool, { command: "node", args: ["-e", ""] }, sb, { execAllowlist: ["node"] }),
+      runSpec(commandTool, { command: "node", args: ["-e", ""] }, sb, { execAllowlist: ["node"] }),
     ).rejects.toMatchObject({ code: "unsupported", message: expect.stringMatching(/exec policy rejected/) });
   });
 
@@ -281,7 +281,7 @@ describe("exec relay violation discovery", () => {
     state.rejectCage = true;
     const { sb } = await setup();
     await expect(
-      runSpec(execTool, { command: "node", args: ["-e", ""] }, sb, { execAllowlist: ["node"] }),
+      runSpec(commandTool, { command: "node", args: ["-e", ""] }, sb, { execAllowlist: ["node"] }),
     ).rejects.toMatchObject({ code: "unsupported", message: expect.stringMatching(/exec policy rejected/) });
     expect(state.calls).toHaveLength(2);
     expect(state.calls[0]).toHaveProperty("relay_control_socket");
@@ -297,7 +297,7 @@ describe("exec relay violation discovery", () => {
       const original = process.env.TMPDIR;
       process.env.TMPDIR = path.join(blocker, "nested");
       try {
-        const result = await runSpec(execTool, { command: "node", args: ["-e", ""] }, sb, {
+        const result = await runSpec(commandTool, { command: "node", args: ["-e", ""] }, sb, {
           execAllowlist: ["node"],
           tmpdir: root,
         });

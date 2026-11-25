@@ -7,7 +7,7 @@ a tool.
 
 1. **Async-only I/O.** Use `fs/promises`, streams, and async iterables. No
    `*Sync` filesystem calls, no `child_process`, no shell. The allowlisted
-   `exec` tool starts processes only through `procage`, never `spawn` or a
+   `command` tool starts processes only through `procage`, never `spawn` or a
    shell.
 2. **Concurrency follows the hardware.** The default is
    `os.availableParallelism()`; the plugin option `concurrency` and

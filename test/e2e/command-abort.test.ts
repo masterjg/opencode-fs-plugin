@@ -6,7 +6,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as fs from "node:fs/promises";
 import { Sandbox } from "../../src/core/sandbox.js";
-import { execTool } from "../../src/tools/exec.js";
+import { commandTool } from "../../src/tools/command.js";
 import { makeRoot, runSpec } from "../helpers.js";
 
 interface AbortState {
@@ -109,19 +109,19 @@ afterEach(async () => {
 });
 
 async function setup(): Promise<{ sb: Sandbox; controller: AbortController }> {
-  const root = await makeRoot("fs-exec-abort-");
+  const root = await makeRoot("fs-command-abort-");
   roots.push(root);
   const controller = new AbortController();
   state.controller = controller;
   return { sb: await Sandbox.create(root), controller };
 }
 
-describe("exec abort edges", () => {
+describe("command abort edges", () => {
   it("refuses to run when the abort arrives during relay start", async () => {
     const { sb, controller } = await setup();
     state.startAborts = true;
     await expect(
-      runSpec(execTool, { command: "node", args: ["-e", ""] }, sb, {
+      runSpec(commandTool, { command: "node", args: ["-e", ""] }, sb, {
         execAllowlist: ["node"],
         signal: controller.signal,
       }),
@@ -137,7 +137,7 @@ describe("exec abort edges", () => {
     state.startAborts = true;
     state.startThrows = true;
     await expect(
-      runSpec(execTool, { command: "node", args: ["-e", ""] }, sb, {
+      runSpec(commandTool, { command: "node", args: ["-e", ""] }, sb, {
         execAllowlist: ["node"],
         signal: controller.signal,
       }),
@@ -151,7 +151,7 @@ describe("exec abort edges", () => {
     const { sb, controller } = await setup();
     state.startThrows = true;
     const result = await runSpec(
-      execTool,
+      commandTool,
       { command: "node", args: ["-e", ""] },
       sb,
       { execAllowlist: ["node"], signal: controller.signal },
@@ -169,7 +169,7 @@ describe("exec abort edges", () => {
     const { sb, controller } = await setup();
     state.spawnAborts = true;
     const result = await runSpec(
-      execTool,
+      commandTool,
       { command: "node", args: ["-e", ""] },
       sb,
       { execAllowlist: ["node"], signal: controller.signal },
@@ -187,7 +187,7 @@ describe("exec abort edges", () => {
     state.spawnAborts = true;
     state.spawnThrows = true;
     await expect(
-      runSpec(execTool, { command: "node", args: ["-e", ""] }, sb, {
+      runSpec(commandTool, { command: "node", args: ["-e", ""] }, sb, {
         execAllowlist: ["node"],
         signal: controller.signal,
       }),
@@ -200,7 +200,7 @@ describe("exec abort edges", () => {
     const { sb, controller } = await setup();
     state.spawnThrows = true;
     await expect(
-      runSpec(execTool, { command: "node", args: ["-e", ""] }, sb, {
+      runSpec(commandTool, { command: "node", args: ["-e", ""] }, sb, {
         execAllowlist: ["node"],
         signal: controller.signal,
       }),

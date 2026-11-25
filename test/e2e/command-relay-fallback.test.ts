@@ -6,7 +6,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as fs from "node:fs/promises";
 import { Sandbox } from "../../src/core/sandbox.js";
-import { execTool } from "../../src/tools/exec.js";
+import { commandTool } from "../../src/tools/command.js";
 import { makeRoot, runSpec } from "../helpers.js";
 
 interface CageCall {
@@ -105,13 +105,13 @@ afterEach(async () => {
   for (const root of roots.splice(0)) await fs.rm(root, { recursive: true, force: true });
 });
 
-describe("exec relay fallback", () => {
+describe("command relay fallback", () => {
   it("starts the relay first, then retries with networking disabled on an unsupported backend", async () => {
-    const root = await makeRoot("fs-exec-relay-fallback-");
+    const root = await makeRoot("fs-command-relay-fallback-");
     roots.push(root);
     const sb = await Sandbox.create(root);
     const result = await runSpec(
-      execTool,
+      commandTool,
       { command: "node", args: ["-e", "process.stdout.write('ignored')"] },
       sb,
       { execAllowlist: ["node"] },

@@ -20,6 +20,7 @@ import { catTool } from "./tools/cat.js";
 import { chmodTool } from "./tools/chmod.js";
 import { chownTool } from "./tools/chown.js";
 import { commTool } from "./tools/comm.js";
+import { commandTool, normalizeExecAllowlist } from "./tools/command.js";
 import { cpTool } from "./tools/cp.js";
 import { cpioTool } from "./tools/cpio.js";
 import { curlTool } from "./tools/curl.js";
@@ -29,7 +30,6 @@ import { ddTool } from "./tools/dd.js";
 import { dfTool } from "./tools/df.js";
 import { diffTool } from "./tools/diff.js";
 import { duTool } from "./tools/du.js";
-import { execTool, normalizeExecAllowlist } from "./tools/exec.js";
 import { fileTool } from "./tools/file.js";
 import { findTool } from "./tools/find.js";
 import { findmntTool } from "./tools/findmnt.js";
@@ -86,6 +86,7 @@ const TOOLS: readonly AnyTool[] = [
   chmodTool,
   chownTool,
   commTool,
+  commandTool,
   cpTool,
   cpioTool,
   curlTool,
@@ -95,7 +96,6 @@ const TOOLS: readonly AnyTool[] = [
   dfTool,
   diffTool,
   duTool,
-  execTool,
   fileTool,
   findTool,
   findmntTool,
