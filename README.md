@@ -36,7 +36,6 @@ unit, end-to-end and coverage tests.
 | `sha256sum`/`md5sum` | `fs.hash` | `algorithm`, `tag`; hashes files or stdin |
 | `head` | `fs.head` | `lines`, `skip`, `bytes`, `quiet`, `verbose` |
 | `id` | `fs.id` | `only` (`user`, `group`, `groups`) |
-| jobs | `fs.job` | `id`, `wait`, `cancel`, `list`, `timeoutMs` |
 | `kill` | `fs.kill` | `pids`, `signal`, `dryRun`; pid 0/1 and groups rejected |
 | `ln` | `fs.ln` | `symbolic`, `force`, `noDereference`, `relative`, `verbose` |
 | `ls` | `fs.ls` | `all`, `almostAll`, `long`, `human`, `recursive`, `directory`, `inode`, `classify`, `size`, `numericIds`, `noGroup`, `noOwner`, `slash`, `quote`, `versionSort`, `extensionSort`, `fullTime`, `timeStyle`, `hide`, `ignore`, `groupDirectoriesFirst`, `sortBy`, `reverse`, `onePerLine` |
@@ -48,7 +47,6 @@ unit, end-to-end and coverage tests.
 | `od` | `fs.od` | `offset`, `length`, `width` |
 | `paste` | `fs.paste` | `delimiters`, `serial` |
 | `pgrep` | `fs.pgrep` | `pattern`, `full`, `ignoreCase`, `user`, `newest`, `oldest`, `count`, `delimiter` |
-| shell pipe | `fs.pipe` | `stages`, `input`, `output`, `append` |
 | `ps` | `fs.ps` | `pids`, `user`, `command`, `sortBy`, `limit`, `noHeader`, `format` |
 | `readlink` | `fs.readlink` | `mode` (`raw`, `canonical`, `existing`, `missing`), `noNewline` |
 | `rev` | `fs.rev` | reverse characters per line |
@@ -75,6 +73,13 @@ unit, end-to-end and coverage tests.
 | `uptime` | `fs.uptime` | `pretty`, `loadAverage` |
 | `wc` | `fs.wc` | `lines`, `words`, `bytes`, `chars`, `maxLineLength` |
 | `zip` | `fs.zip` | `archive`, `paths`, `level`, `input`, `member` |
+
+`fs.job` and `fs.pipe` are support tools rather than shell replacements:
+
+| Purpose | Tool | Main options |
+|---|---|---|
+| Background jobs | `fs.job` | `id`, `wait`, `cancel`, `list`, `timeoutMs` |
+| Sequential byte pipeline | `fs.pipe` | `stages`, `input`, `output`, `append` |
 
 `fs.head.skip` selects line ranges (`sed -n '20,40p'`). `fs.find` can
 `action: "delete"` or `"trash"` its matches; the starting directory itself is
