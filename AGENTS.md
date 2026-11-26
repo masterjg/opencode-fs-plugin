@@ -53,25 +53,50 @@ a tool.
 - `skills/filesystem/SKILL.md` — shipped skill. Keep it byte-identical to
   `/var/home/marius/.config/opencode/skills/filesystem/SKILL.md`.
 
-## Verification
+## Validation and self-review
 
-Run all three before committing:
+CI (`.github/workflows/ci.yml`) on Node 22 and 24 is the floor, not proof.
+Reproduce it locally before declaring complete:
 
 ```bash
+npm ci
 npm run typecheck
-npm test
 npm run coverage
+npm audit --omit=dev --audit-level=high
+npm pack --dry-run
 ```
 
-Check new tools manually through real calls in foreground, `background: true`
-with `fs.job`, and as a `pipe` stage where applicable.
+- Every behavior change or bugfix needs focused regression tests: the reported
+  failure, the successful path, and the relevant rejection/boundary cases. 100%
+  coverage does not establish correctness; a test that mirrors the
+  implementation's own assumption proves nothing.
+- Security-sensitive changes (paths, permissions, archives, symlinks): inspect
+  path components and canonicalization, symlink and hardlink cases,
+  permission-check ordering, absence of side effects on denial, partial writes,
+  cancellation, and races. Fail closed; document any residual.
+- Formats and protocols: check interoperability against independent known-good
+  fixtures or oracles in both directions. A writer→reader roundtrip through the
+  same code can hide shared bugs such as wrong cpio padding.
+- Before declaring complete, adversarially review the entire final diff against
+  the base commit: trace failure paths and invariants, look for semantic
+  regressions, and confirm the tests hit real branches rather than a shared-bug
+  assumption. Document unresolved limitations.
+- Report the exact commands and results. Check new tools manually through real
+  calls in foreground, `background: true` with `fs.job`, and as a `pipe` stage
+  where applicable.
+
+Tests reduce risk; they do not replace judgment about what is untested.
 
 ## Commits and releases
 
-- Conventional Commits, signed, pushed to `origin main`.
+- Conventional Commits, signed. Do not push or publish unless explicitly
+  requested.
 - Update `README.md`, `SPEC.md`, and the skill in the same change as behavior.
-- Version bumps: a feature, new option or tool, or performance change → minor;
-  fixes or docs only → patch. Major only for a complete rewrite, a new
-  architecture, or a fully new or incompatible public API; never for a single
-  option removal, a rename, or a `!` by itself. Release CI publishes npm and
-  creates the GitHub tag; npm processing can lag a few minutes.
+- Docs or instruction-only commits (including this file) do not by themselves
+  imply a release.
+- Version bumps for release-bound changes: a feature, new option or tool, or
+  performance change → minor; fixes or docs only → patch. Major only for a
+  complete rewrite, a new architecture, or a fully new or incompatible public
+  API; never for a single option removal, a rename, or a `!` by itself. Release
+  CI publishes npm and creates the GitHub tag; npm processing can lag a few
+  minutes.
