@@ -20,7 +20,7 @@ import { catTool } from "./tools/cat.js";
 import { chmodTool } from "./tools/chmod.js";
 import { chownTool } from "./tools/chown.js";
 import { commTool } from "./tools/comm.js";
-import { commandTool, normalizeExecAllowlist } from "./tools/command.js";
+import { commandTool } from "./tools/command.js";
 import { cpTool } from "./tools/cp.js";
 import { cpioTool } from "./tools/cpio.js";
 import { curlTool } from "./tools/curl.js";
@@ -195,7 +195,6 @@ export default Plugin.define({
     const concurrency = clampConcurrency(
       typeof ctx.options?.concurrency === "number" ? ctx.options.concurrency : undefined,
     );
-    const execAllowlist = normalizeExecAllowlist(ctx.options?.execAllowlist);
     const jobs = new JobManager(
       typeof ctx.options?.jobDir === "string" ? { dir: ctx.options.jobDir } : {},
     );
@@ -243,7 +242,6 @@ export default Plugin.define({
                     concurrency,
                     signal,
                     tmpdir: os.tmpdir(),
-                    execAllowlist,
                   },
                   parsed,
                   {},

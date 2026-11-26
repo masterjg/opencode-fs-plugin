@@ -83,9 +83,10 @@ Aliases are accepted only where noted: `path` for one `paths` element (`stat`,
 
 - `fs.command` is the only tool that starts processes, through `procage`; it never
   uses `child_process`, `spawn`, or a shell.
-- `command` must be a bare executable name and must match the allowlist exactly.
-  Default: `npm`, `npx`, `uv`, `uvx`, `pip`, `pip3`. Override with the plugin
-  option `execAllowlist`; an empty list disables execution.
+- `command` must be a bare executable name. The executable allowlist is the
+  `fs_command` permission: the tool asserts that action with the bare name as its
+  resource. With no rule the base allow applies to every executable; a `*` deny
+  plus name allows closes the set.
 - The policy is procage `agent_workspace` v3: the project is read/write/exec.
   External paths are denied by default and there are no per-call grants.
 - Network egress uses procage's transparent relay on Linux tier T1. A per-run
@@ -94,8 +95,8 @@ Aliases are accepted only where noted: `path` for one `paths` element (`stat`,
   the length-prefixed protocol in `src/core/relay-protocol.ts`.
 - Every TCP/UDP flow is named as a DNS QNAME, TLS SNI, HTTP `Host`, QUIC SNI, or
   IP literal. That exact resource is asserted with `fs_exec_network`; the port,
-  protocol, URL, headers, and payload never reach the permission. The rules are
-  the only allowlist; there is no plugin option for it.
+  protocol, URL, headers, and payload never reach the permission. The permission
+  rules are the only network allowlist; there is no plugin option for it.
 - DNS queries are decisions too. An allowed QNAME is forwarded to the parent
   resolver; procage's discovery reads `/etc/resolv.conf` and systemd-resolved
   paths, including a loopback stub, and the plugin leaves `relay_dns_upstream`
@@ -153,7 +154,7 @@ Aliases are accepted only where noted: `path` for one `paths` element (`stat`,
   x64/arm64, glibc 2.28+, and Node 22.12+. On kernels before Landlock ABI 6,
   signals are relaxed from self-and-children to same-user, as procage requires.
   The trust-handoff class is waived so package tools can update workspace files
-  such as `.git/hooks`; the executable allowlist remains the trust boundary.
+  such as `.git/hooks`; the `fs_command` permission remains the trust boundary.
 
 ## Deliberate gaps
 
@@ -174,7 +175,7 @@ These are not implemented:
 - true streaming through pipe stages; `curl` buffers unless `output` is set
 - worker threads for CPU-bound stages (`sort`, `sed`, text diffing)
 - parallel member reads inside a single `tar`/`zip` archive; member order is fixed
-- process start beyond the allowlisted `command` tool; `nohup`, `setsid`, and
+- process start beyond the permission-gated `command` tool; `nohup`, `setsid`, and
   `timeout` wrappers are unavailable
 - ICMP `ping` (raw sockets) and `ip`/netlink configuration
 - `rsync`, `scp`, and other transfer protocols; use the SSH MCP for remote work

@@ -10,7 +10,6 @@ import type { TSchema } from "@sinclair/typebox";
 import { PermissionGate, type PermissionAssertInput } from "../src/core/permissions.js";
 import { parseSchema } from "../src/core/schema.js";
 import { Sandbox } from "../src/core/sandbox.js";
-import { DEFAULT_EXEC_ALLOWLIST } from "../src/tools/command.js";
 import type { ToolResult, ToolSpec } from "../src/core/types.js";
 
 export interface RunSpecOptions {
@@ -21,7 +20,8 @@ export interface RunSpecOptions {
   signal?: AbortSignal;
   tmpdir?: string;
   stdin?: AsyncIterable<Buffer>;
-  execAllowlist?: readonly string[];
+  /** Executables allowed by the mocked fs_command permission, when set. */
+  allowCommands?: readonly string[];
 }
 
 export interface RunSpecResult<I> {
@@ -55,7 +55,7 @@ export async function runSpec<I>(
     (full) => sandbox.resource(full),
     async (request) => {
       requests.push(request);
-      if (denied(options, request.action)) throw new Error("permission denied by test");
+      if (denied(options, request.action, request.resources)) throw new Error("permission denied by test");
     },
   );
   const result = await spec.run(
@@ -69,13 +69,14 @@ export async function runSpec<I>(
           (full) => sandbox.resource(full),
           async (request) => {
             requests.push(request);
-            if (denied(options, request.action)) throw new Error("permission denied by test");
+            if (denied(options, request.action, request.resources)) {
+              throw new Error("permission denied by test");
+            }
           },
         ),
       concurrency: options.concurrency ?? 4,
       signal: options.signal ?? new AbortController().signal,
       tmpdir: options.tmpdir ?? os.tmpdir(),
-      execAllowlist: options.execAllowlist ?? DEFAULT_EXEC_ALLOWLIST,
     },
     input,
     options.stdin === undefined ? {} : { stdin: options.stdin },
@@ -83,8 +84,13 @@ export async function runSpec<I>(
   return { input, result, requests };
 }
 
-function denied(options: RunSpecOptions, action: string): boolean {
-  return options.deny === true || (options.denyNetwork === true && action === "fs_exec_network");
+function denied(options: RunSpecOptions, action: string, resources: readonly string[]): boolean {
+  if (options.deny === true) return true;
+  if (options.denyNetwork === true && action === "fs_exec_network") return true;
+  if (action === "fs_command" && options.allowCommands !== undefined) {
+    return resources.some((resource) => !options.allowCommands?.includes(resource));
+  }
+  return false;
 }
 
 export async function runSchema<T>(

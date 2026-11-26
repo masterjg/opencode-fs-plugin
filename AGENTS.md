@@ -6,9 +6,9 @@ a tool.
 ## Non-negotiable goals
 
 1. **Async-only I/O.** Use `fs/promises`, streams, and async iterables. No
-   `*Sync` filesystem calls, no `child_process`, no shell. The allowlisted
+   `*Sync` filesystem calls, no `child_process`, no shell. The permission-gated
    `command` tool starts processes only through `procage`, never `spawn` or a
-   shell.
+   shell. The `fs_command` permission decides which executables may run.
 2. **Concurrency follows the hardware.** The default is
    `os.availableParallelism()`; the plugin option `concurrency` and
    `OPENCODE_FS_CONCURRENCY` override it. Never hardcode a limit.

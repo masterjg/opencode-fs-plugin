@@ -30,7 +30,6 @@ export interface RunContext {
   readonly concurrency: number;
   readonly signal: AbortSignal;
   readonly tmpdir: string;
-  readonly execAllowlist: readonly string[];
 }
 
 export interface ToolSpec<I> {

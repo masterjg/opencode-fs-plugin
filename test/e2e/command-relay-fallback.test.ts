@@ -114,7 +114,7 @@ describe("command relay fallback", () => {
       commandTool,
       { command: "node", args: ["-e", "process.stdout.write('ignored')"] },
       sb,
-      { execAllowlist: ["node"] },
+      { allowCommands: ["node"] },
     );
     const body = JSON.parse(result.result.stdout.toString()) as Record<string, unknown>;
 

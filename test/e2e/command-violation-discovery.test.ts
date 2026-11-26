@@ -148,7 +148,7 @@ describe("command relay violation discovery", () => {
     state.violations = [relayDenial("/home/marius/private.example")];
     const { sb } = await setup();
     const result = await runSpec(commandTool, { command: "node", args: ["-e", ""] }, sb, {
-      execAllowlist: ["node"],
+      allowCommands: ["node"],
     });
     const body = parsed(result);
 
@@ -174,7 +174,7 @@ describe("command relay violation discovery", () => {
     state.violations = [filesystemDenial(file)];
     const { sb } = await setup();
     const result = await runSpec(commandTool, { command: "node", args: ["-e", ""] }, sb, {
-      execAllowlist: ["node"],
+      allowCommands: ["node"],
     });
     const body = parsed(result);
 
@@ -196,7 +196,7 @@ describe("command relay violation discovery", () => {
     state.violations = [filesystemDenial(missing)];
     const { sb } = await setup();
     const result = await runSpec(commandTool, { command: "node", args: ["-e", ""] }, sb, {
-      execAllowlist: ["node"],
+      allowCommands: ["node"],
     });
     const body = parsed(result);
 
@@ -209,7 +209,7 @@ describe("command relay violation discovery", () => {
     state.violations = [filesystemDenial(target)];
     const { sb } = await setup();
     const result = await runSpec(commandTool, { command: "node", args: ["-e", ""] }, sb, {
-      execAllowlist: ["node"],
+      allowCommands: ["node"],
     });
     const body = parsed(result);
 
@@ -236,7 +236,7 @@ describe("command relay violation discovery", () => {
     ];
     const { sb } = await setup();
     const result = await runSpec(commandTool, { command: "node", args: ["-e", ""] }, sb, {
-      execAllowlist: ["node"],
+      allowCommands: ["node"],
     });
     const body = parsed(result);
 
@@ -258,7 +258,7 @@ describe("command relay violation discovery", () => {
     const { sb } = await setup();
     await expect(
       runSpec(commandTool, { command: "node", args: ["-e", ""] }, sb, {
-        execAllowlist: ["node"],
+        allowCommands: ["node"],
         signal: controller.signal,
       }),
     ).rejects.toMatchObject({ code: "interrupted" });
@@ -272,7 +272,7 @@ describe("command relay violation discovery", () => {
     state.rejectCage = true;
     const { sb } = await setup();
     await expect(
-      runSpec(commandTool, { command: "node", args: ["-e", ""] }, sb, { execAllowlist: ["node"] }),
+      runSpec(commandTool, { command: "node", args: ["-e", ""] }, sb, { allowCommands: ["node"] }),
     ).rejects.toMatchObject({ code: "unsupported", message: expect.stringMatching(/exec policy rejected/) });
   });
 
@@ -281,7 +281,7 @@ describe("command relay violation discovery", () => {
     state.rejectCage = true;
     const { sb } = await setup();
     await expect(
-      runSpec(commandTool, { command: "node", args: ["-e", ""] }, sb, { execAllowlist: ["node"] }),
+      runSpec(commandTool, { command: "node", args: ["-e", ""] }, sb, { allowCommands: ["node"] }),
     ).rejects.toMatchObject({ code: "unsupported", message: expect.stringMatching(/exec policy rejected/) });
     expect(state.calls).toHaveLength(2);
     expect(state.calls[0]).toHaveProperty("relay_control_socket");
@@ -298,7 +298,7 @@ describe("command relay violation discovery", () => {
       process.env.TMPDIR = path.join(blocker, "nested");
       try {
         const result = await runSpec(commandTool, { command: "node", args: ["-e", ""] }, sb, {
-          execAllowlist: ["node"],
+          allowCommands: ["node"],
           tmpdir: root,
         });
         const body = parsed(result);

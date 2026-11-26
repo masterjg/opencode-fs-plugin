@@ -122,7 +122,7 @@ describe("command abort edges", () => {
     state.startAborts = true;
     await expect(
       runSpec(commandTool, { command: "node", args: ["-e", ""] }, sb, {
-        execAllowlist: ["node"],
+        allowCommands: ["node"],
         signal: controller.signal,
       }),
     ).rejects.toMatchObject({ code: "interrupted" });
@@ -138,7 +138,7 @@ describe("command abort edges", () => {
     state.startThrows = true;
     await expect(
       runSpec(commandTool, { command: "node", args: ["-e", ""] }, sb, {
-        execAllowlist: ["node"],
+        allowCommands: ["node"],
         signal: controller.signal,
       }),
     ).rejects.toMatchObject({ code: "interrupted" });
@@ -154,7 +154,7 @@ describe("command abort edges", () => {
       commandTool,
       { command: "node", args: ["-e", ""] },
       sb,
-      { execAllowlist: ["node"], signal: controller.signal },
+      { allowCommands: ["node"], signal: controller.signal },
     );
     expect(JSON.parse(result.result.stdout.toString())).toMatchObject({
       network: false,
@@ -172,7 +172,7 @@ describe("command abort edges", () => {
       commandTool,
       { command: "node", args: ["-e", ""] },
       sb,
-      { execAllowlist: ["node"], signal: controller.signal },
+      { allowCommands: ["node"], signal: controller.signal },
     );
     expect(JSON.parse(result.result.stdout.toString())).toMatchObject({
       aborted: true,
@@ -188,7 +188,7 @@ describe("command abort edges", () => {
     state.spawnThrows = true;
     await expect(
       runSpec(commandTool, { command: "node", args: ["-e", ""] }, sb, {
-        execAllowlist: ["node"],
+        allowCommands: ["node"],
         signal: controller.signal,
       }),
     ).rejects.toMatchObject({ code: "interrupted" });
@@ -201,7 +201,7 @@ describe("command abort edges", () => {
     state.spawnThrows = true;
     await expect(
       runSpec(commandTool, { command: "node", args: ["-e", ""] }, sb, {
-        execAllowlist: ["node"],
+        allowCommands: ["node"],
         signal: controller.signal,
       }),
     ).rejects.toMatchObject({ code: "unsupported", message: expect.stringMatching(/exec spawn failed/) });

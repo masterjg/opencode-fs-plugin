@@ -62,6 +62,23 @@ export class PermissionGate {
       return;
     }
 
+    await this.assertExternal(entries);
+
+    const resources = unique(
+      entries.map((entry) =>
+        entry.target.outside
+          ? slash(entry.target.full)
+          : (entry.resource ?? this.sandboxResource(entry.target.full)),
+      ),
+    );
+    await this.assertAction(resources);
+  }
+
+  /**
+   * Assert only the external_directory boundary for targets outside the
+   * project, without asserting this gate's action on their paths.
+   */
+  async assertExternal(entries: readonly PermissionEntry[]): Promise<void> {
     const external = entries.filter((entry) => entry.target.outside);
     const boundaries = new Map<string, string[]>();
     for (const entry of external) {
@@ -80,15 +97,6 @@ export class PermissionGate {
         save: repoRoots.map((root) => `${slash(root)}/*`),
       });
     }
-
-    const resources = unique(
-      entries.map((entry) =>
-        entry.target.outside
-          ? slash(entry.target.full)
-          : (entry.resource ?? this.sandboxResource(entry.target.full)),
-      ),
-    );
-    await this.assertAction(resources);
   }
 
   /**

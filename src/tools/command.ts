@@ -14,8 +14,6 @@ import { RelayControlServer } from "../core/relay-control.js";
 import { collect } from "../core/stream.js";
 import { textResult, type RunContext, type ToolSpec } from "../core/types.js";
 
-export const DEFAULT_EXEC_ALLOWLIST = ["npm", "npx", "uv", "uvx", "pip", "pip3"] as const;
-
 /**
  * Proxy settings the child may inherit in addition to the preset's own
  * environment allowlist. They are passed explicitly because the policy's
@@ -46,19 +44,6 @@ const EXEC_NAME = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/;
 
 export function isSafeExecName(value: string): boolean {
   return EXEC_NAME.test(value);
-}
-
-export function normalizeExecAllowlist(value: unknown): readonly string[] {
-  if (value === undefined) return DEFAULT_EXEC_ALLOWLIST;
-  if (!Array.isArray(value)) throw new FsError("execAllowlist must be an array of executable names.", "invalid");
-  const names: string[] = [];
-  for (const entry of value) {
-    if (typeof entry !== "string") throw new FsError("execAllowlist entries must be strings.", "invalid");
-    const name = entry.trim();
-    if (!isSafeExecName(name)) throw new FsError(`Invalid exec allowlist entry: ${entry}`, "invalid");
-    names.push(name);
-  }
-  return [...new Set(names)];
 }
 
 const Schema = Type.Object(
@@ -142,7 +127,7 @@ function loadProcage(): Promise<typeof import("procage")> {
 export const commandTool: ToolSpec<Input> = {
   name: "command",
   description:
-    "Run an allowlisted executable in a procage sandbox without a shell. Direct calls return JSON; " +
+    "Run an executable allowed by fs_command in a procage sandbox without a shell. Direct calls return JSON; " +
     "pipe stages pass raw stdout. Default allowlist: npm, npx, uv, uvx, pip, pip3. On Linux tier T1 " +
     "every network flow is named to the transparent relay, which asks fs_exec_network for its exact " +
     "resource; elsewhere networking is disabled.",
@@ -152,22 +137,20 @@ export const commandTool: ToolSpec<Input> = {
   async run(ctx, input, io) {
     const command = input.command.trim();
     if (!isSafeExecName(command)) {
-      throw new FsError(`exec command must be a bare executable name: "${input.command}"`, "invalid");
-    }
-    if (!ctx.execAllowlist.includes(command)) {
-      throw new FsError(`exec command is not allowlisted: "${command}"`, "unsupported");
+      throw new FsError(`command must be a bare executable name: "${input.command}"`, "invalid");
     }
     const args = input.args ?? [];
     if (args.some((arg) => arg.includes("\0"))) {
-      throw new FsError("exec arguments must not contain NUL bytes.", "invalid");
+      throw new FsError("arguments must not contain NUL bytes.", "invalid");
     }
+    await ctx.permission.assertTrusted([command]);
 
     const requested = input.cwd ?? ".";
     const cwdTarget = await ctx.sandbox.resolveExisting(requested, { allowRoot: true });
     const cwdStats = await ctx.sandbox.stat(cwdTarget.full, requested);
-    if (!cwdStats.isDirectory()) throw new FsError(`exec cwd is not a directory: "${requested}"`, "not-directory");
-    await ctx.permission.assert([{ target: cwdTarget, boundary: cwdTarget.full }]);
-    if (ctx.signal.aborted) throw new FsError("exec interrupted.", "interrupted");
+    if (!cwdStats.isDirectory()) throw new FsError(`cwd is not a directory: "${requested}"`, "not-directory");
+    await ctx.permission.assertExternal([{ target: cwdTarget, boundary: cwdTarget.full }]);
+    if (ctx.signal.aborted) throw new FsError("command interrupted.", "interrupted");
 
     const executable = await resolveExecutable(command);
     const tempDir = await fs.mkdtemp(path.join(ctx.tmpdir, "fs-exec-"));
@@ -208,7 +191,7 @@ export const commandTool: ToolSpec<Input> = {
           const boundary = stats.isDirectory() ? target.full : path.dirname(target.full);
           const dirTarget = await ctx.sandbox.resolveExisting(boundary, { allowRoot: true });
           if (approved.some((entry) => entry.full === dirTarget.full)) continue;
-          await ctx.permission.assert([{ target: dirTarget, boundary: dirTarget.full }]);
+          await ctx.permission.assertExternal([{ target: dirTarget, boundary: dirTarget.full }]);
           approved.push({ full: dirTarget.full });
           added = true;
         }
@@ -216,7 +199,7 @@ export const commandTool: ToolSpec<Input> = {
       }
 
       /* v8 ignore next */
-      if (attempt === undefined) throw new FsError("exec produced no result.", "io");
+      if (attempt === undefined) throw new FsError("command produced no result.", "io");
       const outcome = attempt.outcome;
       const networkMode = attempt.mode;
       const networkReason = attempt.reason;

@@ -135,7 +135,7 @@ async function run(denyNetwork = false) {
     commandTool,
     { command: "node", args: ["-e", "process.stdout.write('unused')"] },
     sb,
-    { execAllowlist: ["node"], denyNetwork },
+    { allowCommands: ["node"], denyNetwork },
   );
   return { result, body: JSON.parse(result.result.stdout.toString()) as Record<string, unknown> };
 }

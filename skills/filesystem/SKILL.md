@@ -139,7 +139,7 @@ removed, and deletion asserts `fs_rm`/`fs_trash`.
 | `cat > f <<EOF` | built-in `write` or `fs.tee({ paths: [f], content })` |
 | `rg pattern path` | `fs.grep({ pattern, paths })` or the built-in `grep` |
 | `ls -l f` | `fs.ls({ paths: [f], long: true })` |
-| `npm ...` / `uv run ...` | `fs.command({ command, args })` (allowlisted only) |
+| `npm ...` / `uv run ...` | `fs.command({ command, args })` (`fs_command` permission) |
 
 `sed -n` applied to another command's stdout has no fs equivalent; keep that in
 the command pipeline. `fs.find` has no arbitrary `-exec` by design; use
@@ -148,22 +148,29 @@ remove them explicitly.
 
 ## Command
 
-`fs.command` runs an allowlisted executable in a **procage sandbox** without a
-shell. It is closest to the shell's `command <prog>`: one program with literal
-argv, not `exec` (which replaces the shell) or `sh -c` (which parses shell
-syntax). The default allowlist is `npm`, `npx`, `uv`, `uvx`, `pip`, `pip3`;
-override it with the fs plugin option `execAllowlist` in `opencode.jsonc`:
+`fs.command` runs an executable in a **procage sandbox** without a shell. It is
+closest to the shell's `command <prog>`: one program with literal argv, not
+`exec` (which replaces the shell) or `sh -c` (which parses shell syntax). The
+executable allowlist is the `fs_command` permission: the tool asserts that action
+with the bare executable name as its resource. Deny `*`, then allow the names
+you need:
 
 ```jsonc
-{ "package": "./repos/opencode-fs-plugin", "options": { "execAllowlist": ["npm", "uv"] } }
+{ "permissions": [
+  { "action": "fs_command", "resource": "*", "effect": "deny" },
+  { "action": "fs_command", "resource": "npm", "effect": "allow" },
+  { "action": "fs_command", "resource": "uv", "effect": "allow" }
+] }
 ```
+
+With no rule the base allow applies to every executable.
 
 The project is read/write/exec. **Network egress needs Linux tier T1** and uses
 procage's transparent relay. There are no per-call grants. Every TCP/UDP flow is
 named as a DNS QNAME, TLS SNI, HTTP `Host`, QUIC SNI, or IP literal, and that
 exact resource is approved through `fs_exec_network`; ports, URLs, and payloads
-are never part of the permission. The rules are the allowlist: a `*` deny plus
-name/address allows fails closed for anything else.
+are never part of the permission. The permission rules are the network allowlist:
+a `*` deny plus name/address allows fails closed for anything else.
 
 DNS is authorized by QNAME. Allowed answers feed a per-run address-to-name
 cache: a nameless flow is allowed by a fresh allowed name bound to its address,
@@ -215,7 +222,7 @@ await tools.fs.pipe({
 })
 ```
 
-A non-zero exit is a normal result; allowlist rejection, timeout, and abort are
+A non-zero exit is a normal result; permission denial, timeout, and abort are
 handled explicitly. Procage kills every process the run started, including
 detached descendants, and returns captured stdout/stderr in full. It requires Linux
 x64/arm64, glibc 2.28+, and Node 22.12+.
@@ -465,7 +472,7 @@ await tools.fs.curl({
 - `fs.tar`/`fs.zip` create from `input` or stdin; extraction is file-backed.
 - `fs.curl` is HTTP(S) only: no FTP/SFTP, cookie jars, client
   certificates, proxies, multipart uploads, or resumable downloads.
-- Only `fs.command` starts processes, and only exact allowlisted names; `nohup`,
+- Only `fs.command` starts processes, and only names allowed by `fs_command`; `nohup`,
   `setsid`, and `timeout` wrappers are unavailable. `fs.kill` rejects pid 0,
   pid 1, and process groups.
 - No ICMP ping; use `fs.curl` or a TCP port check. No ACL, xattr, or
@@ -509,8 +516,8 @@ Command actions are `fs_<command>` (for example `fs_cp`). `fs_*` wildcards work
 in agent rules. `fs.pipe` asserts each stage's action; a denied stage cannot be
 hidden inside a pipeline. Do not work around a denied tool with shell.
 
-`fs_command` runs only exact allowlisted names in a procage sandbox. It asserts
-`fs_command`, asks `external_directory` for a blocked path, and asks
+`fs.command` asserts `fs_command` with the executable name as its resource;
+deny `*` for a closed set. It asks `external_directory` for a blocked path and
 `fs_exec_network` with the exact DNS name or IP address named by the relay.
 There is no `*` fallback and no direct-IP mode; networking that cannot use the
 relay is disabled. There are no per-call grants and no shell.

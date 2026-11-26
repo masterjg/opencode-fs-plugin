@@ -16,7 +16,7 @@ unit, end-to-end and coverage tests.
 | `chmod` | `fs.chmod` | octal/symbolic mode, `reference`, `recursive`, `noDereference`, `verbose`, `changes`, `silent` |
 | `chown` | `fs.chown` | `user`/`uid`, `group`/`gid`, `recursive`, `noDereference` |
 | `comm` | `fs.comm` | `suppress1`/`2`/`3`, `outputDelimiter` |
-| `command` | `fs.command` | `command`, `args`, `cwd`, `stdin`, `timeoutMs`; exact allowlist, procage sandbox, no shell |
+| `command` | `fs.command` | `command`, `args`, `cwd`, `stdin`, `timeoutMs`; `fs_command` permission, procage sandbox, no shell |
 | `cp` | `fs.cp` | `recursive`, `archive`, `force`, `noClobber`, `update`, `preserve`, `dereference`, `verbose` |
 | `cpio` | `fs.cpio` | `create`/`list`/`extract` (newc), `directory`, `members`, `input`, `member`, `verbose` |
 | `curl` | `fs.curl` | `url`, `method`, `headers`, `body`, `json`, `output`, `checksum`, `maxBytes`, `timeoutMs`, `failOnError`, `followRedirects`, `maxRedirects` |
@@ -136,25 +136,32 @@ work, fan out with `Promise.all` over `tools.fs.*` (or one multi-path call).
 
 ## Command
 
-`fs.command` runs one allowlisted executable inside a procage sandbox with
+`fs.command` runs one executable inside a procage sandbox with
 `shell: false`. It is closest to the shell's `command <prog>`: one program with
 literal argv, not `exec` (which replaces the calling shell) and not `sh -c`
-(which parses shell syntax). The default allowlist is `npm`, `npx`, `uv`, `uvx`,
-`pip`, `pip3`; override it in the plugin options:
+(which parses shell syntax). The executable allowlist is the `fs_command`
+permission: the tool asserts that action with the bare executable name as its
+resource. Deny `*` to close the set, then allow the names you need:
 
 ```jsonc
 {
-  "package": "./repos/opencode-fs-plugin",
-  "options": { "execAllowlist": ["npm", "uv"] }
+  "permissions": [
+    { "action": "fs_command", "resource": "*", "effect": "deny" },
+    { "action": "fs_command", "resource": "npm", "effect": "allow" },
+    { "action": "fs_command", "resource": "uv", "effect": "allow" }
+  ]
 }
 ```
+
+With no rule the base allow applies to every executable, so keep the `*` deny
+when you want a closed set.
 
 The workspace (project) is read/write/exec. **Network egress needs Linux tier
 T1** (user namespaces and TPROXY). Every run gets procage's transparent relay:
 there is no direct route, and every TCP or UDP flow is named to the plugin as a
 DNS QNAME, TLS SNI, HTTP `Host`, QUIC SNI, or an IP literal. That exact resource
 must be approved through `fs_exec_network`; the port, URL, headers, and payload
-are never part of the permission. There is no separate allowlist option:
+are never part of the permission. There is no separate network allowlist option:
 
 ```jsonc
 {
@@ -244,7 +251,7 @@ The command asserts `fs_command`, returns stdout/stderr in full, and treats a no
 a normal result. Procage requires Linux x64/arm64, glibc 2.28+, and Node 22.12+.
 On kernels before Landlock ABI 6, signal isolation relaxes to same-user. The
 trust-handoff class is waived so package tools can update workspace files such as
-`.git/hooks`; the executable allowlist remains the trust boundary.
+`.git/hooks`; the `fs_command` permission remains the trust boundary.
 
 ## Performance and concurrency
 
@@ -461,14 +468,17 @@ external targets first require `external_directory` on the absolute boundary.
 paths, absolute external boundaries, or network names/addresses. A specific
 resource saves narrowly; an explicitly requested `*` remains `*`.
 
-`fs.command` asserts `fs_command` for the run, asks `external_directory` for any
-blocked path, and asks `fs_exec_network` for the exact DNS name or IP address
-the transparent relay named. There is no `*` fallback and no direct-IP mode;
-networking that cannot use the relay is disabled:
+`fs.command` asserts `fs_command` with the executable name, asks
+`external_directory` for any blocked path, and asks `fs_exec_network` for the
+exact DNS name or IP address the transparent relay named. There is no `*`
+fallback and no direct-IP mode; networking that cannot use the relay is
+disabled:
 
 ```jsonc
 {
   "permissions": [
+    { "action": "fs_command", "resource": "*", "effect": "deny" },
+    { "action": "fs_command", "resource": "npm", "effect": "allow" },
     { "action": "external_directory", "resource": "$HOME/.npm/**", "effect": "ask" },
     { "action": "fs_exec_network", "resource": "*", "effect": "deny" },
     { "action": "fs_exec_network", "resource": "registry.npmjs.org", "effect": "allow" }
@@ -476,10 +486,10 @@ networking that cannot use the relay is disabled:
 }
 ```
 
-Keep both rules explicit. Plugin actions match OpenCode's base
+Keep the rules explicit. Plugin actions match OpenCode's base
 `{ "action": "*", "resource": "*", "effect": "allow" }` rule, so an unlisted
-`fs_exec_network` or `external_directory` resource is allowed without a prompt,
-not asked.
+`fs_command`, `fs_exec_network`, or `external_directory` resource is allowed
+without a prompt, not asked.
 
 `fs.curl` reuses the built-in `webfetch` permission, with the requested
 URL as the resource, so one rule set covers both tools:

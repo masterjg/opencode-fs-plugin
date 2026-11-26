@@ -11,7 +11,6 @@ import * as path from "node:path";
 import { FsError } from "../../src/core/errors.js";
 import { Sandbox } from "../../src/core/sandbox.js";
 import {
-  DEFAULT_EXEC_ALLOWLIST,
   addOptionalRoots,
   blockedHint,
   discoverExternalPaths,
@@ -19,7 +18,6 @@ import {
   filterViolations,
   isSafeExecName,
   isSandboxBlocked,
-  normalizeExecAllowlist,
   relayGapReason,
   type ExecOutcome,
   type PolicyDocument,
@@ -119,16 +117,18 @@ async function startLocalFixture(address: string): Promise<LocalFixture> {
 }
 
 describe("command", () => {
-  it("runs an allowlisted command and returns JSON", async () => {
+  it("runs a permitted command and returns JSON", async () => {
     const { sb } = await setup();
     const result = await runSpec(
       commandTool,
       { command: "node", args: ["-e", "process.stdout.write('ok')"] },
       sb,
-      { execAllowlist: ["node"] },
+      { allowCommands: ["node"] },
     );
     expect(parsed(result)).toMatchObject({ command: "node", exitCode: 0, timedOut: false, stdout: "ok", stderr: "" });
-    expect(result.requests.some((request) => request.action === "fs_command")).toBe(true);
+    expect(result.requests).toContainEqual(
+      expect.objectContaining({ action: "fs_command", resources: ["node"] }),
+    );
   });
 
   it("passes only proxy settings beyond the preset environment allowlist", async () => {
@@ -154,7 +154,7 @@ describe("command", () => {
         "path:process.env.PATH??null" +
         "}))";
       const result = await runSpec(commandTool, { command: "node", args: ["-e", script] }, sb, {
-        execAllowlist: ["node"],
+        allowCommands: ["node"],
       });
       const seen = JSON.parse(parsed(result).stdout as string) as Record<string, string | null>;
       expect(seen).toMatchObject({
@@ -179,26 +179,26 @@ describe("command", () => {
       commandTool,
       { command: "node", args: ["-e", "console.error('bad'); process.exit(3)"] },
       sb,
-      { execAllowlist: ["node"] },
+      { allowCommands: ["node"] },
     );
     expect(parsed(result)).toMatchObject({ exitCode: 3, stderr: "bad\n", stdout: "" });
     expect(result.result.exitCode).toBe(1);
   });
 
-  it("rejects commands outside the allowlist", async () => {
+  it("rejects commands the fs_command permission denies", async () => {
     const { sb } = await setup();
-    await expect(runSpec(commandTool, { command: "rm", args: ["-rf", "."] }, sb)).rejects.toMatchObject({
-      code: "unsupported",
-    });
     await expect(
-      runSpec(commandTool, { command: "node", args: ["-e", ""] }, sb, { execAllowlist: [] }),
-    ).rejects.toMatchObject({ code: "unsupported" });
+      runSpec(commandTool, { command: "rm", args: ["-rf", "."] }, sb, { allowCommands: ["node"] }),
+    ).rejects.toThrow("permission denied by test");
+    await expect(
+      runSpec(commandTool, { command: "node", args: ["-e", ""] }, sb, { allowCommands: [] }),
+    ).rejects.toThrow("permission denied by test");
   });
 
   it("rejects paths and shell syntax in the command name", async () => {
     const { sb } = await setup();
     for (const command of ["/bin/node", "node -e x", "node;rm", "../node"]) {
-      await expect(runSpec(commandTool, { command }, sb, { execAllowlist: [command] })).rejects.toMatchObject({
+      await expect(runSpec(commandTool, { command }, sb, { allowCommands: [command] })).rejects.toMatchObject({
         code: "invalid",
       });
     }
@@ -213,7 +213,7 @@ describe("command", () => {
         args: ["-e", "console.log(process.argv.slice(1).join('|'))", "a;b", "c|d", "$HOME"],
       },
       sb,
-      { execAllowlist: ["node"] },
+      { allowCommands: ["node"] },
     );
     expect(parsed(result).stdout).toBe("a;b|c|d|$HOME\n");
   });
@@ -225,12 +225,12 @@ describe("command", () => {
       commandTool,
       { command: "node", args: ["-e", "process.stdout.write(process.cwd())"], cwd: "sub" },
       sb,
-      { execAllowlist: ["node"] },
+      { allowCommands: ["node"] },
     );
     expect(parsed(result).stdout).toMatch(/\/sub$/);
     await fs.writeFile(path.join(root, "file"), "x");
     await expect(
-      runSpec(commandTool, { command: "node", args: ["-e", ""], cwd: "file" }, sb, { execAllowlist: ["node"] }),
+      runSpec(commandTool, { command: "node", args: ["-e", ""], cwd: "file" }, sb, { allowCommands: ["node"] }),
     ).rejects.toMatchObject({ code: "not-directory" });
   });
 
@@ -240,7 +240,7 @@ describe("command", () => {
       commandTool,
       { command: "node", args: ["-e", "process.stdin.pipe(process.stdout)"], stdin: "hello" },
       sb,
-      { execAllowlist: ["node"] },
+      { allowCommands: ["node"] },
     );
     expect(parsed(result).stdout).toBe("hello");
   });
@@ -251,7 +251,7 @@ describe("command", () => {
       commandTool,
       { command: "node", args: ["-e", "setTimeout(() => {}, 10000)"], timeoutMs: 100 },
       sb,
-      { execAllowlist: ["node"] },
+      { allowCommands: ["node"] },
     );
     expect(parsed(result)).toMatchObject({ timedOut: true, exitCode: 124 });
   });
@@ -264,7 +264,7 @@ describe("command", () => {
       commandTool,
       { command: "node", args: ["-e", "setTimeout(() => {}, 10000)"], timeoutMs: 5000 },
       sb,
-      { execAllowlist: ["node"], signal: controller.signal },
+      { allowCommands: ["node"], signal: controller.signal },
     );
     expect(parsed(result)).toMatchObject({ aborted: true, exitCode: 130 });
 
@@ -272,7 +272,7 @@ describe("command", () => {
     aborted.abort();
     await expect(
       runSpec(commandTool, { command: "node", args: ["-e", ""] }, sb, {
-        execAllowlist: ["node"],
+        allowCommands: ["node"],
         signal: aborted.signal,
       }),
     ).rejects.toMatchObject({ code: "interrupted" });
@@ -287,16 +287,16 @@ describe("command", () => {
         args: ["-e", "process.stdout.write('abc'); setTimeout(() => process.stdout.write('def'), 10)"],
       },
       sb,
-      { execAllowlist: ["node"] },
+      { allowCommands: ["node"] },
     );
     expect(parsed(result).stdout).toBe("abcdef");
   });
 
-  it("rejects an allowlisted command that does not exist", async () => {
+  it("rejects a permitted command that does not exist", async () => {
     const { sb } = await setup();
     await expect(
       runSpec(commandTool, { command: "definitely-not-a-command" }, sb, {
-        execAllowlist: ["definitely-not-a-command"],
+        allowCommands: ["definitely-not-a-command"],
       }),
     ).rejects.toBeInstanceOf(FsError);
   });
@@ -304,7 +304,7 @@ describe("command", () => {
   it("rejects NUL bytes in arguments", async () => {
     const { sb } = await setup();
     await expect(
-      runSpec(commandTool, { command: "node", args: ["a\0b"] }, sb, { execAllowlist: ["node"] }),
+      runSpec(commandTool, { command: "node", args: ["a\0b"] }, sb, { allowCommands: ["node"] }),
     ).rejects.toMatchObject({ code: "invalid" });
   });
 
@@ -314,7 +314,7 @@ describe("command", () => {
       commandTool,
       { command: "node", args: ["-e", "process.kill(process.pid, 'SIGTERM')"] },
       sb,
-      { execAllowlist: ["node"] },
+      { allowCommands: ["node"] },
     );
     expect(parsed(result)).toMatchObject({ exitCode: 1, signal: "SIGTERM" });
   });
@@ -325,7 +325,7 @@ describe("command", () => {
       commandTool,
       { command: "node", args: ["-e", "process.stderr.write('abcdef')"] },
       sb,
-      { execAllowlist: ["node"] },
+      { allowCommands: ["node"] },
     );
     expect(parsed(result).stderr).toBe("abcdef");
   });
@@ -340,7 +340,7 @@ describe("command", () => {
         timeoutMs: 500,
       },
       sb,
-      { execAllowlist: ["node"] },
+      { allowCommands: ["node"] },
     );
     expect(parsed(result)).toMatchObject({ timedOut: true, exitCode: 124 });
   });
@@ -351,7 +351,7 @@ describe("command", () => {
       commandTool,
       { command: "node", args: ["-e", "process.exit(0)"], stdin: "x".repeat(1_000_000) },
       sb,
-      { execAllowlist: ["node"] },
+      { allowCommands: ["node"] },
     );
     expect(parsed(result)).toMatchObject({ exitCode: 0 });
   });
@@ -367,7 +367,7 @@ describe("command", () => {
         ],
       },
       sb,
-      { execAllowlist: ["node"] },
+      { allowCommands: ["node"] },
     );
     expect(result.result.stdout.toString()).toBe("abc");
     expect(
@@ -399,12 +399,13 @@ describe("command", () => {
             ],
           },
           sb,
-          { execAllowlist: ["node"] },
+          { allowCommands: ["node"] },
         );
         const commandRequests = result.requests.filter((request) => request.action === "fs_command");
         expect(commandRequests.length).toBeGreaterThan(0);
         expect(commandRequests.every((request) => !request.resources.includes("*"))).toBe(true);
-        expect(commandRequests.some((request) => request.resources.includes(sb.root))).toBe(true);
+        expect(commandRequests.some((request) => request.resources.includes("node"))).toBe(true);
+        expect(commandRequests.every((request) => !request.resources.includes(sb.root))).toBe(true);
         expect(
           result.requests.some(
             (request) =>
@@ -427,7 +428,7 @@ describe("command", () => {
     }
     await expect(
       runSpec(commandTool, { command: "node", args: ["-e", ""] }, sb, {
-        execAllowlist: ["node"],
+        allowCommands: ["node"],
         signal: controller.signal,
         stdin: stdin(),
       }),
@@ -447,7 +448,7 @@ describe("command", () => {
         args: ["-e", `require('fs').writeFileSync(${JSON.stringify(file)}, "ok")`],
       },
       sb,
-      { execAllowlist: ["node"] },
+      { allowCommands: ["node"] },
     );
     const body = parsed(result);
     expect(body).toMatchObject({ exitCode: 1, sandboxBlocked: true, externalPaths: [] });
@@ -475,7 +476,7 @@ describe("command", () => {
         args: ["-e", `require('fs').writeFileSync(${JSON.stringify(file)}, "no")`],
       },
       sb,
-      { execAllowlist: ["node"] },
+      { allowCommands: ["node"] },
     );
     expect(parsed(result)).toMatchObject({
       sandboxBlocked: true,
@@ -503,7 +504,7 @@ describe("command", () => {
       `console.error('path: ' + ${JSON.stringify(JSON.stringify(fake))});` +
       "process.exit(1);";
     const result = await runSpec(commandTool, { command: "node", args: ["-e", script] }, sb, {
-      execAllowlist: ["node"],
+      allowCommands: ["node"],
     });
     expect(
       result.requests.some(
@@ -531,7 +532,7 @@ describe("command", () => {
         "s.on('close',()=>process.exit(0));" +
         "setTimeout(()=>process.exit(0),3000);";
       const result = await runSpec(commandTool, { command: "node", args: ["-e", script] }, sb, {
-        execAllowlist: ["node"],
+        allowCommands: ["node"],
       });
       const body = parsed(result);
       if (body.networkMode === "disabled") {
@@ -571,7 +572,7 @@ describe("command", () => {
       "process.exit(1);",
     ].join("");
     const result = await runSpec(commandTool, { command: "node", args: ["-e", script] }, sb, {
-      execAllowlist: ["node"],
+      allowCommands: ["node"],
     });
     expect(parsed(result)).toMatchObject({
       sandboxBlocked: true,
@@ -596,7 +597,7 @@ describe("command", () => {
       'spawn(process.execPath,["-e",code],{detached:true,stdio:"ignore"}).unref();',
       "process.exit(0);",
     ].join("");
-    await runSpec(commandTool, { command: "node", args: ["-e", script] }, sb, { execAllowlist: ["node"] });
+    await runSpec(commandTool, { command: "node", args: ["-e", script] }, sb, { allowCommands: ["node"] });
     await new Promise((resolve) => setTimeout(resolve, 1500));
     expect(await pathExists(out)).toBe(false);
   });
@@ -604,7 +605,7 @@ describe("command", () => {
   it("reports a missing executable", async () => {
     const { sb } = await setup();
     await expect(
-      runSpec(commandTool, { command: "missing-exec-command" }, sb, { execAllowlist: ["missing-exec-command"] }),
+      runSpec(commandTool, { command: "missing-exec-command" }, sb, { allowCommands: ["missing-exec-command"] }),
     ).rejects.toMatchObject({ code: "not-found" });
   });
 
@@ -619,7 +620,7 @@ describe("command", () => {
         ],
       },
       sb,
-      { execAllowlist: ["node"] },
+      { allowCommands: ["node"] },
     );
     expect(result.result.metadata?.stages?.[0]).toMatchObject({ tool: "command", exitCode: 1 });
   });
@@ -637,7 +638,7 @@ describe("command", () => {
         ],
       },
       sb,
-      { execAllowlist: ["node"] },
+      { allowCommands: ["node"] },
     );
     expect(result.result.stdout.toString()).toBe("xyz\n");
   });
@@ -655,7 +656,7 @@ describe("command", () => {
         input,
       },
       sb,
-      { execAllowlist: ["node"] },
+      { allowCommands: ["node"] },
     );
     expect(result.result.stdout.length).toBeGreaterThan(0);
   });
@@ -809,19 +810,7 @@ describe("command sandbox helpers", () => {
   });
 });
 
-describe("command allowlist", () => {
-  it("defaults and normalizes overrides", () => {
-    expect(normalizeExecAllowlist(undefined)).toEqual(DEFAULT_EXEC_ALLOWLIST);
-    expect(normalizeExecAllowlist(["node", "node", " uv "])).toEqual(["node", "uv"]);
-    expect(normalizeExecAllowlist([])).toEqual([]);
-  });
-
-  it("rejects malformed allowlists", () => {
-    expect(() => normalizeExecAllowlist("npm")).toThrow(FsError);
-    expect(() => normalizeExecAllowlist([42])).toThrow(FsError);
-    expect(() => normalizeExecAllowlist(["../npm"])).toThrow(FsError);
-  });
-
+describe("command names", () => {
   it("accepts only bare executable names", () => {
     expect(isSafeExecName("uv")).toBe(true);
     expect(isSafeExecName("node-22.1_x")).toBe(true);
@@ -835,7 +824,7 @@ describe("command allowlist", () => {
     delete process.env.PATH;
     try {
       await expect(
-        runSpec(commandTool, { command: "node", args: ["-e", ""] }, sb, { execAllowlist: ["node"] }),
+        runSpec(commandTool, { command: "node", args: ["-e", ""] }, sb, { allowCommands: ["node"] }),
       ).rejects.toMatchObject({ code: "not-found" });
     } finally {
       if (original === undefined) delete process.env.PATH;
