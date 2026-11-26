@@ -762,9 +762,12 @@ describe("job retention cap", () => {
     expect(maxRunning).toBeLessThanOrEqual(4);
     expect(manager.list().length).toBeLessThanOrEqual(4);
     for (const id of pre) expect(() => manager.status(id)).toThrow(/job not found/);
-    // Let every admitted job write its final status before afterEach removes the
-    // directory; otherwise an in-flight write can recreate a file mid-rm.
-    for (const result of fulfilled) await manager.wait(result.value.id, 1000);
+    // Let every retained job write its final status before afterEach removes the
+    // directory; otherwise an in-flight write can recreate a file mid-rm. Use
+    // the current list because an earlier job may already be evicted.
+    for (const row of manager.list().filter((job) => job.state === "running")) {
+      await manager.wait(row.id, 1000);
+    }
   });
 
   it("holds the running cap under simultaneous starts", async () => {
