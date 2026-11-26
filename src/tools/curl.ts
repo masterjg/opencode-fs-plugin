@@ -65,6 +65,77 @@ interface Checksum {
   digest: string;
 }
 
+/** Headers that are safe to resend to a different origin on a redirect. */
+const SAFE_CROSS_ORIGIN_HEADERS: ReadonlySet<string> = new Set([
+  "accept",
+  "accept-language",
+  "cache-control",
+  "pragma",
+  "range",
+  "user-agent",
+]);
+
+/**
+ * A permission assertion failed. It is wrapped so the outer fetch/stream error
+ * mapper can rethrow the original denial instead of turning it into an
+ * ordinary `io` error result.
+ */
+class PermissionDenied extends Error {
+  constructor(readonly original: unknown) {
+    super(errorMessage(original));
+    this.name = "PermissionDenied";
+  }
+}
+
+/**
+ * Decide whether a redirect hop may run, and with which headers. Same-origin
+ * hops keep the caller's request unchanged. A cross-origin hop is fail-closed:
+ * only a bodyless GET/HEAD with caller headers from the safe set is allowed.
+ * Credentials, custom headers, unsafe methods and request bodies are refused
+ * instead of being stripped or forwarded. An HTTPS to HTTP downgrade is always
+ * refused. The input object is never mutated.
+ */
+export function headersForRedirect(
+  headers: Record<string, string>,
+  from: URL,
+  to: URL,
+  method: string,
+  hasBody: boolean,
+): Record<string, string> {
+  if (from.protocol === "https:" && to.protocol === "http:") {
+    throw new FsError(`Refusing an HTTPS to HTTP redirect to "${to}".`, "unsupported");
+  }
+  if (from.origin === to.origin) return headers;
+  if (to.username.length > 0 || to.password.length > 0) {
+    throw new FsError(
+      `Refusing a cross-origin redirect to a URL with embedded credentials: "${to.origin}".`,
+      "unsupported",
+    );
+  }
+  if (hasBody) {
+    throw new FsError(
+      `Refusing a cross-origin redirect that would resend a request body to "${to.origin}".`,
+      "unsupported",
+    );
+  }
+  if (method !== "GET" && method !== "HEAD") {
+    throw new FsError(
+      `Refusing a cross-origin redirect for a ${method} request to "${to.origin}".`,
+      "unsupported",
+    );
+  }
+  const unsafe = Object.keys(headers).filter(
+    (name) => !SAFE_CROSS_ORIGIN_HEADERS.has(name.toLowerCase()),
+  );
+  if (unsafe.length > 0) {
+    throw new FsError(
+      `Refusing a cross-origin redirect with caller headers: ${unsafe.join(", ")}.`,
+      "unsupported",
+    );
+  }
+  return headers;
+}
+
 export const curlTool: ToolSpec<Input> = {
   name: "curl",
   description:
@@ -102,6 +173,9 @@ export const curlTool: ToolSpec<Input> = {
     const forwardAbort = () => controller.abort();
     ctx.signal.addEventListener("abort", forwardAbort, { once: true });
     const mapError = (error: unknown): FsError => {
+      // A permission denial is not a transport failure: preserve the host's
+      // error so plugin execute propagates it instead of rendering `io`.
+      if (error instanceof PermissionDenied) throw error.original;
       if (error instanceof FsError) return error;
       if (controller.signal.aborted) {
         return new FsError(
@@ -146,7 +220,11 @@ export const curlTool: ToolSpec<Input> = {
 
       if (input.output !== undefined) {
         const target = await ctx.sandbox.resolveForCreate(input.output);
-        await ctx.permission.assert([{ target, boundary: target.full }]);
+        try {
+          await ctx.permission.assert([{ target, boundary: path.dirname(target.full) }]);
+        } catch (error) {
+          throw new PermissionDenied(error);
+        }
         const downloaded = await download(target.full, response, input.maxBytes, checksum, mapError);
         return textResult(
           `Downloaded ${downloaded.bytes} bytes to ${input.output}\n`,
@@ -198,12 +276,17 @@ async function request(
   let current = url;
   let method = options.method;
   let body = options.body;
+  let headers = options.headers;
 
   for (let redirects = 0; ; redirects++) {
-    await gate.assertTrusted([current.toString()]);
+    try {
+      await gate.assertTrusted([current.toString()]);
+    } catch (error) {
+      throw new PermissionDenied(error);
+    }
     const response = await fetch(current, {
       method,
-      headers: options.headers,
+      headers,
       redirect: "manual",
       signal: options.signal,
       ...(body === undefined ? {} : { body }),
@@ -230,10 +313,20 @@ async function request(
     } catch (error) {
       throw options.mapError(error);
     }
-    current = next;
-    if (response.status === 303 || ((response.status === 301 || response.status === 302) && method === "POST")) {
+    // A 303 always turns into a bodyless GET before the redirect policy is
+    // evaluated, so a safe resulting GET may cross origins; 301/302 keep their
+    // existing POST rewrite after the policy, and 307/308 keep method/body.
+    if (response.status === 303) {
       method = "GET";
       body = undefined;
+    }
+    headers = headersForRedirect(headers, current, next, method, body !== undefined);
+    current = next;
+    if (response.status === 301 || response.status === 302) {
+      if (method === "POST") {
+        method = "GET";
+        body = undefined;
+      }
     }
   }
 }
@@ -291,7 +384,7 @@ async function download(
         throw new FsError(`Response exceeded maxBytes (${maxBytes}).`, "invalid");
       }
       hashers.update(chunk);
-      await handle.write(chunk);
+      await writeChunkFully(handle, chunk);
     }
     await handle.close();
     handle = undefined;
@@ -305,6 +398,30 @@ async function download(
     await fs.rm(temp, { force: true }).catch(() => undefined);
     if (error instanceof FsError) throw error;
     throw fromErrno(error);
+  }
+}
+
+interface WriteHandle {
+  write(
+    buffer: Buffer,
+    offset: number,
+    length: number,
+  ): Promise<{ bytesWritten: number }>;
+}
+
+/**
+ * Write every byte of a chunk. `FileHandle.write` may write less than the whole
+ * buffer in one call; keep going until the chunk is complete and fail on a
+ * zero-progress write rather than silently truncating the download.
+ */
+export async function writeChunkFully(handle: WriteHandle, chunk: Buffer): Promise<void> {
+  let offset = 0;
+  while (offset < chunk.length) {
+    const { bytesWritten } = await handle.write(chunk, offset, chunk.length - offset);
+    if (bytesWritten <= 0) {
+      throw new FsError("Download write made no progress.", "io");
+    }
+    offset += bytesWritten;
   }
 }
 

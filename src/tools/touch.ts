@@ -36,14 +36,21 @@ export const touchTool: ToolSpec<Input> = {
     const base = await resolveTimes(ctx, input);
     const changed: string[] = [];
     for (const requested of input.paths) {
-      const target = await ctx.sandbox.resolveForCreate(requested);
-      await ctx.permission.assert([{ target, boundary: target.full }]);
-      let stats;
+      const target = input.noDereference === true
+        ? await ctx.sandbox.resolveForCreate(requested)
+        : await ctx.sandbox.resolveForWrite(requested);
+      let stats: Awaited<ReturnType<typeof fs.lstat>> | undefined;
       try {
         stats = await ctx.sandbox.lstat(target.full, requested);
       } catch (error) {
         /* v8 ignore next */
         if (!(error instanceof FsError) || error.code !== "not-found") throw error;
+      }
+      await ctx.permission.assert([{
+        target,
+        boundary: ctx.sandbox.boundaryFor(target.full, stats?.isDirectory() === true ? "directory" : "file"),
+      }]);
+      if (stats === undefined) {
         if (input.noCreate === true) continue;
         try {
           const handle = await fs.open(target.full, "a");
@@ -78,7 +85,8 @@ async function resolveTimes(
   input: Input,
 ): Promise<{ atime: Date; mtime: Date }> {
   if (input.reference !== undefined) {
-    const target = await ctx.sandbox.resolveExisting(input.reference, { allowRoot: true });
+    const target = await ctx.sandbox.resolveFollow(input.reference);
+    await ctx.permission.assert([{ target, boundary: ctx.sandbox.boundaryFor(target.full, "file") }]);
     const stats = await ctx.sandbox.lstat(target.full, input.reference);
     return { atime: stats.atime, mtime: stats.mtime };
   }

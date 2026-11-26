@@ -47,29 +47,37 @@ export const chownTool: ToolSpec<Input> = {
 
     const targets = [];
     for (const requested of input.paths) {
-      const target = await ctx.sandbox.resolveExisting(requested, { allowRoot: true });
+      const target = input.noDereference === true
+        ? await ctx.sandbox.resolveForCreate(requested)
+        : await ctx.sandbox.resolveFollow(requested);
+      ctx.sandbox.assertSafeToDelete(target.full);
       targets.push({ requested, target });
     }
-    const entries: Array<{ full: string; requested: string }> = [];
+    const entries: Array<{ full: string; requested: string; outside: boolean; directory: boolean }> = [];
     for (const { requested, target } of targets) {
-      entries.push({ full: target.full, requested });
-      if (input.recursive === true) {
-        const stats = await ctx.sandbox.lstat(target.full, requested);
-        if (stats.isDirectory()) {
-          for (const entry of await walkAll(target.full, {
-            recursive: true,
-            includeHidden: true,
-            concurrency: ctx.concurrency,
-            signal: ctx.signal,
-          })) {
-            entries.push({ full: entry.path, requested: entry.path });
-          }
+      const stats = await ctx.sandbox.lstat(target.full, requested);
+      entries.push({ full: target.full, requested, outside: target.outside, directory: stats.isDirectory() });
+      if (input.recursive === true && stats.isDirectory()) {
+        for (const entry of await walkAll(target.full, {
+          recursive: true,
+          includeHidden: true,
+          concurrency: ctx.concurrency,
+          signal: ctx.signal,
+        })) {
+          // Traversal symlinks are skipped: their targets were never resolved or gated.
+          if (input.noDereference !== true && entry.stats.isSymbolicLink()) continue;
+          entries.push({
+            full: entry.path,
+            requested: entry.path,
+            outside: target.outside,
+            directory: entry.stats.isDirectory(),
+          });
         }
       }
     }
     await ctx.permission.assert(entries.map((entry) => ({
-      target: { full: entry.full, outside: false, requested: entry.requested, realAncestor: entry.full },
-      boundary: entry.full,
+      target: { full: entry.full, outside: entry.outside, requested: entry.requested, realAncestor: entry.full },
+      boundary: ctx.sandbox.boundaryFor(entry.full, entry.directory ? "directory" : "file"),
     })));
 
     await mapLimit(entries, ctx.concurrency, async (entry) => {

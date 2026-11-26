@@ -6,6 +6,13 @@
 import * as fs from "node:fs/promises";
 import { Type, type Static } from "@sinclair/typebox";
 import { FsError, fromErrno } from "../core/errors.js";
+import {
+  openOutput,
+  outputBoundary,
+  resolveOutputTarget,
+  throwIfAborted,
+  writeFully,
+} from "../core/safe-output.js";
 import { textResult, type ToolSpec } from "../core/types.js";
 
 const Schema = Type.Object(
@@ -35,13 +42,13 @@ export const ddTool: ToolSpec<Input> = {
     let inputPath: string | undefined;
     if (input.input !== undefined) {
       const target = await ctx.sandbox.resolveFollow(input.input);
-      await ctx.permission.assert([{ target, boundary: target.full }]);
+      await ctx.permission.assert([{ target, boundary: outputBoundary(target.full) }]);
       inputPath = target.full;
     }
     let outputPath: string | undefined;
     if (input.output !== undefined) {
-      const target = await ctx.sandbox.resolveForCreate(input.output);
-      await ctx.permission.assert([{ target, boundary: target.full }]);
+      const target = await resolveOutputTarget(ctx.sandbox, input.output);
+      await ctx.permission.assert([{ target, boundary: outputBoundary(target.full) }]);
       outputPath = target.full;
     }
     const source = inputPath === undefined ? io.stdin : fileChunks(inputPath, block);
@@ -54,6 +61,7 @@ export const ddTool: ToolSpec<Input> = {
     let skipped = 0;
     let copied = 0;
     for await (const chunk of source) {
+      throwIfAborted(ctx.signal);
       let data = chunk;
       if (skipped < skipBytes) {
         const drop = Math.min(skipBytes - skipped, data.length);
@@ -70,13 +78,11 @@ export const ddTool: ToolSpec<Input> = {
     const data = Buffer.concat(chunks);
 
     if (outputPath !== undefined) {
-      let handle: Awaited<ReturnType<typeof fs.open>> | undefined;
+      throwIfAborted(ctx.signal);
+      let handle: Awaited<ReturnType<typeof openOutput>> | undefined;
       try {
-        handle = await fs.open(outputPath, "w");
-        if (data.length > 0) await handle.write(data, 0, data.length, seekBytes);
-      } catch (error) {
-        /* v8 ignore next -- write errors are environment-dependent */
-        throw fromErrno(error);
+        handle = await openOutput(outputPath);
+        if (data.length > 0) await writeFully(handle, data, seekBytes, ctx.signal);
       } finally {
         await handle?.close();
       }

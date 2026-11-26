@@ -150,6 +150,49 @@ export class Sandbox {
     };
   }
 
+  /**
+   * Resolve the real path a following syscall will mutate. Existing final
+   * symlinks and chains are followed; a dangling link resolves to the path its
+   * target would create, so callers can gate that location before writing.
+   */
+  async resolveForWrite(target: string): Promise<ResolvedTarget> {
+    this.assertTarget(target);
+    let node = path.resolve(this.root, target);
+    for (let hops = 0; ; hops++) {
+      let stats: Awaited<ReturnType<typeof fs.lstat>>;
+      try {
+        stats = await fs.lstat(node);
+      } catch (error) {
+        /* v8 ignore next */
+        if (isMissing(error)) {
+          const created = await this.resolveForCreate(node);
+          return { ...created, requested: target };
+        }
+        /* v8 ignore next */
+        throw fromErrno(error, "access");
+      }
+      if (!stats.isSymbolicLink()) {
+        let real: string;
+        try {
+          real = await fs.realpath(node);
+        } catch (error) {
+          /* v8 ignore next 2 */
+          throw fromErrno(error, "access");
+        }
+        return { full: real, outside: !this.isWithin(real), requested: target, realAncestor: real };
+      }
+      if (hops >= 40) throw new FsError(`Too many symbolic links: "${target}".`, "io");
+      let link: string;
+      try {
+        link = await fs.readlink(node);
+      } catch (error) {
+        /* v8 ignore next */
+        throw fromErrno(error, "access");
+      }
+      node = path.resolve(path.dirname(node), link);
+    }
+  }
+
   /** Resolve the parent of a target that may be created or replaced. */
   async resolveParent(target: string): Promise<ResolvedTarget> {
     this.assertTarget(target);

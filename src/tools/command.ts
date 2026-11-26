@@ -145,7 +145,10 @@ export const commandTool: ToolSpec<Input> = {
     await ctx.permission.assertTrusted([command]);
 
     const requested = input.cwd ?? ".";
-    const cwdTarget = await ctx.sandbox.resolveExisting(requested, { allowRoot: true });
+    // Follow a final symlink: the child is started in the canonical directory,
+    // so a project link to an outside directory must assert that real boundary
+    // and the policy write rule must name the same canonical path.
+    const cwdTarget = await ctx.sandbox.resolveFollow(requested);
     const cwdStats = await ctx.sandbox.stat(cwdTarget.full, requested);
     if (!cwdStats.isDirectory()) throw new FsError(`cwd is not a directory: "${requested}"`, "not-directory");
     await ctx.permission.assertExternal([{ target: cwdTarget, boundary: cwdTarget.full }]);

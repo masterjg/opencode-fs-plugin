@@ -133,6 +133,8 @@ async function walkDir(
   return output;
 }
 
+export type CopyLimiter = <T>(fn: () => Promise<T>) => Promise<T>;
+
 export interface CopyOptions {
   readonly recursive?: boolean;
   readonly dereference?: boolean;
@@ -141,16 +143,24 @@ export interface CopyOptions {
   readonly update?: boolean;
   readonly signal?: AbortSignal;
   readonly concurrency: number;
+  /** Shared syscall limiter for nested trees; never held across recursion. */
+  readonly limiter?: CopyLimiter;
+  /** Called when noClobber or update leaves an existing destination in place. */
+  readonly onSkip?: () => void;
 }
 
 export async function copyTree(src: string, dest: string, options: CopyOptions): Promise<number> {
   if (options.signal?.aborted) throw new FsError("Operation interrupted.", "interrupted");
-  const stats = options.dereference === false ? await fs.lstat(src) : await fs.stat(src);
+  const limit = options.limiter ?? immediate;
+  const stats = await limit(() => (options.dereference === false ? fs.lstat(src) : fs.stat(src)));
   if (options.update === true) {
     try {
-      const destStats = await fs.lstat(dest);
+      const destStats = await limit(() => fs.lstat(dest));
       /* v8 ignore next */
-      if (destStats.mtimeMs >= stats.mtimeMs) return 0;
+      if (destStats.mtimeMs >= stats.mtimeMs) {
+        options.onSkip?.();
+        return 0;
+      }
     } catch (error) {
       /* v8 ignore next 2 */
       if (!isMissing(error)) throw fromErrno(error, "access");
@@ -158,18 +168,19 @@ export async function copyTree(src: string, dest: string, options: CopyOptions):
   }
 
   if (stats.isSymbolicLink() && options.dereference === false) {
-    const target = await fs.readlink(src);
-    await ensureParent(dest);
+    const target = await limit(() => fs.readlink(src));
+    await limit(() => ensureParent(dest));
     try {
-      await fs.symlink(target, dest);
+      await limit(() => fs.symlink(target, dest));
     } catch (error) {
       /* v8 ignore next */
-      if (isExists(error) && options.noClobber !== true) {
-        await fs.unlink(dest);
-        await fs.symlink(target, dest);
-      } else {
-        throw fromErrno(error);
+      if (!isExists(error)) throw fromErrno(error);
+      if (options.noClobber === true) {
+        options.onSkip?.();
+        return 0;
       }
+      await limit(() => fs.unlink(dest));
+      await limit(() => fs.symlink(target, dest));
     }
     return 1;
   }
@@ -178,43 +189,83 @@ export async function copyTree(src: string, dest: string, options: CopyOptions):
     if (options.recursive !== true) {
       throw new FsError(`"${src}" is a directory; recursive is required.`, "not-file");
     }
+    const existing = await lstatOptional(dest, limit);
+    if (existing?.isSymbolicLink() === true) {
+      throw new FsError(`Refusing to write through symbolic link: "${dest}".`, "invalid");
+    }
     try {
-      await fs.mkdir(dest, { recursive: true });
+      await limit(() => fs.mkdir(dest, { recursive: true }));
     } catch (error) {
       /* v8 ignore next */
       throw fromErrno(error);
     }
-    const entries = await fs.readdir(src);
-    let copied = 1;
-    const limit = Math.max(1, options.concurrency);
+    const entries = await limit(() => fs.readdir(src));
+    const parallelism = Math.max(1, options.concurrency);
     let index = 0;
-    const workers = Array.from({ length: Math.min(limit, entries.length) }, async () => {
+    const workers = Array.from({ length: Math.min(parallelism, entries.length) }, async () => {
+      let copied = 0;
       for (;;) {
         const current = index++;
-        if (current >= entries.length) return;
+        if (current >= entries.length) break;
         const name = entries[current] as string;
         copied += await copyTree(path.join(src, name), path.join(dest, name), options);
       }
+      return copied;
     });
-    await Promise.all(workers);
-    if (options.preserve === true) await preserve(dest, stats);
+    const copied = 1 + (await Promise.all(workers)).reduce((sum, value) => sum + value, 0);
+    if (options.preserve === true) await limit(() => preserve(dest, stats));
     return copied;
   }
 
   if (!stats.isFile()) {
     throw new FsError(`"${src}" is not a regular file or directory.`, "unsupported");
   }
-  await ensureParent(dest);
+  const existing = await lstatOptional(dest, limit);
+  if (options.noClobber === true && existing !== undefined) {
+    options.onSkip?.();
+    return 0;
+  }
+  if (existing?.isSymbolicLink() === true) {
+    throw new FsError(`Refusing to write through symbolic link: "${dest}".`, "invalid");
+  }
+  if (
+    existing !== undefined &&
+    num(existing.dev) === num(stats.dev) &&
+    num(existing.ino) === num(stats.ino)
+  ) {
+    throw new FsError(`"${src}" and destination are the same file.`, "invalid");
+  }
+  await limit(() => ensureParent(dest));
   try {
-    await fs.copyFile(src, dest, options.noClobber === true ? constants.COPYFILE_EXCL : 0);
+    await limit(() => fs.copyFile(src, dest, options.noClobber === true ? constants.COPYFILE_EXCL : 0));
   } catch (error) {
     /* v8 ignore next */
-    if (options.noClobber === true && isExists(error)) return 0;
+    if (options.noClobber === true && isExists(error)) {
+      options.onSkip?.();
+      return 0;
+    }
     /* v8 ignore next */
     throw fromErrno(error);
   }
-  if (options.preserve === true) await preserve(dest, stats);
+  if (options.preserve === true) await limit(() => preserve(dest, stats));
   return 1;
+}
+
+async function lstatOptional(
+  dest: string,
+  limit: CopyLimiter,
+): Promise<Awaited<ReturnType<typeof fs.lstat>> | undefined> {
+  try {
+    return await limit(() => fs.lstat(dest));
+  } catch (error) {
+    /* v8 ignore next */
+    if (!isMissing(error)) throw fromErrno(error, "access");
+    return undefined;
+  }
+}
+
+function immediate<T>(fn: () => Promise<T>): Promise<T> {
+  return fn();
 }
 
 export async function ensureParent(dest: string): Promise<void> {
@@ -230,10 +281,20 @@ export function num(value: number | bigint): number {
 }
 
 export async function preserve(dest: string, stats: Awaited<ReturnType<typeof fs.stat>>): Promise<void> {
+  let current: Awaited<ReturnType<typeof fs.lstat>>;
+  try {
+    current = await fs.lstat(dest);
+  } catch (error) {
+    throw fromErrno(error, "io");
+  }
+  if (current.isSymbolicLink()) {
+    throw new FsError(`Refusing to preserve metadata through symbolic link: "${dest}".`, "invalid");
+  }
   try {
     await fs.chmod(dest, num(stats.mode) & 0o7777);
     await fs.utimes(dest, stats.atime, stats.mtime);
   } catch (error) {
+    /* v8 ignore next */
     throw fromErrno(error, "io");
   }
 }

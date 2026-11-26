@@ -38,36 +38,47 @@ export const chmodTool: ToolSpec<Input> = {
     if (input.mode === undefined && input.reference === undefined) {
       throw new FsError("mode or reference is required.", "invalid");
     }
-    const referenceMode =
-      input.reference === undefined
-        ? undefined
-        : num((await ctx.sandbox.lstat((await ctx.sandbox.resolveExisting(input.reference, { allowRoot: true })).full, input.reference)).mode) & 0o7777;
+    let referenceMode: number | undefined;
+    if (input.reference !== undefined) {
+      const reference = await ctx.sandbox.resolveFollow(input.reference);
+      await ctx.permission.assert([{ target: reference, boundary: ctx.sandbox.boundaryFor(reference.full, "file") }]);
+      const stats = await ctx.sandbox.lstat(reference.full, input.reference);
+      referenceMode = num(stats.mode) & 0o7777;
+    }
 
     const changed: string[] = [];
     for (const requested of input.paths) {
-      const root = await ctx.sandbox.resolveExisting(requested, { allowRoot: true });
+      const root = input.noDereference === true
+        ? await ctx.sandbox.resolveForCreate(requested)
+        : await ctx.sandbox.resolveFollow(requested);
       ctx.sandbox.assertSafeToDelete(root.full);
-      const targets = [root];
-      if (input.recursive === true) {
-        const rootStats = await ctx.sandbox.lstat(root.full, requested);
-        if (rootStats.isDirectory()) {
-          for (const entry of await walkAll(root.full, {
-            recursive: true,
-            signal: ctx.signal,
-            concurrency: ctx.concurrency,
-          })) {
-            targets.push({
+      const rootStats = await ctx.sandbox.lstat(root.full, requested);
+      const targets = [{ target: root, directory: rootStats.isDirectory() }];
+      if (input.recursive === true && rootStats.isDirectory()) {
+        for (const entry of await walkAll(root.full, {
+          recursive: true,
+          signal: ctx.signal,
+          concurrency: ctx.concurrency,
+        })) {
+          // Traversal symlinks are skipped: their targets were never resolved or gated.
+          if (input.noDereference !== true && entry.stats.isSymbolicLink()) continue;
+          targets.push({
+            target: {
               full: entry.path,
               outside: root.outside,
               requested: entry.path,
               realAncestor: root.realAncestor,
-            });
-          }
+            },
+            directory: entry.stats.isDirectory(),
+          });
         }
       }
-      await ctx.permission.assert(targets.map((target) => ({ target, boundary: target.full })));
+      await ctx.permission.assert(targets.map(({ target, directory }) => ({
+        target,
+        boundary: ctx.sandbox.boundaryFor(target.full, directory ? "directory" : "file"),
+      })));
 
-      for (const target of targets) {
+      for (const { target } of targets) {
         const stats = input.noDereference === true
           ? await ctx.sandbox.lstat(target.full, target.requested)
           : await ctx.sandbox.stat(target.full, target.requested);

@@ -8,7 +8,8 @@ import * as path from "node:path";
 import { Type, type Static } from "@sinclair/typebox";
 import { sourcesFrom } from "../core/aliases.js";
 import { FsError, fromErrno, isMissing } from "../core/errors.js";
-import { copyTree, ensureParent } from "../core/fsutil.js";
+import { copyTree, ensureParent, isSubpath, num } from "../core/fsutil.js";
+import { createLimiter } from "../core/parallel.js";
 import { textResult, type ToolSpec } from "../core/types.js";
 
 const Schema = Type.Object(
@@ -42,7 +43,18 @@ export const mvTool: ToolSpec<Input> = {
       const target = await ctx.sandbox.resolveExisting(requested);
       ctx.sandbox.assertSafeToDelete(target.full);
       const stats = await ctx.sandbox.lstat(target.full, requested);
-      sources.push({ requested, target, stats });
+      let referent: { dev: number; ino: number } | undefined;
+      if (stats.isSymbolicLink()) {
+        try {
+          const followed = await ctx.sandbox.resolveFollow(requested);
+          const referentStats = await ctx.sandbox.stat(followed.full, requested);
+          referent = { dev: num(referentStats.dev), ino: num(referentStats.ino) };
+        } catch (error) {
+          /* v8 ignore next */
+          if (!(error instanceof FsError) || error.code !== "not-found") throw error;
+        }
+      }
+      sources.push({ requested, target, stats, referent });
     }
 
     const destTarget = await ctx.sandbox.resolveForCreate(input.destination);
@@ -69,6 +81,21 @@ export const mvTool: ToolSpec<Input> = {
       if (job.target.full === job.destination) {
         throw new FsError(`"${job.requested}" and destination are the same file.`, "invalid");
       }
+      if (job.stats.isDirectory() && isSubpath(job.target.full, job.destination)) {
+        throw new FsError(`Cannot move a directory into itself: "${job.requested}".`, "invalid");
+      }
+      const destinationStats = await lstatOptional(job.destination);
+      if (
+        job.referent !== undefined &&
+        destinationStats !== undefined &&
+        job.referent.dev === num(destinationStats.dev) &&
+        job.referent.ino === num(destinationStats.ino)
+      ) {
+        throw new FsError(
+          `"${job.requested}" refers to the destination file itself.`,
+          "invalid",
+        );
+      }
     }
 
     const entries = jobs.map((job) => ({
@@ -81,6 +108,7 @@ export const mvTool: ToolSpec<Input> = {
     }
     await ctx.permission.assert(entries);
 
+    const limiter = createLimiter(ctx.concurrency);
     const moved: string[] = [];
     for (const job of jobs) {
       if (input.noClobber === true && (await exists(job.destination))) continue;
@@ -93,28 +121,39 @@ export const mvTool: ToolSpec<Input> = {
       try {
         await fs.rename(job.target.full, job.destination);
       } catch (error) {
-        /* v8 ignore next */
-        if ((error as NodeJS.ErrnoException)?.code !== "EXDEV") {
-          /* v8 ignore next 3 */
-          if (input.force === true && (await exists(job.destination))) {
-            await fs.rm(job.destination, { recursive: true, force: true });
-            await fs.rename(job.target.full, job.destination);
-          } else {
-            /* v8 ignore next */
-            throw fromErrno(error);
-          }
-        } else {
-          await copyTree(job.target.full, job.destination, {
-            recursive: true,
-            dereference: false,
-            preserve: true,
-            noClobber: input.noClobber === true,
-            update: input.update === true,
-            signal: ctx.signal,
-            concurrency: ctx.concurrency,
-          });
-          await fs.rm(job.target.full, { recursive: true, force: true });
+        if ((error as NodeJS.ErrnoException)?.code !== "EXDEV") throw fromErrno(error);
+        const destinationStats = await lstatOptional(job.destination);
+        if (destinationStats?.isSymbolicLink() === true) {
+          throw new FsError(`Refusing to move across devices onto a symbolic link: "${job.destination}".`, "invalid");
         }
+        const skipped = { count: 0 };
+        const copied = await copyTree(job.target.full, job.destination, {
+          recursive: true,
+          dereference: false,
+          preserve: true,
+          noClobber: input.noClobber === true,
+          update: input.update === true,
+          signal: ctx.signal,
+          concurrency: ctx.concurrency,
+          limiter,
+          onSkip: () => {
+            skipped.count++;
+          },
+        });
+        if (copied === 0) {
+          throw new FsError(
+            `Cross-device move did not transfer "${job.requested}"; source preserved.`,
+            "cross-device",
+          );
+        }
+        if (skipped.count > 0) {
+          throw new FsError(
+            `Cross-device move left a partial destination at "${job.destination}"; ` +
+              `source "${job.requested}" preserved.`,
+            "cross-device",
+          );
+        }
+        await fs.rm(job.target.full, { recursive: true, force: true });
       }
       moved.push(job.requested);
     }
@@ -127,13 +166,15 @@ export const mvTool: ToolSpec<Input> = {
 };
 
 async function exists(target: string): Promise<boolean> {
+  return (await lstatOptional(target)) !== undefined;
+}
+
+async function lstatOptional(target: string): Promise<Awaited<ReturnType<typeof fs.lstat>> | undefined> {
   try {
-    await fs.lstat(target);
-    return true;
+    return await fs.lstat(target);
   } catch (error) {
     /* v8 ignore next */
-    if (isMissing(error)) return false;
-    /* v8 ignore next */
-    throw fromErrno(error, "access");
+    if (!isMissing(error)) throw fromErrno(error, "access");
+    return undefined;
   }
 }

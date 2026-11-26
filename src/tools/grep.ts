@@ -74,15 +74,18 @@ export const grepTool: ToolSpec<Input> = {
       for (const requested of paths) {
         let target;
         try {
-          target = await ctx.sandbox.resolveExisting(requested, { allowRoot: true });
+          target = await ctx.sandbox.resolveFollow(requested);
         } catch (error) {
           /* v8 ignore next 3 */
           if (input.noMessages === true) continue;
           /* v8 ignore next */
           throw error;
         }
-        await ctx.permission.assert([{ target, boundary: target.full }]);
         const stats = await ctx.sandbox.lstat(target.full, requested);
+        await ctx.permission.assert([{
+          target,
+          boundary: ctx.sandbox.boundaryFor(target.full, stats.isDirectory() ? "directory" : "file"),
+        }]);
         if (stats.isDirectory()) {
           if (input.recursive !== true) {
             throw new FsError(`"${requested}" is a directory; recursive is required.`, "not-file");

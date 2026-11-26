@@ -31,12 +31,58 @@ Aliases are accepted only where noted: `path` for one `paths` element (`stat`,
 
 - Every tool accepts `background: true`; it returns a job id and an atomic
   status-file path instead of waiting.
-- `fs.job` exposes `status`, `wait`, `cancel`, and `list`.
+- `fs.job` exposes `status`, `wait`, `cancel`, and `list`. Access is scoped to
+  the originating session; another session's id is reported as `not-found`.
 - Jobs are process-local and are lost on server restart. Status files live under
   `/tmp/opencode/fs-jobs/<server-pid>/`; finished jobs are cleaned after one hour.
-- At most eight jobs run concurrently. Excess starts fail with `busy`.
-- Results stay in memory and are returned by `fs.job`; status files contain only
-  state and metadata. Permission checks still apply to background work.
+- The caps are global to one plugin instance (one server), not per session. At
+  most eight jobs run concurrently. Excess starts fail with `busy`.
+- Up to 64 jobs are retained: admitting a new job evicts the oldest finished one
+  and deletes its status file; if no finished job is available to evict, the
+  start fails with `busy`.
+- A background start or `fs.job` call requires a non-empty host session id and
+  fails with `invalid` otherwise.
+- The `jobDir` path is validated component by component: an existing symlink, a
+  non-directory component, or the filesystem root is refused; missing components
+  are created `0700` and the final directory is `0700`. This is deliberately
+  fail-closed: a benign path through a host symlink such as `/home` is rejected,
+  while the default `/tmp/opencode/fs-jobs/<pid>` path is unaffected. A
+  component swapped after validation remains a TOCTOU gap. Each status file is
+  `0600` and holds only id, tool, state, timing, and `hasResult`; it omits the
+  result, the raw error, and the absolute status path.
+- Results stay in memory and are returned by `fs.job`, capped at 1 MiB each.
+  Longer text is truncated with `[truncated]` and
+  `truncated`/`originalBytes` metadata; an oversized base64/binary result
+  becomes empty content. Retaining 64 such results can hold roughly 64 MiB in
+  the server process until eviction. Permission checks still apply to
+  background work.
+
+## Paths and links
+
+- A path is resolved to its canonical target before the permission resource is
+  derived, so a link that leaves the project asserts its real boundary.
+  Single-file output tools open the resolved final component with `O_NOFOLLOW`;
+  a link swapped in after resolution fails with a stable error instead of being
+  followed. `cp` rejects an existing symlink at a nested entry but its final copy
+  call is not no-follow.
+- Node has no `openat`, so a parent directory swapped between resolution and the
+  syscall remains a TOCTOU gap. The sandbox is a guardrail, not a kernel
+  boundary.
+- `cp` follows a top-level destination symlink and gates its canonical target.
+  A recursive copy refuses to write through an existing symlink at any entry
+  (directory or file) and fails closed; an archived symlink replaces the
+  destination link itself. Hard-link aliases of the source are rejected.
+- `mv` falls back to copy-then-remove on EXDEV and first refuses a directory
+  destination under the source. The fallback refuses a destination symlink and
+  copies with `preserve`; the source is removed only after every entry was
+  copied. No copied entry or a skipped `noClobber`/`update` destination raises
+  `cross-device` and keeps the source, leaving a partial destination in place.
+- `chown` refuses the sandbox root, its ancestors, `/`, `$HOME`, and core system
+  directories before asserting permission or changing ownership. Recursive chown
+  skips traversal symlinks. With `noDereference`, the parent chain resolves to
+  its canonical directory while the final component is left as a link, so a
+  parent symlink is gated at its real location and `lchown` changes a final
+  symlink itself.
 
 ## Batch 1 tools
 
@@ -53,15 +99,23 @@ Aliases are accepted only where noted: `path` for one `paths` element (`stat`,
   `findmnt` parses `/proc/self/mountinfo`.
 - `tac`, `rev`, `nl`, `paste`, `comm`, `split`, `shuf`, and `fold` cover text
   primitives that `pipe` could not express. `comm` expects sorted input.
+  `split` takes 1-16 suffix characters; the chunk count must fit `26^n` with
+  alphabetic suffixes or `10^n` with `numeric`, checked before any chunk file is
+  written.
 - `chown` uses `fs.chown`/`fs.lchown`, accepts names or ids, and walks
-  recursively with the shared concurrency limit.
+  recursively with the shared concurrency limit. `noDereference` uses `lchown`
+  on the resolved parent plus the final component, so parent symlinks are
+  canonicalized and a final symlink itself is changed.
 - `sync` calls `fsync` per path; Node has no global sync syscall.
 - `dd` supports `bs`, `count`, `skip`, `seek`, and `status`; it does not
   implement conversions or `iflag`/`oflag`.
-- `cpio` reads and writes newc archives; `ar` uses GNU short names (max 16 bytes).
-  Both reject traversal and unsafe member names. Like `tar`, create resolves
-  `paths` against the project; pass absolute sources plus `directory` for
-  relative member names.
+- `cpio` reads and writes newc archives; the writer uses GNU 4-byte padding and
+  the decoder also accepts the prior 3.x plugin padding. Strict decode rejects
+  nonzero trailing data and concatenated archives. `ar` uses GNU short names
+  (max 16 bytes). Both reject traversal and unsafe member names. Create resolves
+  archive-output writes through a no-follow final open; extraction plans and
+  gates every member before writing. `cpio` writes 8-hex-digit fields and rejects
+  values outside `0..0xffffffff`.
 
 ## HTTP requests
 
@@ -70,10 +124,19 @@ Aliases are accepted only where noted: `path` for one `paths` element (`stat`,
 - Requests are allowed by default. `fs.curl` asserts the built-in
   `webfetch` action with the requested URL as the resource; there is no separate
   `fs_curl` action. Every redirect hop re-asserts it for the new URL.
-- Redirects are followed manually: 301/302 rewrite `POST` to `GET`, 303 always
-  does, and the hop count is bounded by `maxRedirects`.
-- `output` streams the response to a temporary file in the target directory and
-  renames it only after the body and checksum are complete.
+- Redirects are followed manually. 303 rewrites `POST` to a bodyless `GET`
+  before the cross-origin policy; 301/302 rewrite `POST` to `GET` after the
+  policy; 307/308 keep the method and body. The hop count is bounded by
+  `maxRedirects`.
+- A same-origin redirect keeps the request unchanged. A cross-origin redirect is
+  refused unless it is a bodyless `GET`/`HEAD` and every caller header is in
+  `accept`, `accept-language`, `cache-control`, `pragma`, `range`, or
+  `user-agent`. Credentials, custom headers, other methods, a request body, and
+  embedded URL credentials are refused rather than stripped. An HTTPS to HTTP
+  redirect is always refused before the next request is sent.
+- `output` streams the response to a temporary file in the target's containing
+  directory, which is also the `external_directory` boundary, and renames it only
+  after the body and checksum are complete.
 - `checksum` accepts `<md5|sha1|sha256|sha512>:<hex>`; a bare digest means
   SHA-256. Mismatches fail with `checksum` and leave no partial file.
 - `maxBytes` is enforced while reading, for buffered and downloaded bodies.
@@ -94,9 +157,11 @@ Aliases are accepted only where noted: `path` for one `paths` element (`stat`,
   validates HELLO against the run id, and multiplexes at most 64 decisions over
   the length-prefixed protocol in `src/core/relay-protocol.ts`.
 - Every TCP/UDP flow is named as a DNS QNAME, TLS SNI, HTTP `Host`, QUIC SNI, or
-  IP literal. That exact resource is asserted with `fs_exec_network`; the port,
-  protocol, URL, headers, and payload never reach the permission. The permission
-  rules are the only network allowlist; there is no plugin option for it.
+  IP literal. Bare IPv6 literals and bracketed IPv6 `Host` forms with an
+  optional port pass resource validation. That exact resource is asserted with
+  `fs_exec_network`; the port, protocol, URL, headers, and payload never reach
+  the permission. The permission rules are the only network allowlist; there is
+  no plugin option for it.
 - DNS queries are decisions too. An allowed QNAME is forwarded to the parent
   resolver; procage's discovery reads `/etc/resolv.conf` and systemd-resolved
   paths, including a loopback stub, and the plugin leaves `relay_dns_upstream`
@@ -165,6 +230,7 @@ These are not implemented:
   delete/trash only
 - `chgrp`, `chattr`, `rsync`
 - ACL and xattr preservation in `cp -a`
+- archive hard links, device nodes, and ACL/xattr metadata
 - remaining GNU edge-flag parity for `ls`, `stat`, `sort`, `find`
 - symlink-race-proof sandboxing
 - unbounded `tail -f`; use bounded `follow` or the wait plugin
@@ -197,11 +263,39 @@ These are not implemented:
 - `find action: "delete"|"trash"` reuses the `fs_rm`/`fs_trash` gates, removes
   deepest matches first, and never removes the starting directory itself.
 - `sort -k` accepts field/character ranges with modifiers `bdfghiMnrV`.
-- `tar`/`zip` extraction rejects path traversal and escaping links.
+- Archive create writes the output through its resolved target with a no-follow
+  final open; an abort before the write leaves no archive file.
+- `tar` and `cpio` create resolve relative `paths` under `directory`; an absolute
+  source is named relative to `directory`, then the project, and otherwise by
+  basename. A traversing source also falls back to its basename.
+- Extraction plans every member before writing: each target is resolved in its
+  canonical parent, an existing final symlink is refused, and one bulk
+  permission check covers every target plus the extraction root. A denial
+  therefore writes no archive members. A symlink member is refused over any
+  existing destination; absolute names, `..`, and absolute or traversing link
+  targets are rejected.
+- Extracted file modes apply the process umask and strip setuid/setgid;
+  directory modes also preserve the sticky bit. ZIP entries without a Unix mode
+  default to `0644` files and `0755` directories before the umask.
+  Directory modes are deduplicated by canonical target (last entry wins) and
+  applied deepest-first. Ordinary file and directory mode changes use opened
+  `O_NOFOLLOW` handles; an `EACCES` fallback for an unreadable existing
+  directory uses a guarded pathname `chmod`, keeping a final-component TOCTOU
+  race. Parent-directory races remain.
+- A parent directory swapped after planning can still redirect a write, an
+  existing hardlink at a destination is written through, and an OS error or
+  abort can leave earlier members or a truncated file.
+- Archive create and extraction buffer the whole archive in memory (extraction
+  also buffers each member) and enforce no global archive-size cap; large
+  archives can consume substantial memory.
+- `tar`/`zip` store files, directories, and symlinks. Hard links, device nodes,
+  and ACL/xattr metadata are not preserved.
 - `pipe` passes raw bytes and only accepts registered pipeable stages; `tar` and
   `zip` are sink stages. Each stage asserts its own `fs_<tool>` action before it
-  runs, so per-tool denial also applies inside a pipe. It is sequential and not a
-  batch primitive: independent
+  runs, so per-tool denial also applies inside a pipe. A stage that yields no
+  stdout produces an empty buffer, so `output` still writes an empty file; the
+  signal is checked before every stage and before the final write. It is
+  sequential and not a batch primitive: independent
   calls fan out with `Promise.all` in `execute`.
 
 ## Coverage policy

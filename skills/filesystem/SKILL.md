@@ -169,8 +169,10 @@ The project is read/write/exec. **Network egress needs Linux tier T1** and uses
 procage's transparent relay. There are no per-call grants. Every TCP/UDP flow is
 named as a DNS QNAME, TLS SNI, HTTP `Host`, QUIC SNI, or IP literal, and that
 exact resource is approved through `fs_exec_network`; ports, URLs, and payloads
-are never part of the permission. The permission rules are the network allowlist:
-a `*` deny plus name/address allows fails closed for anything else.
+are never part of the permission. Bare IPv6 literals and bracketed IPv6 `Host`
+forms with an optional port are valid resources. The permission rules are the
+network allowlist: a `*` deny plus name/address allows fails closed for anything
+else.
 
 DNS is authorized by QNAME. Allowed answers feed a per-run address-to-name
 cache: a nameless flow is allowed by a fresh allowed name bound to its address,
@@ -328,7 +330,9 @@ await tools.fs.pipe({
 
 `output` and `append` assert `fs_tee` on the destination. The result metadata
 lists each stage's `bytesIn`, `bytesOut`, and `exitCode`; use it as the
-verification trail.
+verification trail. A stage that yields no stdout becomes an empty buffer, so
+`output` writes an empty file. The signal is checked before each stage and
+before the final write, so an abort stops the chain before creating output.
 
 Common pipe mistakes:
 
@@ -370,8 +374,22 @@ await tools.fs.job({ list: true })                  // newest first
 `wait` returns the original tool result once the job completes; on timeout it
 returns the status with `timedOut: true`. Jobs are process-local and lost on
 server restart. Status files live under `/tmp/opencode/fs-jobs/<server-pid>/`
-by default; set the plugin option `jobDir` to move them. Eight jobs may run at
-once and finished jobs are cleaned after one hour.
+by default; set the plugin option `jobDir` to move them. The caps are global to
+one server, not per session: eight jobs may run at once and 64 are retained,
+evicting the oldest finished job and deleting its status file; finished jobs are
+cleaned after one hour. A background start or `fs.job` call without a non-empty
+session id fails with `invalid`. Jobs are visible only to the session that
+started them; the `jobDir` path is validated component by component (an existing
+symlink, non-directory component, or `/` is refused; missing components and the
+final directory become `0700`), and status files are `0600`. This is deliberately
+fail-closed: a benign path through a host symlink such as `/home` is rejected,
+while the default `/tmp/opencode/fs-jobs/<pid>` path is unaffected. A component
+swapped after validation is a residual TOCTOU gap. Status files omit the result,
+raw error, and absolute status path. Each
+in-memory result is capped at 1 MiB: longer text is truncated with
+`[truncated]`/`truncated`/`originalBytes`, and oversized base64/binary output
+becomes empty. Retaining 64 results can hold roughly 64 MiB in the server
+process until eviction.
 
 To wait without blocking the session, combine the status file with `wait_for`.
 Wait for any terminal state, then read the job for the result or error:
@@ -478,9 +496,43 @@ await tools.fs.curl({
 - No ICMP ping; use `fs.curl` or a TCP port check. No ACL, xattr, or
   `chattr` support. `rsync`/`scp` are out of scope; use the SSH MCP.
 - `fs.comm` expects sorted input. `fs.ar` uses GNU short names (16 bytes max);
-  `fs.cpio` reads and writes newc only. `fs.dd` has no conversion flags.
-- `fs.tar` resolves `paths` even when `directory` is set; pass absolute sources
-  with `directory` or the member path may not be found.
+  `fs.cpio` writes newc with GNU 4-byte padding, reads both that and the prior
+  3.x plugin padding, and rejects nonzero data after the trailer (concatenated
+  archives); its fields must fit `0..0xffffffff`. `fs.dd` has no conversion
+  flags.
+  Archives store files, directories, and symlinks only; hard links, device
+  nodes, and ACL/xattr metadata are dropped.
+- `fs.tar` and `fs.cpio` create resolve relative `paths` under `directory`; an
+  absolute source is named relative to `directory` first, then the project, else
+  by basename (a traversing source also uses its basename).
+- `fs.cp` fails closed on an existing symlink inside a recursive destination;
+  `fs.mv` refuses a directory destination under the source, and EXDEV falls back
+  to copy-then-remove that refuses a destination symlink. If nothing was copied
+  or an entry was skipped, the source is kept and a partial destination remains.
+- `fs.chown` refuses the sandbox root, ancestors, `/`, `$HOME`, and core system
+  dirs before permission or mutation. `noDereference` canonicalizes the parent
+  chain but leaves the final link, so `lchown` changes a final symlink itself.
+- `fs.split` takes 1-16 suffix characters and fails with `invalid` before
+  writing when the chunk count exceeds `26^n` (alphabetic) or `10^n`
+  (`numeric`).
+- `fs.curl` refuses a cross-origin redirect unless it is a bodyless `GET`/`HEAD`
+  with only safe headers (`accept`, `accept-language`, `cache-control`,
+  `pragma`, `range`, `user-agent`), and refuses an HTTPS to HTTP hop. A 303
+  becomes a bodyless `GET` before that check; 301/302 rewrite `POST` after it;
+  307/308 keep the method and body. `output` asks `external_directory` for the
+  file's containing directory.
+- Archive extraction plans every member, refuses an existing final symlink,
+  applies the process umask to extracted file modes (strips setuid/setgid), and
+  preserves sticky on directories. ZIP entries without a Unix mode default to
+  `0644` files and `0755` directories before the umask. Directory modes are
+  deduplicated by canonical target (last entry wins) and applied deepest-first.
+  Ordinary mode changes use opened `O_NOFOLLOW` handles; an `EACCES` fallback for
+  an unreadable existing directory uses guarded pathname `chmod`, keeping a
+  final-component TOCTOU race. A bulk permission denial writes no members. A
+  swapped parent, an existing destination hardlink, an OS error, or an abort can
+  still redirect or partially write members.
+  Archive create and extraction buffer the whole archive and each extracted
+  member in memory, with no global archive-size cap.
 - `fs.du` reports allocated blocks like `du`; use `fs.stat` with `%s` for
   apparent file bytes.
 - `fs.trash` uses the XDG home trash only and refuses cross-device moves.
@@ -494,19 +546,32 @@ await tools.fs.curl({
 
 ## Paths and safety
 
-- Paths resolve against the project directory. Paths outside it require
-  `external_directory` approval, except tool-owned temp/trash paths.
-- The global config allows `/tmp/opencode/**` and the OpenCode cache, state, and
-  config trees (`$HOME/.cache/opencode/**`, `$HOME/.local/share/opencode/**`,
-  `$HOME/.local/state/opencode/**`, `$HOME/.config/opencode/**`). Prefer
-  `fs.mktemp` for scratch files; a denied path is a blocker, not a reason to
-  switch to shell.
+- Paths resolve to their canonical target before permissions are asserted, so a
+  symlink out of the project asks `external_directory` for the real location.
+  Single-file output tools open the final component no-follow; `cp` rejects an
+  existing symlink at a nested entry but its copy call is not no-follow. A
+  parent directory swapped concurrently is still a TOCTOU gap, so treat the
+  sandbox as a guardrail.
+- This installation's global config allows `/tmp/opencode/**` and the OpenCode
+  cache, state, and config trees; prefer `fs.mktemp` for scratch files, and treat
+  a denied path as a blocker rather than switching to shell.
 - Symlinks are handled per command: `rm`/`mv` never follow the final link, `cp`
-  follows unless `archive`/`dereference: false`, and `stat`/`ls` use lstat
+  follows a top-level destination link and gates its target but refuses to write
+  through an existing symlink inside a recursive copy, and `stat`/`ls` use lstat
   unless asked to follow.
 - The project root, its ancestors, `/`, `$HOME`, and core system directories are
-  hard stops for destructive operations.
-- Archive extraction rejects absolute paths, `..`, and escaping links.
+  hard stops for destructive operations; `fs.chown` enforces them before
+  permission or mutation.
+- Archive extraction plans every member before writing and asserts one bulk
+  permission check for all targets: a denied member means nothing is written.
+  Existing final symlinks, absolute names, `..`, and escaping links are
+  rejected. File modes apply the umask and strip setuid/setgid; directory modes
+  preserve sticky. Directory modes are deduplicated by canonical target (last
+  entry wins) and applied deepest-first. Ordinary mode changes use `O_NOFOLLOW`
+  handles; an `EACCES` fallback uses guarded pathname `chmod` with a
+  final-component TOCTOU race. A swapped parent, an existing destination
+  hardlink, an OS error, or an abort can still redirect or partially write
+  members.
 - `rm` is permanent; prefer `trash` for recoverable deletes.
 - Pass `recursive: true` only when you intend to remove a whole tree.
 

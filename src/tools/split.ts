@@ -3,10 +3,14 @@
  * license-wizard managed-header v1 EPL-2.0 short 73897e75828f
  */
 
-import * as fs from "node:fs/promises";
 import { Type, type Static } from "@sinclair/typebox";
-import { FsError, fromErrno } from "../core/errors.js";
+import { FsError } from "../core/errors.js";
 import { mapLimit } from "../core/parallel.js";
+import {
+  outputBoundary,
+  resolveOutputTarget,
+  writeOutput,
+} from "../core/safe-output.js";
 import { collect, inputStream, lines } from "../core/stream.js";
 import type { ResolvedTarget } from "../core/sandbox.js";
 import { textResult, type ToolSpec } from "../core/types.js";
@@ -43,7 +47,7 @@ export const splitTool: ToolSpec<Input> = {
     let inputPath: string | undefined;
     if (input.input !== undefined) {
       const target = await ctx.sandbox.resolveFollow(input.input);
-      await ctx.permission.assert([{ target, boundary: target.full }]);
+      await ctx.permission.assert([{ target, boundary: outputBoundary(target.full) }]);
       inputPath = target.full;
     }
     const data = await collect(inputStream(inputPath === undefined ? [] : [inputPath], io.stdin));
@@ -51,20 +55,30 @@ export const splitTool: ToolSpec<Input> = {
       ? byteChunks(data, input.bytes as number)
       : await lineChunks(data, input.lines);
 
+    const capacity = (input.numeric === true ? 10 : 26) ** suffixLength;
+    if (chunks.length > capacity) {
+      throw new FsError(
+        `Suffix length ${suffixLength} cannot name ${chunks.length} chunks.`,
+        "invalid",
+      );
+    }
+
     const names = chunks.map((_chunk, index) => `${prefix}${suffix(index, suffixLength, input.numeric === true)}${additional}`);
     const targets: ResolvedTarget[] = [];
     for (const name of names) {
-      const target = await ctx.sandbox.resolveForCreate(name);
-      targets.push(target);
+      targets.push(await resolveOutputTarget(ctx.sandbox, name));
     }
-    await ctx.permission.assert(targets.map((target) => ({ target, boundary: target.full })));
+    await ctx.permission.assert(
+      targets.map((target) => ({ target, boundary: outputBoundary(target.full) })),
+    );
     await mapLimit(chunks, ctx.concurrency, async (chunk, index) => {
-      try {
-        await fs.writeFile((targets[index] as { full: string }).full, chunk);
-      } catch (error) {
-        /* v8 ignore next -- write errors are environment-dependent */
-        throw fromErrno(error);
-      }
+      await writeOutput(
+        (targets[index] as { full: string }).full,
+        chunk,
+        false,
+        0o666,
+        ctx.signal,
+      );
     }, ctx.signal);
     return textResult("", { files: names, chunks: chunks.length });
   },

@@ -5,8 +5,13 @@
 
 import { Type, type Static } from "@sinclair/typebox";
 import { FsError } from "../core/errors.js";
+import {
+  outputBoundary,
+  resolveOutputTarget,
+  throwIfAborted,
+  writeOutput,
+} from "../core/safe-output.js";
 import { parseSchema } from "../core/schema.js";
-import { writeAll } from "../core/stream.js";
 import { textResult, type ToolSpec, type ToolResult } from "../core/types.js";
 import { base64Tool } from "./base64.js";
 import { catTool } from "./cat.js";
@@ -81,6 +86,7 @@ export const pipeTool: ToolSpec<Input> = {
     const stages: Array<{ tool: string; bytesIn: number; bytesOut: number; exitCode: number }> = [];
 
     for (let index = 0; index < input.stages.length; index++) {
+      throwIfAborted(ctx.signal);
       const stage = input.stages[index] as Static<typeof Stage>;
       const tool = REGISTRY.get(stage.tool);
       if (tool === undefined) {
@@ -97,27 +103,29 @@ export const pipeTool: ToolSpec<Input> = {
         parsed,
         { ...(data === undefined ? {} : { stdin: fromBuffer(data) }), piped: true },
       ) as ToolResult;
+      const stdout = Buffer.isBuffer(result.stdout) ? result.stdout : Buffer.alloc(0);
       stages.push({
         tool: stage.tool,
         /* v8 ignore next */
         bytesIn: data?.length ?? 0,
-        bytesOut: result.stdout.length,
+        bytesOut: stdout.length,
         /* v8 ignore next */
         exitCode: result.exitCode ?? 0,
       });
-      data = result.stdout;
+      data = stdout;
     }
 
+    // A stage always yields a Buffer; non-Buffer output was normalized to an
+    // empty Buffer in the stage loop above.
+    const stdout = data as Buffer;
     if (input.output !== undefined) {
-      const target = await ctx.sandbox.resolveForCreate(input.output);
+      const target = await resolveOutputTarget(ctx.sandbox, input.output);
       const gate = ctx.permissionFor("fs_tee");
-      await gate.assert([{ target, boundary: target.full }]);
-      /* v8 ignore next */
-      await writeAll(target.full, data ?? Buffer.alloc(0), input.append === true);
+      await gate.assert([{ target, boundary: outputBoundary(target.full) }]);
+      await writeOutput(target.full, stdout, input.append === true, 0o666, ctx.signal);
     }
 
-    /* v8 ignore next */
-    return textResult(data?.toString("utf8") ?? "", { stages, output: input.output ?? null });
+    return textResult(stdout.toString("utf8"), { stages, output: input.output ?? null });
   },
 };
 

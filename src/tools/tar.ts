@@ -11,6 +11,24 @@ import * as tar from "tar-stream";
 import picomatch from "picomatch";
 import { Type, type Static } from "@sinclair/typebox";
 import { FsError, fromErrno } from "../core/errors.js";
+import { walkAll } from "../core/fsutil.js";
+import { mapLimit } from "../core/parallel.js";
+import {
+  archiveSourceName,
+  assertArchivePlan,
+  assertArchiveSymlinkPlan,
+  assertSafeLinkTarget,
+  chmodDirectoryNoFollow,
+  finalDirectoryPlans,
+  outputBoundary,
+  resolveArchiveTarget,
+  resolveOutputTarget,
+  safeDirectoryMode,
+  safeMode,
+  throwIfAborted,
+  writeOutput,
+} from "../core/safe-output.js";
+import type { ResolvedTarget } from "../core/sandbox.js";
 import { collect } from "../core/stream.js";
 import { textResult, type ToolSpec } from "../core/types.js";
 
@@ -47,10 +65,15 @@ export const tarTool: ToolSpec<Input> = {
   pipeable: "sink",
   mutates: true,
   async run(ctx, input, io) {
-    const archive = await ctx.sandbox.resolveForCreate(input.archive);
+    const archive = input.mode === "create"
+      ? await resolveOutputTarget(ctx.sandbox, input.archive)
+      : await ctx.sandbox.resolveFollow(input.archive);
     const useGzip = input.gzip ?? /\.(?:tgz|tar\.gz)$/i.test(input.archive);
     const excludes = input.exclude === undefined ? undefined : picomatch(input.exclude, { dot: true, basename: true });
     const names: string[] = [];
+    if (input.mode !== "create") {
+      await ctx.permission.assert([{ target: archive, boundary: outputBoundary(archive.full) }]);
+    }
 
     if (input.mode === "create") {
       if (input.paths === undefined || input.paths.length === 0) {
@@ -62,7 +85,7 @@ export const tarTool: ToolSpec<Input> = {
           : await collect(io.stdin);
         const name = safeMember(input.member ?? "stdin", 0);
         if (name === undefined) throw new FsError("member must not be empty.", "invalid");
-        await ctx.permission.assert([{ target: archive, boundary: archive.full }]);
+        await ctx.permission.assert([{ target: archive, boundary: outputBoundary(archive.full) }]);
         const pack = tar.pack();
         const header: tar.Header = {
           name: name.split(path.sep).join("/"),
@@ -82,34 +105,47 @@ export const tarTool: ToolSpec<Input> = {
         pack.finalize();
         let buffer = await collect(pack as AsyncIterable<Buffer>);
         if (useGzip) buffer = await gzipAsync(buffer);
-        /* v8 ignore next 3 */
-        await fs.writeFile(archive.full, buffer).catch((error) => {
-          throw fromErrno(error);
-        });
+        await writeOutput(archive.full, buffer, false, 0o666, ctx.signal);
         return textResult(input.verbose === true ? `${header.name}\n` : "", {
           archive: input.archive,
           members: [header.name],
         });
       }
+      const createBase = input.directory === undefined
+        ? ctx.sandbox.root
+        : (await ctx.sandbox.resolveFollow(input.directory)).full;
       const members: Array<{ name: string; full: string; stats: Awaited<ReturnType<typeof fs.lstat>> }> = [];
       for (const requested of input.paths) {
-        const target = await ctx.sandbox.resolveExisting(requested, { allowRoot: true });
+        throwIfAborted(ctx.signal);
+        const source = path.isAbsolute(requested) ? requested : path.join(createBase, requested);
+        const target = await ctx.sandbox.resolveExisting(source, { allowRoot: true });
         const stats = await ctx.sandbox.lstat(target.full, requested);
-        const base = path.basename(path.resolve(requested));
-        members.push({ name: base, full: target.full, stats });
+        const name = archiveSourceName(requested, target.full, createBase, ctx.sandbox.root);
+        members.push({ name, full: target.full, stats });
         if (stats.isDirectory()) {
-          await collectMembers(target.full, base, members, excludes);
+          await collectMembers(
+            target.full,
+            name,
+            members,
+            excludes,
+            ctx.concurrency,
+            ctx.signal,
+          );
         }
       }
-      const entries = await Promise.all(
-        members.map(async (member) => ({
+      const entries = await mapLimit(
+        members,
+        ctx.concurrency,
+        async (member) => ({
           target: await ctx.sandbox.resolveExisting(member.full, { allowRoot: true }),
           boundary: member.stats.isDirectory() ? member.full : path.dirname(member.full),
-        })),
+        }),
+        ctx.signal,
       );
-      await ctx.permission.assert([...entries, { target: archive, boundary: archive.full }]);
+      await ctx.permission.assert([...entries, { target: archive, boundary: outputBoundary(archive.full) }]);
       const pack = tar.pack();
       for (const member of members) {
+        throwIfAborted(ctx.signal);
         const header: tar.Header = {
           name: member.name.split(path.sep).join("/"),
           size: member.stats.isFile() ? Number(member.stats.size) : 0,
@@ -134,10 +170,7 @@ export const tarTool: ToolSpec<Input> = {
       pack.finalize();
       let buffer = await collect(pack as AsyncIterable<Buffer>);
       if (useGzip) buffer = await gzipAsync(buffer);
-      /* v8 ignore next 3 */
-      await fs.writeFile(archive.full, buffer).catch((error) => {
-        throw fromErrno(error);
-      });
+      await writeOutput(archive.full, buffer, false, 0o666, ctx.signal);
       return textResult(input.verbose === true ? names.map((name) => `${name}\n`).join("") : "", {
         archive: input.archive,
         members: names,
@@ -156,6 +189,7 @@ export const tarTool: ToolSpec<Input> = {
       const extract = tar.extract();
       extract.end(buffer);
       for await (const entry of extract) {
+        throwIfAborted(ctx.signal);
         names.push(entry.header.name);
         await collect(entry as AsyncIterable<Buffer>);
       }
@@ -163,40 +197,71 @@ export const tarTool: ToolSpec<Input> = {
     }
 
     const destTarget = input.directory === undefined
-      ? await ctx.sandbox.resolveForCreate(".")
-      : await ctx.sandbox.resolveForCreate(input.directory);
+      ? await resolveOutputTarget(ctx.sandbox, ".")
+      : await resolveOutputTarget(ctx.sandbox, input.directory);
     const destRoot = destTarget.full;
-    await ctx.permission.assert([{ target: destTarget, boundary: destRoot }]);
-    await ctx.sandbox.lstat(destRoot).catch(async () => {
-      await fs.mkdir(destRoot, { recursive: true });
-    });
+    const planned: Array<{
+      header: tar.Header;
+      data: Buffer;
+      name: string;
+      kind: "file" | "directory" | "symlink";
+      target: ResolvedTarget;
+    }> = [];
     const extract = tar.extract();
     extract.end(buffer);
     for await (const entry of extract) {
+      throwIfAborted(ctx.signal);
       const name = safeMember(entry.header.name, input.stripComponents ?? 0);
-      if (name === undefined) {
-        await collect(entry as AsyncIterable<Buffer>);
-        continue;
-      }
-      const destination = path.join(destRoot, name);
-      /* v8 ignore next */
-      if (!isInside(destRoot, destination)) throw new FsError(`Blocked archive path: ${entry.header.name}`, "archive");
-      if (entry.header.type === "directory") {
-        await fs.mkdir(destination, { recursive: true });
-        await collect(entry as AsyncIterable<Buffer>);
-      } else if (entry.header.type === "symlink") {
-        if (path.isAbsolute(entry.header.linkname) || entry.header.linkname.split("/").includes("..")) {
-          throw new FsError(`Blocked symlink target: ${entry.header.linkname}`, "archive");
-        }
-        await fs.mkdir(path.dirname(destination), { recursive: true });
-        await fs.symlink(entry.header.linkname, destination);
-        await collect(entry as AsyncIterable<Buffer>);
+      const data = await collect(entry as AsyncIterable<Buffer>);
+      if (name === undefined) continue;
+      const kind = entry.header.type === "directory"
+        ? "directory"
+        : entry.header.type === "symlink"
+          ? "symlink"
+          : "file";
+      if (kind === "symlink") assertSafeLinkTarget(entry.header.linkname);
+      const target = await resolveArchiveTarget(
+        ctx.sandbox,
+        destRoot,
+        path.join(destRoot, name),
+        kind,
+      );
+      planned.push({ header: entry.header, data, name, kind, target });
+    }
+    throwIfAborted(ctx.signal);
+    assertArchiveSymlinkPlan(planned);
+    await assertArchivePlan(ctx.permission, planned, { target: destTarget, boundary: destRoot });
+    await ctx.sandbox.lstat(destRoot).catch(async () => {
+      await fs.mkdir(destRoot, { recursive: true });
+    });
+    for (const item of planned) {
+      throwIfAborted(ctx.signal);
+      if (item.kind === "directory") {
+        await fs.mkdir(item.target.full, { recursive: true });
+      } else if (item.kind === "symlink") {
+        await fs.mkdir(path.dirname(item.target.full), { recursive: true });
+        await fs.symlink(item.header.linkname, item.target.full);
       } else {
-        await fs.mkdir(path.dirname(destination), { recursive: true });
-        const data = await collect(entry as AsyncIterable<Buffer>);
-        await fs.writeFile(destination, data, { mode: Number(entry.header.mode) & 0o7777 });
+        await fs.mkdir(path.dirname(item.target.full), { recursive: true });
+        const mode = safeMode(Number(item.header.mode));
+        await writeOutput(
+          item.target.full,
+          item.data,
+          false,
+          mode,
+          ctx.signal,
+          mode,
+        );
       }
-      names.push(name);
+      names.push(item.name);
+    }
+    const directories = finalDirectoryPlans(planned);
+    for (const item of directories) {
+      throwIfAborted(ctx.signal);
+      await chmodDirectoryNoFollow(
+        item.target.full,
+        safeDirectoryMode(Number(item.header.mode)),
+      );
     }
     return textResult("", { archive: input.archive, members: names });
   },
@@ -207,16 +272,29 @@ async function collectMembers(
   name: string,
   members: Array<{ name: string; full: string; stats: Awaited<ReturnType<typeof fs.lstat>> }>,
   excludes: ((value: string) => boolean) | undefined,
+  concurrency: number,
+  signal: AbortSignal,
 ): Promise<void> {
-  const entries = await fs.readdir(full);
-  for (const entry of entries) {
-    const child = path.join(full, entry);
+  throwIfAborted(signal);
+  const walked = await walkAll(full, {
+    recursive: true,
+    includeHidden: true,
+    concurrency,
+    signal,
+  });
+  const excludedDirs: string[] = [];
+  for (const entry of walked) {
+    if (excludedDirs.some((dir) => entry.path === dir || entry.path.startsWith(dir + path.sep))) {
+      continue;
+    }
+    const relative = path.relative(full, entry.path).split(path.sep).join("/");
     /* v8 ignore next */
-    const member = name === "" ? entry : `${name}/${entry}`;
-    if (excludes !== undefined && excludes(member)) continue;
-    const stats = await fs.lstat(child);
-    members.push({ name: member, full: child, stats });
-    if (stats.isDirectory()) await collectMembers(child, member, members, excludes);
+    const member = name === "" ? relative : `${name}/${relative}`;
+    if (excludes !== undefined && excludes(member)) {
+      if (entry.stats.isDirectory()) excludedDirs.push(entry.path);
+      continue;
+    }
+    members.push({ name: member, full: entry.path, stats: entry.stats });
   }
 }
 
@@ -229,7 +307,4 @@ function safeMember(name: string, strip: number): string | undefined {
   return stripped.length === 0 ? undefined : stripped.join(path.sep);
 }
 
-function isInside(root: string, target: string): boolean {
-  const rel = path.relative(root, target);
-  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
-}
+

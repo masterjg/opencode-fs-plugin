@@ -3,6 +3,8 @@
  * license-wizard managed-header v1 EPL-2.0 short 73897e75828f
  */
 
+import { isIP } from "node:net";
+
 /**
  * Wire format shared with procage's relay control client.
  *
@@ -76,6 +78,46 @@ export class RelayProtocolError extends Error {
 
 const UTF8 = new TextDecoder("utf-8", { fatal: true });
 const FORBIDDEN_RESOURCE = /[\u0000-\u0020\u007f]/;
+const HOST_LABEL = /^[A-Za-z0-9_](?:[A-Za-z0-9_-]*[A-Za-z0-9_])?$/;
+const PORT_TEXT = /^\d{1,5}$/;
+
+function isPort(value: string): boolean {
+  if (!PORT_TEXT.test(value)) return false;
+  const port = Number(value);
+  return port >= 1 && port <= 65535;
+}
+
+function isHostName(host: string): boolean {
+  const trimmed = host.endsWith(".") ? host.slice(0, -1) : host;
+  if (trimmed.length === 0) return false;
+  return trimmed.split(".").every((label) => HOST_LABEL.test(label));
+}
+
+/**
+ * A resource is a DNS name, IP literal, or HTTP Host (optionally host:port).
+ * IPv6 literals may be bare or bracketed for the Host form. Wildcards, glob
+ * metacharacters, malformed brackets, invalid ports and other URI syntax are
+ * rejected before they can reach a wildcard-aware permission layer.
+ */
+function isRelayResource(resource: string): boolean {
+  if (resource.startsWith("[")) {
+    const end = resource.indexOf("]");
+    if (end < 0) return false;
+    if (isIP(resource.slice(1, end)) !== 6) return false;
+    const rest = resource.slice(end + 1);
+    if (rest.length === 0) return true;
+    if (!rest.startsWith(":")) return false;
+    return isPort(rest.slice(1));
+  }
+  if (resource.includes("[") || resource.includes("]")) return false;
+  const firstColon = resource.indexOf(":");
+  if (firstColon !== -1) {
+    if (firstColon !== resource.lastIndexOf(":")) return isIP(resource) === 6;
+    if (!isPort(resource.slice(firstColon + 1))) return false;
+    return isHostName(resource.slice(0, firstColon));
+  }
+  return isHostName(resource);
+}
 
 /** Wrap one payload in the length prefix. */
 export function encodeFrame(payload: Buffer): Buffer {
@@ -173,6 +215,9 @@ export function decodeDecisionRequest(payload: Buffer): RelayDecisionRequest {
   }
   if (FORBIDDEN_RESOURCE.test(resource)) {
     throw new RelayProtocolError("DECIDE_REQ resource contains whitespace or control characters");
+  }
+  if (!isRelayResource(resource)) {
+    throw new RelayProtocolError("DECIDE_REQ resource is not a valid host or IP literal");
   }
 
   const port = payload.readUInt16BE(portOffset);

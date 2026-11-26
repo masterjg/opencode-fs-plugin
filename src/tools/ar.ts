@@ -8,6 +8,16 @@ import * as path from "node:path";
 import { Type, type Static } from "@sinclair/typebox";
 import { FsError, fromErrno } from "../core/errors.js";
 import { num } from "../core/fsutil.js";
+import { mapLimit } from "../core/parallel.js";
+import {
+  assertArchivePlan,
+  outputBoundary,
+  resolveArchiveTarget,
+  resolveOutputTarget,
+  safeMode,
+  throwIfAborted,
+  writeOutput,
+} from "../core/safe-output.js";
 import { textResult, type ToolSpec } from "../core/types.js";
 
 const Schema = Type.Object(
@@ -45,9 +55,9 @@ export const arTool: ToolSpec<Input> = {
   mutates: true,
   async run(ctx, input) {
     const archive = input.mode === "create"
-      ? await ctx.sandbox.resolveForCreate(input.archive)
+      ? await resolveOutputTarget(ctx.sandbox, input.archive)
       : await ctx.sandbox.resolveFollow(input.archive);
-    await ctx.permission.assert([{ target: archive, boundary: archive.full }]);
+    await ctx.permission.assert([{ target: archive, boundary: outputBoundary(archive.full) }]);
 
     if (input.mode === "create") {
       if (input.paths === undefined || input.paths.length === 0) {
@@ -55,8 +65,9 @@ export const arTool: ToolSpec<Input> = {
       }
       const members: Member[] = [];
       for (const requested of input.paths) {
+        throwIfAborted(ctx.signal);
         const target = await ctx.sandbox.resolveFollow(requested);
-        await ctx.permission.assert([{ target, boundary: target.full }]);
+        await ctx.permission.assert([{ target, boundary: outputBoundary(target.full) }]);
         const stats = await ctx.sandbox.stat(target.full, requested);
         if (!stats.isFile()) throw new FsError(`Not a regular file: "${requested}".`, "not-file");
         const name = path.basename(requested);
@@ -75,12 +86,8 @@ export const arTool: ToolSpec<Input> = {
           }),
         });
       }
-      /* v8 ignore next 4 -- write errors are environment-dependent */
-      try {
-        await fs.writeFile(archive.full, encode(members));
-      } catch (error) {
-        throw fromErrno(error);
-      }
+      throwIfAborted(ctx.signal);
+      await writeOutput(archive.full, encode(members), false, 0o666, ctx.signal);
       return textResult("", { archive: input.archive, members: members.map((member) => member.name) });
     }
 
@@ -99,23 +106,31 @@ export const arTool: ToolSpec<Input> = {
       return textResult(`${selected.map((member) => member.name).join("\n")}\n`, { members: selected.length });
     }
 
-    const base = input.directory === undefined
-      ? (await ctx.sandbox.resolveForCreate(".")).full
-      : (await ctx.sandbox.resolveForCreate(input.directory)).full;
-    for (const member of selected) {
-      const target = path.join(base, safeName(member.name));
-      await ctx.permission.assert([{
-        target: { full: target, outside: false, requested: target, realAncestor: base },
-        boundary: target,
-      }]);
-      /* v8 ignore next 5 -- write errors are environment-dependent */
+    const root = input.directory === undefined
+      ? await resolveOutputTarget(ctx.sandbox, ".")
+      : await resolveOutputTarget(ctx.sandbox, input.directory);
+    const planned = await mapLimit(selected, ctx.concurrency, async (member) => {
+      throwIfAborted(ctx.signal);
+      const target = await resolveArchiveTarget(
+        ctx.sandbox,
+        root.full,
+        path.join(root.full, safeName(member.name)),
+        "file",
+      );
+      return { member, target, kind: "file" as const };
+    }, ctx.signal);
+    throwIfAborted(ctx.signal);
+    await assertArchivePlan(ctx.permission, planned, { target: root, boundary: root.full });
+    for (const { member, target } of planned) {
+      throwIfAborted(ctx.signal);
+      /* v8 ignore next 4 -- write errors are environment-dependent */
       try {
-        await fs.mkdir(path.dirname(target), { recursive: true });
-        await fs.writeFile(target, member.data);
-        await fs.chmod(target, member.mode);
+        await fs.mkdir(path.dirname(target.full), { recursive: true });
       } catch (error) {
         throw fromErrno(error);
       }
+      const mode = safeMode(member.mode);
+      await writeOutput(target.full, member.data, false, mode, ctx.signal, mode);
     }
     return textResult("", { extracted: selected.length });
   },
@@ -149,24 +164,42 @@ function decode(data: Buffer): Member[] {
     const header = data.subarray(offset, offset + 60).toString("ascii");
     if (header.slice(58, 60) !== "`\n") throw new FsError("Corrupt ar header.", "archive");
     const name = header.slice(0, 16).trim().replace(/\/$/, "");
-    const size = Number.parseInt(header.slice(48, 58).trim(), 10);
+    const size = decimalField(header.slice(48, 58), "size");
     const dataStart = offset + 60;
-    if (Number.isNaN(size) || dataStart + size > data.length) {
+    const next = dataStart + size + (size % 2);
+    if (dataStart + size > data.length || next <= offset) {
       throw new FsError("Truncated ar member.", "archive");
     }
     if (name !== "" && name !== "/" && !name.startsWith("/")) {
       members.push({
         name,
-        mtime: Number.parseInt(header.slice(16, 28).trim(), 10) || 0,
-        uid: Number.parseInt(header.slice(28, 34).trim(), 10) || 0,
-        gid: Number.parseInt(header.slice(34, 40).trim(), 10) || 0,
-        mode: Number.parseInt(header.slice(40, 48).trim(), 8) || 0o644,
+        mtime: decimalField(header.slice(16, 28), "mtime", true),
+        uid: decimalField(header.slice(28, 34), "uid", true),
+        gid: decimalField(header.slice(34, 40), "gid", true),
+        mode: octalField(header.slice(40, 48)),
         data: data.subarray(dataStart, dataStart + size),
       });
     }
-    offset = dataStart + size + (size % 2);
+    offset = next;
   }
   return members;
+}
+
+function decimalField(field: string, label: string, blankDefault = false): number {
+  const text = field.trim();
+  if (text === "") {
+    if (blankDefault) return 0;
+    throw new FsError(`Invalid ar ${label} field.`, "archive");
+  }
+  if (!/^\d+$/.test(text)) throw new FsError(`Invalid ar ${label} field.`, "archive");
+  return Number(text);
+}
+
+function octalField(field: string): number {
+  const text = field.trim();
+  if (text === "") return 0o644;
+  if (!/^[0-7]+$/.test(text)) throw new FsError("Invalid ar mode field.", "archive");
+  return Number.parseInt(text, 8);
 }
 
 function safeName(name: string): string {

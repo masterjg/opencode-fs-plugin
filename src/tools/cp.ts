@@ -8,7 +8,8 @@ import * as path from "node:path";
 import { Type, type Static } from "@sinclair/typebox";
 import { sourcesFrom } from "../core/aliases.js";
 import { FsError, fromErrno, isMissing } from "../core/errors.js";
-import { copyTree, isSubpath } from "../core/fsutil.js";
+import { copyTree, isSubpath, num } from "../core/fsutil.js";
+import { createLimiter, mapLimit } from "../core/parallel.js";
 import { textResult, type ToolSpec } from "../core/types.js";
 
 const Schema = Type.Object(
@@ -30,11 +31,19 @@ const Schema = Type.Object(
 
 type Input = Static<typeof Schema>;
 
+interface Referent {
+  dev: number;
+  ino: number;
+}
+
 interface Source {
   requested: string;
   full: string;
   isDirectory: boolean;
   isSymlink: boolean;
+  dev: number;
+  ino: number;
+  referent: Referent | undefined;
 }
 
 export const cpTool: ToolSpec<Input> = {
@@ -65,18 +74,34 @@ export const cpTool: ToolSpec<Input> = {
       if (stats.isDirectory() && !recursive) {
         throw new FsError(`"${requested}" is a directory; recursive is required.`, "not-file");
       }
+      const isSymlink = !dereference && stats.isSymbolicLink();
+      let referent: Referent | undefined;
+      if (isSymlink) {
+        try {
+          const followed = await ctx.sandbox.resolveFollow(requested);
+          const referentStats = await ctx.sandbox.stat(followed.full, requested);
+          referent = { dev: num(referentStats.dev), ino: num(referentStats.ino) };
+        } catch (error) {
+          /* v8 ignore next */
+          if (!(error instanceof FsError) || error.code !== "not-found") throw error;
+        }
+      }
       sources.push({
         requested,
         full: target.full,
         isDirectory: stats.isDirectory(),
-        isSymlink: !dereference && stats.isSymbolicLink(),
+        isSymlink,
+        dev: num(stats.dev),
+        ino: num(stats.ino),
+        referent,
       });
     }
 
-    const destTarget = await ctx.sandbox.resolveForCreate(input.destination);
+    const unfollowedTarget = await ctx.sandbox.resolveForCreate(input.destination);
+    const destinationTarget = await ctx.sandbox.resolveForWrite(input.destination);
     let destIsDirectory = false;
     try {
-      destIsDirectory = (await fs.lstat(destTarget.full)).isDirectory();
+      destIsDirectory = (await fs.lstat(destinationTarget.full)).isDirectory();
     } catch (error) {
       /* v8 ignore next 2 */
       if (!isMissing(error)) throw fromErrno(error, "access");
@@ -85,20 +110,56 @@ export const cpTool: ToolSpec<Input> = {
       throw new FsError("Multiple sources require an existing directory destination.", "not-directory");
     }
 
-    const jobs = sources.map((source) => ({
-      source,
-      destination:
-        destIsDirectory || sources.length > 1
-          ? path.join(destTarget.full, path.basename(path.resolve(source.requested)))
-          : destTarget.full,
-    }));
+    const jobs = await mapLimit(
+      sources,
+      ctx.concurrency,
+      async (source) => {
+        const unfollowed = input.noClobber === true || source.isSymlink;
+        const candidate =
+          destIsDirectory || sources.length > 1
+            ? path.join(destinationTarget.full, path.basename(path.resolve(source.requested)))
+            : unfollowed
+              ? unfollowedTarget.full
+              : destinationTarget.full;
+        const destination = unfollowed
+          ? await ctx.sandbox.resolveForCreate(candidate)
+          : await ctx.sandbox.resolveForWrite(candidate);
+        return { source, destination };
+      },
+      ctx.signal,
+    );
 
     for (const job of jobs) {
-      if (job.source.full === job.destination) {
+      if (job.source.full === job.destination.full) {
         throw new FsError(`"${job.source.requested}" and destination are the same file.`, "invalid");
       }
-      if (job.source.isDirectory && isSubpath(job.source.full, job.destination)) {
+      if (job.source.isDirectory && isSubpath(job.source.full, job.destination.full)) {
         throw new FsError(`Cannot copy a directory into itself: "${job.source.requested}".`, "invalid");
+      }
+      let destinationStats: Awaited<ReturnType<typeof fs.lstat>> | undefined;
+      try {
+        destinationStats = await fs.lstat(job.destination.full);
+      } catch (error) {
+        /* v8 ignore next */
+        if (!isMissing(error)) throw fromErrno(error, "access");
+      }
+      if (
+        destinationStats !== undefined &&
+        num(destinationStats.dev) === job.source.dev &&
+        num(destinationStats.ino) === job.source.ino
+      ) {
+        throw new FsError(`"${job.source.requested}" and destination are the same file.`, "invalid");
+      }
+      if (
+        job.source.referent !== undefined &&
+        destinationStats !== undefined &&
+        job.source.referent.dev === num(destinationStats.dev) &&
+        job.source.referent.ino === num(destinationStats.ino)
+      ) {
+        throw new FsError(
+          `"${job.source.requested}" refers to the destination file itself.`,
+          "invalid",
+        );
       }
     }
 
@@ -113,14 +174,16 @@ export const cpTool: ToolSpec<Input> = {
       });
     }
     for (const job of jobs) {
-      const target = await ctx.sandbox.resolveForCreate(job.destination);
-      entries.push({ target, boundary: path.dirname(target.full) });
+      entries.push({ target: job.destination, boundary: path.dirname(job.destination.full) });
     }
     await ctx.permission.assert(entries);
 
-    const copied = await Promise.all(
-      jobs.map((job) =>
-        copyTree(job.source.full, job.destination, {
+    const limiter = createLimiter(ctx.concurrency);
+    const copied = await mapLimit(
+      jobs,
+      ctx.concurrency,
+      (job) =>
+        copyTree(job.source.full, job.destination.full, {
           recursive,
           dereference,
           preserve,
@@ -128,12 +191,13 @@ export const cpTool: ToolSpec<Input> = {
           update: input.update === true,
           signal: ctx.signal,
           concurrency: ctx.concurrency,
+          limiter,
         }),
-      ),
+      ctx.signal,
     );
     const total = copied.reduce((sum, value) => sum + value, 0);
     const output = input.verbose === true
-      ? jobs.map((job) => `'${job.source.requested}' -> '${job.destination}'`).join("\n")
+      ? jobs.map((job) => `'${job.source.requested}' -> '${job.destination.full}'`).join("\n")
       : "";
     return textResult(output, { copied: total, jobs: jobs.length, force: input.force === true });
   },

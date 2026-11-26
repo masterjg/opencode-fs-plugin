@@ -126,7 +126,10 @@ await tools.fs.pipe({
 ```
 
 Pipe stages exchange whole buffers, so use `maxBytes` for large responses. For
-large downloads prefer `fs.curl({ output })`, which streams to disk.
+large downloads prefer `fs.curl({ output })`, which streams to disk. A stage
+that yields no stdout becomes an empty buffer, so `output` writes an empty file
+instead of skipping it. The signal is checked before each stage and before the
+final write, so an abort stops the chain without creating the output.
 
 There is no shell, redirection operator, nested pipe, or arbitrary `find -exec`.
 
@@ -159,9 +162,11 @@ when you want a closed set.
 The workspace (project) is read/write/exec. **Network egress needs Linux tier
 T1** (user namespaces and TPROXY). Every run gets procage's transparent relay:
 there is no direct route, and every TCP or UDP flow is named to the plugin as a
-DNS QNAME, TLS SNI, HTTP `Host`, QUIC SNI, or an IP literal. That exact resource
-must be approved through `fs_exec_network`; the port, URL, headers, and payload
-are never part of the permission. There is no separate network allowlist option:
+DNS QNAME, TLS SNI, HTTP `Host`, QUIC SNI, or an IP literal. Bare IPv6 literals
+and bracketed IPv6 `Host` forms with an optional port are accepted as
+resources. That exact resource must be approved through `fs_exec_network`; the
+port, URL, headers, and payload are never part of the permission. There is no
+separate network allowlist option:
 
 ```jsonc
 {
@@ -327,11 +332,30 @@ await tools.wait.for({
 
 Jobs are process-local: they are lost on an OpenCode server restart, and their
 status files may remain under `/tmp/opencode/fs-jobs/<server-pid>/`; set the
-plugin option `jobDir` to move them. The manager allows 8 concurrent jobs and
-cleans up finished jobs after one hour. Results stay in memory and are returned
-by `fs.job`; the status file contains only the job state and metadata.
-Background permission prompts can appear after the starting call returns, and a
-denied permission fails the job.
+plugin option `jobDir` to move them. The limits are global to one plugin
+instance (one OpenCode server), not per session: at most 8 jobs run at once and
+up to 64 are retained. Starting another evicts the oldest finished job and
+deletes its status file; if no finished job is available to evict the start
+fails with `busy`. Finished jobs are also cleaned up after one hour.
+
+Each job is visible only to the session that started it: `fs.job` list, status,
+wait, and cancel treat another session's id as not found. A background start or
+`fs.job` call without a non-empty host session id fails with `invalid`. The
+`jobDir` path is validated component by component: an existing symlink, a
+non-directory component, or the filesystem root is refused, missing components
+are created `0700`, and the final directory is `0700`. This is deliberately
+fail-closed: a benign configured path that traverses a host symlink such as
+`/home` is rejected, while the default `/tmp/opencode/fs-jobs/<pid>` path is
+unaffected. A component swapped after validation remains a residual TOCTOU
+race. Status files are `0600` and hold only id, tool, state, timing, and
+`hasResult`; they omit the result, the raw error, and the absolute status path.
+Results stay in memory and are returned by
+`fs.job`, capped at 1 MiB per result. Longer text is truncated with
+a `[truncated]` marker plus `truncated`/`originalBytes` metadata,
+and an oversized base64/binary result becomes empty content. With 64 retained
+results this can hold roughly 64 MiB of result text in the server process until
+eviction. Background permission prompts can appear after the starting call
+returns, and a denied permission fails the job.
 
 ## Installing from npm
 
@@ -463,7 +487,8 @@ The skill ID is `filesystem`; `@filesystem` loads it explicitly.
 Every tool asserts an action named after the tool (`fs_cp`, `fs_rm`,
 `fs_pipe` stages, and so on), except `fs.curl`, which reuses the
 built-in `webfetch` action. Internal paths use project-relative resources;
-external targets first require `external_directory` on the absolute boundary.
+external targets first require `external_directory` on the absolute boundary,
+computed from the canonical target rather than the symlink path.
 `allow always` saves the exact resources the call asserted — project-relative
 paths, absolute external boundaries, or network names/addresses. A specific
 resource saves narrowly; an explicitly requested `*` remains `*`.
@@ -533,18 +558,77 @@ when only some agents should be shell-free.
 
 - The sandbox root, its ancestors, `/`, `$HOME` and core system directories are
   hard stops for destructive operations.
-- Paths are resolved with symlink awareness. Traversing a link that escapes the
-  project requires `external_directory`; removing or renaming the link itself is
-  internal.
-- Archive extraction rejects absolute paths, `..`, and escaping symlinks.
-- `curl` accepts only `http:` and `https:`, keeps TLS verification on,
-  re-checks permissions on redirect hops, and writes downloads to a temporary
-  file before renaming. Localhost and private addresses are not blocked by
-  default.
+- Paths resolve to their canonical target before a permission is asserted, so a
+  symlink that escapes the project asks `external_directory` for the real
+  location; removing or renaming the link itself stays internal. Single-file
+  output tools (archives, `gzip`, `tee`, `split`, `dd`, `pipe`) open the resolved
+  final component with `O_NOFOLLOW`, so a link swapped in after the check fails
+  instead of being followed; `cp` refuses an existing symlink at a nested entry
+  but its final copy call is not no-follow. Node has no `openat`, so a
+  concurrently swapped parent directory remains a TOCTOU gap.
+- `cp` follows a top-level destination symlink to its canonical target and gates
+  that path. Inside a recursive copy it refuses to write through an existing
+  symlink (directory or file) and fails closed; a copied symlink replaces the
+  destination link itself. A source/destination hard-link alias is rejected.
+- `mv` refuses to move a directory into itself. A cross-device move (EXDEV)
+  refuses a destination symlink, copies with `preserve`, and removes the source
+  only after every entry was copied. If nothing was copied or a
+  `noClobber`/`update` entry was skipped, it reports `cross-device` and preserves
+  the source; the partially populated destination is left in place.
+- `chown` refuses the sandbox root, its ancestors, `/`, `$HOME`, and core system
+  directories before asserting permission or changing ownership; recursive chown
+  skips traversal symlinks. With `noDereference` it resolves the parent chain to
+  its canonical directory but leaves the final component, so a parent symlink is
+  gated at its real location and `lchown` changes a final symlink itself.
+- Archive create writes its output through the same no-follow final open.
+  Extraction first plans every member: destinations are resolved in their
+  canonical parents, an existing final symlink is refused, and one bulk
+  permission check covers all targets before anything is written, so a denial
+  writes no archive members. A symlink member is refused over any existing
+  destination, and absolute names, `..`, and absolute or traversing link targets
+  are rejected. Extracted file modes apply the process umask and strip
+  setuid/setgid; directory modes also preserve the sticky bit. ZIP entries with
+  no Unix mode default to `0644` files and `0755` directories before the umask.
+  Directory modes are deduplicated by canonical target (last entry wins) and
+  applied deepest-first. Ordinary file and directory mode changes use opened
+  `O_NOFOLLOW` handles; an `EACCES` fallback for an unreadable existing
+  directory uses a guarded pathname `chmod`, keeping a final-component TOCTOU
+  race. Parent-component races remain. An abort before an archive create write
+  leaves no archive file. A parent directory swapped after planning can still redirect a
+  write, an existing destination hardlink can be written through, and an OS
+  error or abort can leave earlier members or a truncated file. Archive create
+  and extraction buffer the whole archive (extraction also buffers each member)
+  in memory and have no global archive-size cap, so large archives can consume
+  substantial memory.
+- `tar` and `cpio` create resolve relative `paths` under `directory`; absolute
+  sources are named relative to `directory` first, then the project, and fall
+  back to the basename (a traversing source uses its basename). `tar`/`zip` store
+  files, directories, and symlinks (no hardlinks, devices, ACLs, or xattrs);
+  `cpio` is newc with GNU 4-byte padding, and its decoder also accepts the prior
+  3.x plugin padding; strict decode rejects nonzero data after the trailer
+  (concatenated archives). `cpio` fields must fit 0..0xffffffff; `ar` uses 16-byte
+  GNU short names.
+- `split` checks suffix capacity before writing: alphabetic suffixes cover
+  `26^suffixLength` chunks and `numeric` covers `10^suffixLength`; more chunks
+  fail with `invalid`.
+- `curl` accepts only `http:` and `https:`, keeps TLS verification on, and
+  re-checks permissions on every redirect hop. A same-origin redirect keeps the
+  request. A cross-origin redirect is refused unless it is a bodyless `GET` or
+  `HEAD` whose caller headers are all in the safe set (`accept`,
+  `accept-language`, `cache-control`, `pragma`, `range`, `user-agent`);
+  credentials, custom headers, other methods, a request body, and embedded URL
+  credentials are refused, not stripped. A 303 rewrites `POST` to a bodyless
+  `GET` before that policy, so a safe resulting GET may cross origins; 301/302
+  rewrite `POST` after the policy, and 307/308 keep the method and body. An
+  HTTPS to HTTP redirect is always refused. For `output`, the resolved file's
+  containing directory is the permission boundary, so an external destination
+  asks `external_directory` for that directory. Downloads stream to a temporary
+  file and are renamed only after the body and checksum complete. Localhost and
+  private addresses are not blocked by default.
 - `rm` is permanent. `trash` uses the XDG home trash and refuses cross-device
   moves instead of silently copying.
-- The sandbox is a guardrail, not a kernel security boundary. Symlink races
-  remain possible.
+- The sandbox is a guardrail, not a kernel security boundary.
+  Parent/hardlink races and partial writes remain possible.
 
 ## Development
 

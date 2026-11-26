@@ -7,7 +7,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { randomBytes } from "node:crypto";
 import { Type, type Static } from "@sinclair/typebox";
-import { FsError, fromErrno } from "../core/errors.js";
+import { FsError, errnoCode, fromErrno } from "../core/errors.js";
 import { textResult, type ToolSpec } from "../core/types.js";
 
 const Schema = Type.Object(
@@ -31,25 +31,27 @@ export const mktempTool: ToolSpec<Input> = {
   pipeable: false,
   mutates: true,
   async run(ctx, input) {
-    /* v8 ignore next 2 */
-    const dir = path.resolve(input.tmpdir ?? ctx.tmpdir);
-    /* v8 ignore next */
     const template = input.template ?? "tmp.XXXXXXXXXX";
     const tail = /X+$/.exec(template)?.[0] ?? "";
     if (tail.length < 3) throw new FsError("template must end with at least three X characters.", "invalid");
-    await ctx.permission.assertTrusted([path.join(dir, "*")]);
+    assertComponent(template, "template");
+    if (input.suffix !== undefined) assertComponent(input.suffix, "suffix");
 
-    if (input.directory === true) {
-      try {
-        await fs.mkdir(dir, { recursive: true });
-        const created = await fs.mkdtemp(path.join(dir, template.slice(0, -tail.length)));
-        const result = input.suffix === undefined ? created : `${created}${input.suffix}`;
-        if (input.suffix !== undefined) await fs.rename(created, result);
-        return textResult(`${result}\n`, { path: result, directory: true });
-      } catch (error) {
-        /* v8 ignore next */
-        throw fromErrno(error);
-      }
+    const userTarget = input.tmpdir === undefined
+      ? undefined
+      : await ctx.sandbox.resolveForWrite(input.tmpdir);
+    const dir = userTarget?.full ?? path.resolve(ctx.tmpdir);
+    if (userTarget === undefined) {
+      await ctx.permission.assertTrusted([path.join(dir, "*")]);
+    } else {
+      const relative = ctx.sandbox.resource(dir);
+      await ctx.permission.assert([
+        {
+          target: { ...userTarget, full: path.join(dir, "*") },
+          boundary: dir,
+          resource: relative === "." ? "./*" : `${relative}/*`,
+        },
+      ]);
     }
 
     try {
@@ -58,25 +60,38 @@ export const mktempTool: ToolSpec<Input> = {
       /* v8 ignore next */
       throw fromErrno(error);
     }
+
+    const prefix = template.slice(0, -tail.length);
     for (let attempt = 0; attempt < 20; attempt++) {
-      const candidate = path.join(dir, template.slice(0, -tail.length) + randomToken(tail.length));
+      const candidate = path.join(dir, `${prefix}${randomToken(tail.length)}${input.suffix ?? ""}`);
       try {
-        const handle = await fs.open(candidate, "wx", 0o600);
-        await handle.close();
-        const result = input.suffix === undefined ? candidate : `${candidate}${input.suffix}`;
-        if (input.suffix !== undefined) await fs.rename(candidate, result);
-        return textResult(`${result}\n`, { path: result, directory: false });
+        if (input.directory === true) {
+          await fs.mkdir(candidate, { mode: 0o700 });
+        } else {
+          const handle = await fs.open(candidate, "wx", 0o600);
+          await handle.close();
+        }
+        return textResult(`${candidate}\n`, { path: candidate, directory: input.directory === true });
       } catch (error) {
-        /* v8 ignore next */
-        if ((error as NodeJS.ErrnoException)?.code === "EEXIST") continue;
-        /* v8 ignore next */
+        if (errnoCode(error) === "EEXIST") continue;
         throw fromErrno(error);
       }
     }
-    /* v8 ignore next */
     throw new FsError("could not create a unique temporary path.", "exists");
   },
 };
+
+function assertComponent(value: string, label: string): void {
+  if (
+    value === "." ||
+    value === ".." ||
+    value.includes("\0") ||
+    value.includes("/") ||
+    value.includes("\\")
+  ) {
+    throw new FsError(`${label} must be a single path component.`, "invalid");
+  }
+}
 
 function randomToken(length: number): string {
   return randomBytes(Math.ceil(length / 2)).toString("hex").slice(0, length);

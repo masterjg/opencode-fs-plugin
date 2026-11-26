@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 import { Type, type Static } from "@sinclair/typebox";
 import { FsError, fromErrno } from "../core/errors.js";
 import { mapLimit } from "../core/parallel.js";
+import { outputBoundary, resolveOutputTarget, writeOutput } from "../core/safe-output.js";
 import { collect } from "../core/stream.js";
 import { textResult, type ToolSpec } from "../core/types.js";
 
@@ -57,14 +58,16 @@ export const gzipTool: ToolSpec<GzipInput> = {
     const targets = [];
     for (const requested of input.paths) {
       const source = await ctx.sandbox.resolveFollow(requested);
-      const destination = await ctx.sandbox.resolveForCreate(input.stdout === true ? requested : `${requested}.gz`);
+      const destination = input.stdout === true
+        ? source
+        : await resolveOutputTarget(ctx.sandbox, `${requested}.gz`);
       targets.push({ requested, source, destination });
     }
     await ctx.permission.assert(
       targets.flatMap(({ source, destination }) => [
-        { target: source, boundary: source.full },
+        { target: source, boundary: outputBoundary(source.full) },
         /* v8 ignore next */
-        ...(input.stdout === true ? [] : [{ target: destination, boundary: destination.full }]),
+        ...(input.stdout === true ? [] : [{ target: destination, boundary: outputBoundary(destination.full) }]),
       ]),
     );
     const results = await mapLimit(targets, ctx.concurrency, async ({ source, destination }) => {
@@ -77,10 +80,7 @@ export const gzipTool: ToolSpec<GzipInput> = {
       if (input.force !== true && (await exists(destination.full))) {
         throw new FsError(`Output exists: "${destination.full}"`, "exists");
       }
-      /* v8 ignore next */
-      await fs.writeFile(destination.full, compressed).catch((error) => {
-        throw fromErrno(error);
-      });
+      await writeOutput(destination.full, compressed, false, 0o666, ctx.signal);
       /* v8 ignore next */
       if (input.keep !== true) await fs.unlink(source.full).catch(() => undefined);
       return Buffer.alloc(0);
@@ -112,15 +112,16 @@ export const gunzipTool: ToolSpec<GunzipInput> = {
       if (!requested.endsWith(suffix)) throw new FsError(`"${requested}" does not end with ${suffix}.`, "invalid");
       const source = await ctx.sandbox.resolveFollow(requested);
       const output = requested.slice(0, -suffix.length);
-      /* v8 ignore next */
-      const destination = await ctx.sandbox.resolveForCreate(input.stdout === true ? requested : output);
+      const destination = input.stdout === true
+        ? source
+        : await resolveOutputTarget(ctx.sandbox, output);
       targets.push({ requested, source, destination });
     }
     await ctx.permission.assert(
       targets.flatMap(({ source, destination }) => [
-        { target: source, boundary: source.full },
+        { target: source, boundary: outputBoundary(source.full) },
         /* v8 ignore next */
-        ...(input.stdout === true ? [] : [{ target: destination, boundary: destination.full }]),
+        ...(input.stdout === true ? [] : [{ target: destination, boundary: outputBoundary(destination.full) }]),
       ]),
     );
     const results = await mapLimit(targets, ctx.concurrency, async ({ source, destination }) => {
@@ -138,10 +139,7 @@ export const gunzipTool: ToolSpec<GunzipInput> = {
       if (input.force !== true && (await exists(destination.full))) {
         throw new FsError(`Output exists: "${destination.full}"`, "exists");
       }
-      /* v8 ignore next */
-      await fs.writeFile(destination.full, decompressed).catch((error) => {
-        throw fromErrno(error);
-      });
+      await writeOutput(destination.full, decompressed, false, 0o666, ctx.signal);
       /* v8 ignore next */
       if (input.keep !== true) await fs.unlink(source.full).catch(() => undefined);
       return Buffer.alloc(0);

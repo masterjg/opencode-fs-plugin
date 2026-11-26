@@ -36,21 +36,31 @@ export const truncateTool: ToolSpec<Input> = {
     if (input.size === undefined && input.reference === undefined) {
       throw new FsError("size or reference is required.", "invalid");
     }
-    const referenceSize =
-      input.reference === undefined
-        ? undefined
-        : num((await ctx.sandbox.lstat((await ctx.sandbox.resolveExisting(input.reference, { allowRoot: true })).full, input.reference)).size);
+    let referenceSize: number | undefined;
+    if (input.reference !== undefined) {
+      const reference = await ctx.sandbox.resolveFollow(input.reference);
+      await ctx.permission.assert([{ target: reference, boundary: ctx.sandbox.boundaryFor(reference.full, "file") }]);
+      const stats = await ctx.sandbox.lstat(reference.full, input.reference);
+      referenceSize = num(stats.size);
+    }
 
     const changed: string[] = [];
     for (const requested of input.paths) {
-      const target = await ctx.sandbox.resolveForCreate(requested);
-      await ctx.permission.assert([{ target, boundary: target.full }]);
-      let stats;
+      const target = input.noDereference === true
+        ? await ctx.sandbox.resolveForCreate(requested)
+        : await ctx.sandbox.resolveForWrite(requested);
+      let stats: Awaited<ReturnType<typeof fs.lstat>> | undefined;
       try {
         stats = await ctx.sandbox.lstat(target.full, requested);
       } catch (error) {
         /* v8 ignore next 2 */
         if (!(error instanceof FsError) || error.code !== "not-found") throw error;
+      }
+      await ctx.permission.assert([{
+        target,
+        boundary: ctx.sandbox.boundaryFor(target.full, stats?.isDirectory() === true ? "directory" : "file"),
+      }]);
+      if (stats === undefined) {
         /* v8 ignore next */
         if (input.noCreate === true) continue;
         /* v8 ignore next 10 */

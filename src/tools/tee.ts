@@ -6,7 +6,8 @@
 import { Type, type Static } from "@sinclair/typebox";
 import { pathsFrom } from "../core/aliases.js";
 import { FsError } from "../core/errors.js";
-import { collect, writeAll } from "../core/stream.js";
+import { outputBoundary, resolveOutputTarget, writeOutput } from "../core/safe-output.js";
+import { collect } from "../core/stream.js";
 import type { ToolSpec } from "../core/types.js";
 
 const Schema = Type.Object(
@@ -40,12 +41,14 @@ export const teeTool: ToolSpec<Input> = {
 
     const targets = [];
     for (const requested of paths) {
-      const target = await ctx.sandbox.resolveForCreate(requested);
+      const target = await resolveOutputTarget(ctx.sandbox, requested);
       targets.push({ requested, target });
     }
-    await ctx.permission.assert(targets.map(({ target }) => ({ target, boundary: target.full })));
+    await ctx.permission.assert(
+      targets.map(({ target }) => ({ target, boundary: outputBoundary(target.full) })),
+    );
     for (const target of targets) {
-      await writeAll(target.target.full, data, input.append === true);
+      await writeOutput(target.target.full, data, input.append === true, 0o666, ctx.signal);
     }
     return { stdout: data, exitCode: 0, metadata: { files: paths, append: input.append === true } };
   },

@@ -9,7 +9,8 @@ import { createTwoFilesPatch } from "diff";
 import { Type, type Static } from "@sinclair/typebox";
 import { fromErrno } from "../core/errors.js";
 import { mapLimit } from "../core/parallel.js";
-import { textResult, type ToolSpec } from "../core/types.js";
+import { outputBoundary, throwIfAborted } from "../core/safe-output.js";
+import { textResult, type RunContext, type ToolSpec } from "../core/types.js";
 
 const Schema = Type.Object(
   {
@@ -36,14 +37,20 @@ export const diffTool: ToolSpec<Input> = {
   pipeable: false,
   mutates: false,
   async run(ctx, input) {
-    const left = await ctx.sandbox.resolveExisting(input.left, { allowRoot: true });
-    const right = await ctx.sandbox.resolveExisting(input.right, { allowRoot: true });
-    await ctx.permission.assert([
-      { target: left, boundary: left.full },
-      { target: right, boundary: right.full },
-    ]);
+    const left = await ctx.sandbox.resolveFollow(input.left);
+    const right = await ctx.sandbox.resolveFollow(input.right);
     const leftStats = await ctx.sandbox.lstat(left.full, input.left);
     const rightStats = await ctx.sandbox.lstat(right.full, input.right);
+    await ctx.permission.assert([
+      {
+        target: left,
+        boundary: ctx.sandbox.boundaryFor(left.full, leftStats.isDirectory() ? "directory" : "file"),
+      },
+      {
+        target: right,
+        boundary: ctx.sandbox.boundaryFor(right.full, rightStats.isDirectory() ? "directory" : "file"),
+      },
+    ]);
     if (leftStats.isDirectory() || rightStats.isDirectory()) {
       if (leftStats.isDirectory() !== rightStats.isDirectory()) {
         return textResult(`File ${input.left} is a directory while file ${input.right} is not\n`, {}, 1);
@@ -51,7 +58,7 @@ export const diffTool: ToolSpec<Input> = {
       if (input.recursive !== true) {
         return textResult(`Common subdirectories: ${input.left} and ${input.right}\n`, {}, 1);
       }
-      const lines = await diffDirs(left.full, right.full, input, ctx.concurrency);
+      const lines = await diffDirs(left.full, right.full, input, ctx);
       return textResult(lines.join(""), { differences: lines.length > 0 }, lines.length > 0 ? 1 : 0);
     }
 
@@ -96,14 +103,17 @@ async function diffDirs(
   left: string,
   right: string,
   input: Input,
-  concurrency: number,
+  ctx: RunContext,
 ): Promise<string[]> {
   const items: DiffItem[] = [];
-  await planDir(left, right, input, items);
+  await planDir(left, right, input, items, ctx.signal);
 
   const files = items.filter((item): item is Extract<DiffItem, { kind: "file" }> => item.kind === "file");
-  const patches = await mapLimit(files, Math.max(1, concurrency), async (item) => {
-    const [leftData, rightData] = await Promise.all([fs.readFile(item.left), fs.readFile(item.right)]);
+  const patches = await mapLimit(files, Math.max(1, ctx.concurrency), async (item) => {
+    const [leftData, rightData] = await Promise.all([
+      readDiffFile(ctx, item.left),
+      readDiffFile(ctx, item.right),
+    ]);
     /* v8 ignore next */
     if (leftData.equals(rightData)) return undefined;
     return createTwoFilesPatch(
@@ -115,7 +125,7 @@ async function diffDirs(
       "",
       { context: input.unified ?? 3 },
     );
-  });
+  }, ctx.signal);
 
   const output: string[] = [];
   let index = 0;
@@ -130,15 +140,24 @@ async function diffDirs(
   return output;
 }
 
-async function planDir(left: string, right: string, input: Input, items: DiffItem[]): Promise<void> {
+async function planDir(
+  left: string,
+  right: string,
+  input: Input,
+  items: DiffItem[],
+  signal: AbortSignal,
+): Promise<void> {
   const names = new Set<string>();
   for (const dir of [left, right]) {
+    throwIfAborted(signal);
     for (const name of await fs.readdir(dir)) {
+      throwIfAborted(signal);
       if (input.exclude?.some((pattern) => name.includes(pattern.replaceAll("*", ""))) === true) continue;
       names.add(name);
     }
   }
   for (const name of [...names].sort()) {
+    throwIfAborted(signal);
     const leftPath = path.join(left, name);
     const rightPath = path.join(right, name);
     const leftExists = await exists(leftPath);
@@ -151,7 +170,7 @@ async function planDir(left: string, right: string, input: Input, items: DiffIte
     const leftStats = await fs.lstat(leftPath);
     const rightStats = await fs.lstat(rightPath);
     if (leftStats.isDirectory() && rightStats.isDirectory()) {
-      await planDir(leftPath, rightPath, input, items);
+      await planDir(leftPath, rightPath, input, items, signal);
     /* v8 ignore next 4 */
     } else if (leftStats.isDirectory() !== rightStats.isDirectory()) {
       /* v8 ignore next */
@@ -160,6 +179,18 @@ async function planDir(left: string, right: string, input: Input, items: DiffIte
       items.push({ kind: "file", left: leftPath, right: rightPath });
     }
   }
+}
+
+/**
+ * Recursive diff reads regular children directly. A symlink child is resolved
+ * and gated first, so an external link cannot read without permission.
+ */
+async function readDiffFile(ctx: RunContext, file: string): Promise<Buffer> {
+  const stats = await fs.lstat(file);
+  if (!stats.isSymbolicLink()) return fs.readFile(file);
+  const target = await ctx.sandbox.resolveFollow(file);
+  await ctx.permission.assert([{ target, boundary: outputBoundary(target.full) }]);
+  return fs.readFile(target.full);
 }
 
 async function exists(target: string): Promise<boolean> {

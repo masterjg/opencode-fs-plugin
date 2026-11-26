@@ -180,6 +180,17 @@ const JOB_SCHEMA = Type.Object(
   { additionalProperties: false },
 );
 
+/**
+ * Background jobs are session-scoped. The host must supply a non-empty session
+ * id; never fall back to the direct-call test owner in production.
+ */
+function sessionOwner(context: { sessionID: string }): string {
+  if (typeof context.sessionID !== "string" || context.sessionID.length === 0) {
+    throw new FsError("background jobs require a non-empty session id.", "invalid");
+  }
+  return context.sessionID;
+}
+
 export default Plugin.define({
   id: "opencode-fs-plugin",
   async setup(ctx) {
@@ -250,7 +261,8 @@ export default Plugin.define({
               };
 
               if ((parsed as { background?: unknown }).background === true) {
-                const job = await jobs.start(spec.name, runSpec);
+                const owner = sessionOwner(context);
+                const job = await jobs.start(spec.name, runSpec, owner);
                 return {
                   content: JSON.stringify(
                     {
@@ -288,8 +300,9 @@ export default Plugin.define({
           "Inspect, wait for, cancel, or list background fs jobs. Jobs are created by passing background: true to any fs tool. wait returns the original tool result when the job completes; a timeout returns the current status.",
         input: JOB_SCHEMA,
         options: { namespace: "fs", permission: "fs_job" },
-        execute: async (input, _context) => {
+        execute: async (input, context) => {
           try {
+            const owner = sessionOwner(context);
             const parsed = parseSchema<{
               id?: string;
               wait?: boolean;
@@ -303,7 +316,7 @@ export default Plugin.define({
                 throw new FsError("list cannot be combined with id, wait, or cancel.", "invalid");
               }
               return {
-                content: JSON.stringify({ jobs: jobs.list() }, null, 2),
+                content: JSON.stringify({ jobs: jobs.list(owner) }, null, 2),
                 metadata: { ok: true },
               };
             }
@@ -314,7 +327,7 @@ export default Plugin.define({
               if (parsed.wait === true) {
                 throw new FsError("cancel and wait are mutually exclusive.", "invalid");
               }
-              const status = jobs.cancel(parsed.id);
+              const status = jobs.cancel(parsed.id, owner);
               return {
                 content: JSON.stringify(status, null, 2),
                 metadata: { ok: true, jobId: status.id, state: status.state },
@@ -322,7 +335,11 @@ export default Plugin.define({
             }
 
             if (parsed.wait === true) {
-              const waited = await jobs.wait(parsed.id, parsed.timeoutMs ?? 600000);
+              const waited = await jobs.wait(
+                parsed.id,
+                parsed.timeoutMs ?? 600000,
+                owner,
+              );
               if (waited.result) {
                 return {
                   content: waited.result.content,
@@ -345,7 +362,7 @@ export default Plugin.define({
               };
             }
 
-            const status = jobs.status(parsed.id);
+            const status = jobs.status(parsed.id, owner);
             return {
               content: JSON.stringify(status, null, 2),
               metadata: { ok: true, jobId: status.id, state: status.state },
