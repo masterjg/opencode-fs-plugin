@@ -128,9 +128,8 @@ export const commandTool: ToolSpec<Input> = {
   name: "command",
   description:
     "Run an executable allowed by fs_command in a procage sandbox without a shell. Direct calls return JSON; " +
-    "pipe stages pass raw stdout. Default allowlist: npm, npx, uv, uvx, pip, pip3. On Linux tier T1 " +
-    "every network flow is named to the transparent relay, which asks fs_exec_network for its exact " +
-    "resource; elsewhere networking is disabled.",
+    "pipe stages pass raw stdout. On Linux tier T1 every network flow is named to the transparent relay, " +
+    "which asks fs_exec_network for its exact resource; elsewhere networking is disabled.",
   schema: Schema,
   pipeable: "filter",
   mutates: true,
