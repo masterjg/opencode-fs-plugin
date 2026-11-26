@@ -145,7 +145,7 @@ describe("PermissionGate", () => {
     const requests: unknown[] = [];
     const gate = new PermissionGate(
       { sessionID: "s", agent: "a", messageID: "m", id: "i" },
-      "fs_exec_network",
+      "fs_command_network",
       (full) => sb.resource(full),
       async (request) => {
         requests.push(request);
@@ -153,7 +153,7 @@ describe("PermissionGate", () => {
     );
     await gate.assertTrusted(["registry.npmjs.org"]);
     expect(requests[0]).toMatchObject({
-      action: "fs_exec_network",
+      action: "fs_command_network",
       resources: ["registry.npmjs.org"],
       save: ["registry.npmjs.org"],
     });

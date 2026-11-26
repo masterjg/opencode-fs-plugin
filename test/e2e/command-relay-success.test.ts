@@ -127,7 +127,7 @@ afterEach(async () => {
   for (const root of roots.splice(0)) await fs.rm(root, { recursive: true, force: true });
 });
 
-async function run(denyNetwork = false) {
+async function run(denyNetwork = false, denyLegacyNetwork = false) {
   const root = await makeRoot("fs-command-relay-success-");
   roots.push(root);
   const sb = await Sandbox.create(root);
@@ -135,7 +135,7 @@ async function run(denyNetwork = false) {
     commandTool,
     { command: "node", args: ["-e", "process.stdout.write('unused')"] },
     sb,
-    { allowCommands: ["node"], denyNetwork },
+    { allowCommands: ["node"], denyNetwork, denyLegacyNetwork },
   );
   return { result, body: JSON.parse(result.result.stdout.toString()) as Record<string, unknown> };
 }
@@ -162,7 +162,7 @@ describe("command relay success", () => {
     expect(
       result.requests.some(
         (request) =>
-          request.action === "fs_exec_network" && request.resources.includes("registry.npmjs.org"),
+          request.action === "fs_command_network" && request.resources.includes("registry.npmjs.org"),
       ),
     ).toBe(true);
     expect(state.closed).toBe(1);
@@ -196,14 +196,34 @@ describe("command relay success", () => {
     }
   });
 
-  it("denies the flow when fs_exec_network rejects the resource", async () => {
+  it("does not consult a legacy fs_exec_network rule", async () => {
+    // A policy that denies only the removed action must not block the flow:
+    // the relay asks fs_command_network, never the old name.
+    const { result, body } = await run(false, true);
+    expect(state.decision).toEqual({ verdict: 1, reason: "allowed" });
+    expect(body).toMatchObject({
+      stdout: "allowed",
+      exitCode: 0,
+      network: true,
+      networkHosts: ["registry.npmjs.org"],
+    });
+    expect(result.requests.some((request) => request.action === "fs_exec_network")).toBe(false);
+    expect(
+      result.requests.some(
+        (request) =>
+          request.action === "fs_command_network" && request.resources.includes("registry.npmjs.org"),
+      ),
+    ).toBe(true);
+  });
+
+  it("denies the flow when fs_command_network rejects the resource", async () => {
     const { result, body } = await run(true);
     expect(state.decision).toEqual({ verdict: 0, reason: "permission denied by test" });
     expect(body).toMatchObject({ stdout: "denied", exitCode: 1, networkHosts: [] });
     expect(
       result.requests.some(
         (request) =>
-          request.action === "fs_exec_network" && request.resources.includes("registry.npmjs.org"),
+          request.action === "fs_command_network" && request.resources.includes("registry.npmjs.org"),
       ),
     ).toBe(true);
   });

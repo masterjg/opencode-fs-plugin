@@ -164,16 +164,16 @@ T1** (user namespaces and TPROXY). Every run gets procage's transparent relay:
 there is no direct route, and every TCP or UDP flow is named to the plugin as a
 DNS QNAME, TLS SNI, HTTP `Host`, QUIC SNI, or an IP literal. Bare IPv6 literals
 and bracketed IPv6 `Host` forms with an optional port are accepted as
-resources. That exact resource must be approved through `fs_exec_network`; the
+resources. That exact resource must be approved through `fs_command_network`; the
 port, URL, headers, and payload are never part of the permission. There is no
 separate network allowlist option:
 
 ```jsonc
 {
   "permissions": [
-    { "action": "fs_exec_network", "resource": "*", "effect": "deny" },
-    { "action": "fs_exec_network", "resource": "registry.npmjs.org", "effect": "allow" },
-    { "action": "fs_exec_network", "resource": "pypi.org", "effect": "allow" }
+    { "action": "fs_command_network", "resource": "*", "effect": "deny" },
+    { "action": "fs_command_network", "resource": "registry.npmjs.org", "effect": "allow" },
+    { "action": "fs_command_network", "resource": "pypi.org", "effect": "allow" }
   ]
 }
 ```
@@ -202,7 +202,7 @@ External proxy settings are preserved: `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`,
 `NO_PROXY`, their lowercase forms, and the npm proxy variables are passed to the
 child explicitly, because they are not in the preset's environment allowlist.
 The relay treats the proxy as the destination, never its `CONNECT` target, so
-an external proxy works only when `fs_exec_network` allows the proxy's address
+an external proxy works only when `fs_command_network` allows the proxy's address
 (or its cached DNS name, which also needs its DNS query allowed). That approval
 lets the proxy forward to whatever it reaches; it is not scoped to the target
 URL behind the proxy. No other caller environment variable is forwarded
@@ -494,7 +494,7 @@ paths, absolute external boundaries, or network names/addresses. A specific
 resource saves narrowly; an explicitly requested `*` remains `*`.
 
 `fs.command` asserts `fs_command` with the executable name, asks
-`external_directory` for any blocked path, and asks `fs_exec_network` for the
+`external_directory` for any blocked path, and asks `fs_command_network` for the
 exact DNS name or IP address the transparent relay named. There is no `*`
 fallback and no direct-IP mode; networking that cannot use the relay is
 disabled:
@@ -505,15 +505,15 @@ disabled:
     { "action": "fs_command", "resource": "*", "effect": "deny" },
     { "action": "fs_command", "resource": "npm", "effect": "allow" },
     { "action": "external_directory", "resource": "$HOME/.npm/**", "effect": "ask" },
-    { "action": "fs_exec_network", "resource": "*", "effect": "deny" },
-    { "action": "fs_exec_network", "resource": "registry.npmjs.org", "effect": "allow" }
+    { "action": "fs_command_network", "resource": "*", "effect": "deny" },
+    { "action": "fs_command_network", "resource": "registry.npmjs.org", "effect": "allow" }
   ]
 }
 ```
 
 Keep the rules explicit. Plugin actions match OpenCode's base
 `{ "action": "*", "resource": "*", "effect": "allow" }` rule, so an unlisted
-`fs_command`, `fs_exec_network`, or `external_directory` resource is allowed
+`fs_command`, `fs_command_network`, or `external_directory` resource is allowed
 without a prompt, not asked.
 
 `fs.curl` reuses the built-in `webfetch` permission, with the requested

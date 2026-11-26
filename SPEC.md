@@ -159,7 +159,7 @@ Aliases are accepted only where noted: `path` for one `paths` element (`stat`,
 - Every TCP/UDP flow is named as a DNS QNAME, TLS SNI, HTTP `Host`, QUIC SNI, or
   IP literal. Bare IPv6 literals and bracketed IPv6 `Host` forms with an
   optional port pass resource validation. That exact resource is asserted with
-  `fs_exec_network`; the port, protocol, URL, headers, and payload never reach
+  `fs_command_network`; the port, protocol, URL, headers, and payload never reach
   the permission. The permission rules are the only network allowlist; there is
   no plugin option for it.
 - DNS queries are decisions too. An allowed QNAME is forwarded to the parent
@@ -190,7 +190,7 @@ Aliases are accepted only where noted: `path` for one `paths` element (`stat`,
   `NO_PROXY`, lowercase forms, and npm proxy variables) are passed explicitly
   because they are not in the preset environment allowlist. The relay treats
   the proxy as the destination, never its `CONNECT` target, so the proxy's
-  address or cached DNS name must be allowed in `fs_exec_network`. No other
+  address or cached DNS name must be allowed in `fs_command_network`. No other
   caller environment variable is forwarded explicitly; the preset's own
   allowlist still applies, and a proxy variable may itself carry credentials.
 - Denied paths ask `external_directory` on their containing directory (or the

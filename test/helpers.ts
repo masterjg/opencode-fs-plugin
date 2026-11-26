@@ -14,8 +14,10 @@ import type { ToolResult, ToolSpec } from "../src/core/types.js";
 
 export interface RunSpecOptions {
   deny?: boolean;
-  /** Reject only fs_exec_network, leaving the tool's own permissions allowed. */
+  /** Reject only fs_command_network, leaving the tool's own permissions allowed. */
   denyNetwork?: boolean;
+  /** Reject only the removed fs_exec_network action; it must not affect a run. */
+  denyLegacyNetwork?: boolean;
   concurrency?: number;
   signal?: AbortSignal;
   tmpdir?: string;
@@ -86,7 +88,8 @@ export async function runSpec<I>(
 
 function denied(options: RunSpecOptions, action: string, resources: readonly string[]): boolean {
   if (options.deny === true) return true;
-  if (options.denyNetwork === true && action === "fs_exec_network") return true;
+  if (options.denyNetwork === true && action === "fs_command_network") return true;
+  if (options.denyLegacyNetwork === true && action === "fs_exec_network") return true;
   if (action === "fs_command" && options.allowCommands !== undefined) {
     return resources.some((resource) => !options.allowCommands?.includes(resource));
   }

@@ -168,7 +168,7 @@ With no rule the base allow applies to every executable.
 The project is read/write/exec. **Network egress needs Linux tier T1** and uses
 procage's transparent relay. There are no per-call grants. Every TCP/UDP flow is
 named as a DNS QNAME, TLS SNI, HTTP `Host`, QUIC SNI, or IP literal, and that
-exact resource is approved through `fs_exec_network`; ports, URLs, and payloads
+exact resource is approved through `fs_command_network`; ports, URLs, and payloads
 are never part of the permission. Bare IPv6 literals and bracketed IPv6 `Host`
 forms with an optional port are valid resources. The permission rules are the
 network allowlist: a `*` deny plus name/address allows fails closed for anything
@@ -193,7 +193,7 @@ await tools.fs.command({ command: "npm", args: ["install"], timeoutMs: 300000 })
 Proxy variables (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`, lowercase
 forms, npm proxy settings) pass through explicitly. The relay treats the proxy
 as the destination, never its `CONNECT` target, so allow the proxy's address or
-cached DNS name in `fs_exec_network`; approving it lets the proxy reach whatever
+cached DNS name in `fs_command_network`; approving it lets the proxy reach whatever
 it forwards. No other caller environment variable is forwarded explicitly, but
 the preset's own allowlist still applies, and a proxy variable may itself carry
 proxy credentials.
@@ -583,7 +583,7 @@ hidden inside a pipeline. Do not work around a denied tool with shell.
 
 `fs.command` asserts `fs_command` with the executable name as its resource;
 deny `*` for a closed set. It asks `external_directory` for a blocked path and
-`fs_exec_network` with the exact DNS name or IP address named by the relay.
+`fs_command_network` with the exact DNS name or IP address named by the relay.
 There is no `*` fallback and no direct-IP mode; networking that cannot use the
 relay is disabled. There are no per-call grants and no shell.
 

@@ -146,6 +146,6 @@ describe("command relay fallback", () => {
     expect(state.spawns).toBe(1);
     expect(state.closed).toBe(1);
     await expect(fs.access(first.relay_control_socket as string)).rejects.toThrow();
-    expect(result.requests.some((request) => request.action === "fs_exec_network")).toBe(false);
+    expect(result.requests.some((request) => request.action === "fs_command_network")).toBe(false);
   });
 });

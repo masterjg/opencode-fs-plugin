@@ -101,7 +101,7 @@ class RelayUnsupportedError extends Error {
 /** Why a blocked run failed, and what to do about it. */
 export function blockedHint(mode: NetworkMode): string {
   return mode === "relay"
-    ? "The sandbox denied a path or refused a network flow. Approve the denied path, or the refused resource in fs_exec_network, and retry."
+    ? "The sandbox denied a path or refused a network flow. Approve the denied path, or the refused resource in fs_command_network, and retry."
     : "Networking is disabled in this sandbox. Approve the denied external path in the permission prompt and retry; relayed networking needs Linux tier T1.";
 }
 
@@ -129,7 +129,7 @@ export const commandTool: ToolSpec<Input> = {
   description:
     "Run an executable allowed by fs_command in a procage sandbox without a shell. Direct calls return JSON; " +
     "pipe stages pass raw stdout. On Linux tier T1 every network flow is named to the transparent relay, " +
-    "which asks fs_exec_network for its exact resource; elsewhere networking is disabled.",
+    "which asks fs_command_network for its exact resource; elsewhere networking is disabled.",
   schema: Schema,
   pipeable: "filter",
   mutates: true,
@@ -163,7 +163,7 @@ export const commandTool: ToolSpec<Input> = {
       const approvedResources: string[] = [];
       const approved: Array<{ full: string }> = [];
       const assertNetwork = async (resource: string) => {
-        await ctx.permissionFor("fs_exec_network").assertTrusted([resource]);
+        await ctx.permissionFor("fs_command_network").assertTrusted([resource]);
         if (!approvedResources.includes(resource)) approvedResources.push(resource);
       };
       const base = {
@@ -368,7 +368,7 @@ async function runCaged(ctx: RunContext, input: CagedInput): Promise<ExecOutcome
   // preset's secret filtering. The transparent relay treats a connection to the
   // proxy as the proxy's own destination (never its CONNECT target), so the
   // proxy's address, or its cached DNS name, is authorized through
-  // fs_exec_network; the target URL behind the proxy is never treated as
+  // fs_command_network; the target URL behind the proxy is never treated as
   // approved.
   const env: Record<string, string> = { TMPDIR: input.tempDir };
   for (const name of EXEC_PROXY_ENV) {

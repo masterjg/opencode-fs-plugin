@@ -408,7 +408,7 @@ describe("command", () => {
         expect(commandRequests.every((request) => !request.resources.includes(sb.root))).toBe(true);
         const networkRequest = result.requests.some(
           (request) =>
-            request.action === "fs_exec_network" && request.resources.includes(fixture.address),
+            request.action === "fs_command_network" && request.resources.includes(fixture.address),
         );
         if (!networkRequest) {
           // Hosted CI can lack the Linux T1 relay; the command still ran offline.
@@ -539,7 +539,7 @@ describe("command", () => {
       });
       const body = parsed(result);
       if (body.networkMode === "disabled") {
-        expect(result.requests.some((request) => request.action === "fs_exec_network")).toBe(false);
+        expect(result.requests.some((request) => request.action === "fs_command_network")).toBe(false);
         expect(body.network).toBe(false);
       } else {
         expect(body).toMatchObject({
@@ -551,7 +551,7 @@ describe("command", () => {
         expect(
           result.requests.some(
             (request) =>
-              request.action === "fs_exec_network" && request.resources.includes(fixture.address),
+              request.action === "fs_command_network" && request.resources.includes(fixture.address),
           ),
         ).toBe(true);
       }
@@ -808,7 +808,7 @@ describe("command sandbox helpers", () => {
   });
 
   it("explains a blocked run for each network mode", () => {
-    expect(blockedHint("relay")).toMatch(/fs_exec_network/);
+    expect(blockedHint("relay")).toMatch(/fs_command_network/);
     expect(blockedHint("disabled")).toMatch(/Networking is disabled/);
   });
 });
