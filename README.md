@@ -170,8 +170,9 @@ separate network allowlist option.
 
 > **Migration from `fs_exec_network`:** replace every old rule with
 > `fs_command_network` before upgrading. Old rules are ignored, and an unlisted
-> `fs_command_network` resource can be allowed by the base rule, so a previous
-> `fs_exec_network` `deny *` no longer closes network egress.
+> `fs_command_network` resource can be allowed by the base rule unless another
+> matching rule applies, so a previous `fs_exec_network` `deny *` no longer
+> closes network egress.
 
 ```jsonc
 {
