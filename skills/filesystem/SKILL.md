@@ -176,8 +176,9 @@ else.
 
 > **Migration from `fs_exec_network`:** replace every old rule with
 > `fs_command_network` before upgrading. Old rules are ignored; an unlisted
-> `fs_command_network` resource falls back to the base allow, so an old
-> `fs_exec_network` `deny *` no longer closes egress.
+> `fs_command_network` resource can fall back to the base allow unless another
+> matching rule applies, so an old `fs_exec_network` `deny *` no longer closes
+> egress.
 
 DNS is authorized by QNAME. Allowed answers feed a per-run address-to-name
 cache: a nameless flow is allowed by a fresh allowed name bound to its address,

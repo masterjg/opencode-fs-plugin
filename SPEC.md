@@ -164,8 +164,9 @@ Aliases are accepted only where noted: `path` for one `paths` element (`stat`,
   no plugin option for it.
 - **Migration from `fs_exec_network`:** replace every old rule with
   `fs_command_network` before upgrading. Old rules are ignored; an unlisted
-  `fs_command_network` resource falls back to the base allow, so an old
-  `fs_exec_network` `deny *` no longer closes egress.
+  `fs_command_network` resource can fall back to the base allow unless another
+  matching rule applies, so an old `fs_exec_network` `deny *` no longer closes
+  egress.
 - DNS queries are decisions too. An allowed QNAME is forwarded to the parent
   resolver; procage's discovery reads `/etc/resolv.conf` and systemd-resolved
   paths, including a loopback stub, and the plugin leaves `relay_dns_upstream`
