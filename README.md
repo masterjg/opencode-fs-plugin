@@ -166,7 +166,12 @@ DNS QNAME, TLS SNI, HTTP `Host`, QUIC SNI, or an IP literal. Bare IPv6 literals
 and bracketed IPv6 `Host` forms with an optional port are accepted as
 resources. That exact resource must be approved through `fs_command_network`; the
 port, URL, headers, and payload are never part of the permission. There is no
-separate network allowlist option:
+separate network allowlist option.
+
+> **Migration from `fs_exec_network`:** replace every old rule with
+> `fs_command_network` before upgrading. Old rules are ignored, and an unlisted
+> `fs_command_network` resource can be allowed by the base rule, so a previous
+> `fs_exec_network` `deny *` no longer closes network egress.
 
 ```jsonc
 {
