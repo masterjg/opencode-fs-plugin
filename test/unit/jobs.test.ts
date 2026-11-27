@@ -181,11 +181,20 @@ describe("JobManager", () => {
     const second = await manager.start("stat", async () => ok);
     expect(manager.list().map((job) => job.id)).toEqual([second.id, first.id]);
     let aborted = false;
-    const original = manager as unknown as { jobs: Map<string, { controller: AbortController }> };
-    original.jobs.get(first.id)?.controller.signal.addEventListener("abort", () => (aborted = true));
+    const original = manager as unknown as {
+      jobs: Map<string, { controller: AbortController; done: Promise<void> }>;
+    };
+    const running = original.jobs.get(first.id);
+    running?.controller.signal.addEventListener("abort", () => (aborted = true));
+    // Capture the completion promise before dispose clears the map: `execute`
+    // writes the final status file after the job settles, so the fixture
+    // cleanup must wait for that write instead of racing it.
+    const done = running?.done ?? Promise.resolve();
     manager.dispose();
     expect(aborted).toBe(true);
     expect(manager.list()).toEqual([]);
     release(ok);
+    await done;
+    expect(manager.list()).toEqual([]);
   });
 });
