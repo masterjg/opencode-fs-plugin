@@ -48,6 +48,13 @@ describe("plugin registration", () => {
       namespace: "fs",
       permission: "fs_mkdir",
     });
+    const command = editor.tools.find((tool) => tool.name === "command");
+    expect(
+      (command?.input as { properties?: Record<string, unknown> }).properties,
+    ).toHaveProperty("envVars");
+    expect((command?.input as { additionalProperties?: unknown }).additionalProperties).toBe(
+      false,
+    );
   });
 
   it("fails when no root can be determined", async () => {
@@ -88,6 +95,24 @@ describe("plugin registration", () => {
     }
   });
 
+  it("rejects invalid commandEnvVars", async () => {
+    const root = await makeRoot();
+    roots.push(root);
+    for (const commandEnvVars of [
+      "nope",
+      null,
+      [],
+      { PATH: "/tmp/bin" },
+      { TMPDIR: "/tmp" },
+      { "1BAD": "x" },
+      { FS_BAD: 1 },
+      { FS_BAD: "x\0y" },
+    ]) {
+      const harness = makePluginHarness(root, { commandEnvVars });
+      await expect(plugin.setup(harness.context as never)).rejects.toThrow(/commandEnvVars/);
+    }
+  });
+
   it("rejects commandPaths inside the filesystem root project", async () => {
     const harness = makePluginHarness("/", { commandPaths: ["/tmp"] });
     await expect(plugin.setup(harness.context as never)).rejects.toThrow(
@@ -123,6 +148,92 @@ describe("plugin registration", () => {
       cleanup();
     }
   });
+
+  it("passes configured environment entries to a background command", async () => {
+    const root = await makeRoot();
+    const dir = await makeCommandPath("fs-command-plugin-env-");
+    await writeProbe(
+      dir,
+      "fs-command-probe",
+      'process.stdout.write(process.env.FS_BACKGROUND_MARKER ?? "missing")',
+    );
+    roots.push(root);
+    const harness = makePluginHarness(root, {
+      commandPaths: [dir],
+      commandEnvVars: { FS_BACKGROUND_MARKER: "background-env" },
+      jobDir: path.join(root, "jobs"),
+    });
+    const cleanup = (await plugin.setup(harness.context as never)) as () => void;
+    try {
+      const command = harness.editor.tools.find((tool) => tool.name === "command");
+      const job = harness.editor.tools.find((tool) => tool.name === "job");
+      const started = (await command?.execute(
+        { command: "fs-command-probe", background: true },
+        makeToolContext(),
+      )) as { content: string };
+      const payload = JSON.parse(started.content) as { jobId: string };
+      const waited = (await job?.execute(
+        { id: payload.jobId, wait: true, timeoutMs: 5000 },
+        makeToolContext(),
+      )) as { content: string; metadata: Record<string, unknown> };
+      expect(JSON.parse(waited.content)).toMatchObject({
+        stdout: "background-env",
+        exitCode: 0,
+      });
+      expect(waited.metadata).toMatchObject({ ok: true, state: "completed" });
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("passes per-call environment overlays to a background command", async () => {
+    const root = await makeRoot();
+    const dir = await makeCommandPath("fs-command-plugin-env-call-");
+    await writeProbe(
+      dir,
+      "fs-command-probe",
+      'process.stdout.write(JSON.stringify({ marker: process.env.FS_BACKGROUND_MARKER, keep: process.env.FS_BACKGROUND_KEEP, only: process.env.FS_BACKGROUND_ONLY }))',
+    );
+    roots.push(root);
+    const harness = makePluginHarness(root, {
+      commandPaths: [dir],
+      commandEnvVars: {
+        FS_BACKGROUND_MARKER: "background-env",
+        FS_BACKGROUND_KEEP: "background-keep",
+      },
+      jobDir: path.join(root, "jobs"),
+    });
+    const cleanup = (await plugin.setup(harness.context as never)) as () => void;
+    try {
+      const command = harness.editor.tools.find((tool) => tool.name === "command");
+      const job = harness.editor.tools.find((tool) => tool.name === "job");
+      const started = (await command?.execute(
+        {
+          command: "fs-command-probe",
+          background: true,
+          envVars: { FS_BACKGROUND_MARKER: "call-env", FS_BACKGROUND_ONLY: "call-only" },
+        },
+        makeToolContext(),
+      )) as { content: string };
+      const payload = JSON.parse(started.content) as { jobId: string };
+      const waited = (await job?.execute(
+        { id: payload.jobId, wait: true, timeoutMs: 5000 },
+        makeToolContext(),
+      )) as { content: string; metadata: Record<string, unknown> };
+      expect(JSON.parse(waited.content)).toMatchObject({
+        stdout: JSON.stringify({
+          marker: "call-env",
+          keep: "background-keep",
+          only: "call-only",
+        }),
+        exitCode: 0,
+      });
+      expect(JSON.stringify(waited.metadata)).not.toContain("call-env");
+      expect(waited.metadata).toMatchObject({ ok: true, state: "completed" });
+    } finally {
+      cleanup();
+    }
+  });
 });
 
 describe("plugin execution", () => {
@@ -147,6 +258,24 @@ describe("plugin execution", () => {
     };
     expect(result.content).toMatch(/^ERROR:/);
     expect(result.metadata).toMatchObject({ ok: false, code: "invalid" });
+  });
+
+  it("rejects malformed envVars without echoing the key or value", async () => {
+    const { editor, permissionRequests } = await load();
+    const command = editor.tools.find((tool) => tool.name === "command");
+    const result = (await command?.execute(
+      {
+        command: "node",
+        args: ["-e", "process.stdout.write('ran')"],
+        envVars: { "TOPSECRET\nKEY": { TOPSECRETVALUE: true } },
+      },
+      makeToolContext(),
+    )) as { content: string; metadata: Record<string, unknown> };
+    expect(result.content).toMatch(/^ERROR:/);
+    expect(result.content).not.toContain("TOPSECRET");
+    expect(result.content).not.toContain("TOPSECRETVALUE");
+    expect(result.metadata).toMatchObject({ ok: false, code: "invalid" });
+    expect(permissionRequests).toEqual([]);
   });
 
   it("returns a BLOCKED result for sandbox hard stops", async () => {

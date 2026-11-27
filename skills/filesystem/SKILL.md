@@ -1,6 +1,6 @@
 ---
 name: Filesystem
-description: Use when a task needs Linux-style filesystem, text, network, process, or system operations beyond OpenCode's built-ins - copy, move, metadata, permissions, ownership, touch, truncate, symlinks, chmod/chown, hashes, disk usage, find, archives (tar/zip/cpio/ar), comparing files or directories, process listing and signals, system info, binary inspection, text primitives, HTTP(S) requests, API calls, or file downloads (curl replacement), trash, background jobs, or composing filters through a pipe. Covers the fs namespace, argument shapes, native options, permissions, limits, and verification.
+description: Use when a task needs Linux-style filesystem, text, network, process, or system operations through the `fs` namespace - call `tools.fs.*` under `execute` or direct `fs_*` tools for paths, metadata, copy/move/remove, permissions, text filters and pipes, archives, hashing, comparing files/directories (`fs.diff`/`fs.comm`), HTTP(S) fetches, process listing, or the sandboxed `command` runner; includes `commandPaths`/`commandEnvVars`/per-call `envVars`, background jobs, and exact per-tool argument schemas, field types, bounds, required/optional fields, returns, and exit codes.
 ---
 
 # Filesystem
@@ -25,7 +25,7 @@ With `execute` allowed, call it as `tools.fs.<command>`; agents without
 | Regex substitution or in-place edit | `fs.sed` |
 | Recoverable deletion | `fs.trash` |
 | `curl` fetch, API call, or file download | `fs.curl` |
-| Allowlisted package CLI | `fs.command` (no shell; default npm/npx/uv/uvx/pip/pip3) |
+| Allowlisted CLI or package tool | `fs.command` (no shell; names allowed by `fs_command`) |
 | Many independent fs calls | one multi-path call, else `Promise.all` in `execute` |
 | Sequential byte pipeline | `fs.pipe` |
 
@@ -63,67 +63,182 @@ what `fs.stat`, `fs.ls`, `fs.hash`, `fs.diff`, or `fs.cat` can confirm.
 | cpio / ar | `fs.cpio`, `fs.ar` (`create`/`list`/`extract`) |
 | Background jobs | `background: true`, then `fs.job` |
 
-Recent parity additions:
+## Argument reference
 
-| Tool | Added |
-|---|---|
-| `fs.sort` | `generalNumeric`, `humanNumeric`, `version`, `dictionary`, `ignoreNonPrinting`, `stable`, `check`, `checkQuiet`, `zeroTerminated`, GNU `keys` ranges |
-| `fs.ls` | `size`, `numericIds`, `noGroup`, `noOwner`, `slash`, `quote`, `versionSort`, `extensionSort`, `fullTime`, `timeStyle`, `hide`, `ignore`, `groupDirectoriesFirst` |
-| `fs.find` | `lname`/`ilname`, `regex`/`iregex`, `uid`/`gid`/`user`/`group`, `links`, `inum`, `samefile`, `fstype`, `newerXY`, `printf`, `action` (`print`/`delete`/`trash`); `c`/`w`/`b` size suffixes |
-| `fs.stat` | `terse`, extended tokens `%f`, `%m`, `%r`, `%w`, `%W`, `%C` |
-| `fs.tail` | bounded `follow`, `timeoutMs`, `intervalMs`, `maxBytes` |
-| `fs.tar`/`fs.zip` | `input`/`member` stream input and pipe sink support |
+Every registered tool is listed below with its real input schema. `?` marks an
+optional field; a field without `?` is required. Types are `str`, `int`, `bool`,
+`str[]`, `int[]`, `enum(a, b)`, `obj`; Notes give real bounds and defaults.
+Canonical names are the schema names. These aliases exist and no others: `path`
+for one `paths` element (`fs.stat`, `fs.ls`, `fs.cat`, `fs.find`, `fs.tee`,
+`fs.grep`, `fs.sed`), `source` for one `sources` element (`fs.cp`, `fs.mv`,
+`fs.ln`), `expression` for one `expressions` element (`fs.sed`), `limit` for
+`maxCount` (`fs.grep`), and `paths`/`path` for `files` (`fs.hash`). `fs.mkdir`
+accepts `path` or `paths`, but not both.
 
-## Argument shapes
+- There are no positional arguments and no `-` flags; every option is a named
+  field, and enum values are exact lowercase strings.
+- The host drops unknown fields, so a misspelled field silently runs the call
+  without that option. Check the exact name here instead of guessing.
+- Every tool except `fs.job` also accepts `background? bool`; a pipe stage's
+  `args` does not (see Background jobs).
 
-Use the canonical field names below. Aliases are accepted only where noted:
-`path` for one `paths` element (`fs.stat`, `fs.ls`, `fs.cat`, `fs.find`,
-`fs.tee`, `fs.grep`, `fs.sed`), `source` for `sources` (`fs.cp`, `fs.mv`,
-`fs.ln`), `expression` for `expressions` (`fs.sed`), and `limit` for `maxCount`
-(`fs.grep`). `fs.mkdir` accepts `paths` beside `path`, and `fs.hash` accepts
-`paths`/`path` beside `files`. Other tools take only the canonical name; the
-host drops unknown fields, so a name typo runs with defaults.
+### Paths, metadata, links
 
-| Field | Commands |
-|---|---|
-| `path` | `fs.mkdir` (canonical; `paths` accepted); alias for one path in `fs.stat`, `fs.ls`, `fs.cat`, `fs.find`, `fs.tee`, `fs.grep`, `fs.sed` |
-| `sources` + `destination` | `fs.cp`, `fs.mv`, `fs.ln` |
-| `paths` | `fs.stat`, `fs.ls`, `fs.find`, `fs.rm`, `fs.rmdir`, `fs.touch`, `fs.truncate`, `fs.chmod`, `fs.chown`, `fs.readlink`, `fs.du`, `fs.df`, `fs.cat`, `fs.head`, `fs.tail`, `fs.tee`, `fs.wc`, `fs.sort`, `fs.uniq`, `fs.cut`, `fs.tr`, `fs.grep`, `fs.sed`, `fs.gzip`, `fs.gunzip`, `fs.trash`, `fs.file`, `fs.base64`, `fs.od`, `fs.strings`, `fs.sync`, `fs.mountpoint`, `fs.tac`, `fs.rev`, `fs.nl`, `fs.fold`, `fs.shuf` |
-| `pids` | `fs.ps`, `fs.kill` |
-| `pattern` | `fs.pgrep` |
-| `files` | `fs.hash` |
-| `left` + `right` | `fs.diff`, `fs.comm` |
-| `archive` + `paths` | `fs.tar` create, `fs.zip` create, `fs.cpio` create, `fs.ar` create |
-| `archive` + `mode` | `fs.tar`, `fs.cpio`, `fs.ar` (`create`/`extract`/`list`), `fs.unzip` (`extract`/`list`) |
-| `input` + `output` | `fs.dd` (`blockSize`, `count`, `skip`, `seek`) |
-| `content` | `fs.tee` when there is no stdin |
-| `paths` + optional `keep`/`force`/`stdout`/`level`/`suffix` | `fs.gzip`, `fs.gunzip` |
-| `url` + optional `output` | `fs.curl` |
-| `stages` + optional `input`/`output` | `fs.pipe` |
-| `command` + `args` + optional `cwd`/`stdin`/`timeoutMs` | `fs.command` |
+| Tool | Fields | Notes |
+|---|---|---|
+| `fs.stat` | `paths? str[]`, `path? str`, `follow? bool`, `format? str`, `terse? bool`, `filesystem? bool` | Runtime requires `paths` or `path` even though the schema marks both optional. `format` is printf-style (`%n %s %a %y`); `%s` is apparent bytes. |
+| `fs.ls` | `paths? str[]` (default `["."]`), `path? str`, `all? bool`, `almostAll? bool`, `long? bool`, `human? bool`, `recursive? bool`, `directory? bool`, `inode? bool`, `classify? bool`, `size? bool`, `numericIds? bool`, `noGroup? bool`, `noOwner? bool`, `slash? bool`, `quote? bool`, `versionSort? bool`, `extensionSort? bool`, `fullTime? bool`, `timeStyle? enum(full-iso, long-iso, iso, locale)`, `hide? str[]`, `ignore? str[]`, `groupDirectoriesFirst? bool`, `sortBy? enum(name, size, time, none)`, `reverse? bool`, `onePerLine? bool` | `sortBy` default `name`; `hide`/`ignore` are name globs. |
+| `fs.file` | `paths str[]` (min 1), `mime? bool` | Content magic detection. |
+| `fs.find` | `paths? str[]` (default `["."]`), `path? str`, `name? str`, `iname? str`, `pathPattern? str`, `lname? str`, `ilname? str`, `regex? str`, `iregex? str`, `type? enum(f, d, l, p, s)`, `size? str` (`+10k`), `mtime? str` (`+7`), `mmin? str`, `maxDepth? int` (min 0), `minDepth? int` (min 0), `empty? bool`, `perm? str`, `uid? int`, `gid? int`, `user? str`, `group? str`, `links? str` (`+1`), `inum? int`, `samefile? str`, `fstype? str`, `newer? str`, `newerXY? str`, `printf? str`, `follow? bool`, `print0? bool`, `sort? bool` (default true), `action? enum(print, delete, trash)`, `recursive? bool` | `recursive: true` is legal only with `action: "delete"` and is needed to remove matched directories. `delete`/`trash` reject `printf`/`print0` and never remove the starting directory. `newerXY` is `XY:path`, e.g. `mm:/tmp/ref`. |
+| `fs.du` | `paths? str[]` (default `["."]`), `summarize? bool`, `all? bool`, `human? bool`, `total? bool`, `maxDepth? int` (min 0), `follow? bool`, `oneFileSystem? bool` | Reports allocated blocks; `fs.stat %s` gives apparent bytes. |
+| `fs.df` | `paths? str[]` (default `["."]`), `human? bool`, `inodes? bool`, `printType? bool`, `all? bool` | |
+| `fs.findmnt` | `paths? str[]`, `fsType? str`, `noHeader? bool` | Mounts containing the paths. |
+| `fs.mountpoint` | `paths str[]` (min 1), `quiet? bool` | Exit code 1 when a path is not a mount point. |
+| `fs.readlink` | `paths str[]` (min 1), `mode? enum(raw, canonical, existing, missing)`, `noNewline? bool` | `mode` default `raw`. |
+| `fs.sync` | `paths? str[]` (default `["."]`) | fsync files or directories. |
 
-`fs.head` takes `skip` for line ranges: `sed -n '20,40p'` is
-`fs.head({ paths, skip: 19, lines: 21 })`. `fs.find` takes
-`action: "print" | "delete" | "trash"`; the starting directory itself is never
-removed, and deletion asserts `fs_rm`/`fs_trash`.
+### Copy, move, remove, permissions, times
+
+| Tool | Fields | Notes |
+|---|---|---|
+| `fs.cp` | `sources? str[]`, `source? str`, `destination str`, `recursive? bool`, `archive? bool`, `force? bool`, `noClobber? bool`, `update? bool`, `preserve? bool`, `dereference? bool` (default true), `verbose? bool` | Needs `sources` or `source`. Directory sources need `recursive` or `archive`; `archive` implies recursive+preserve+keep symlinks. Multiple sources need an existing directory destination. |
+| `fs.mv` | `sources? str[]`, `source? str`, `destination str`, `force? bool`, `noClobber? bool`, `update? bool`, `verbose? bool` | Same source rule; multiple sources need an existing directory destination. |
+| `fs.ln` | `sources? str[]`, `source? str`, `destination str`, `symbolic? bool`, `force? bool`, `noDereference? bool`, `relative? bool`, `verbose? bool` | Hard link by default; `symbolic: true` for a symlink. |
+| `fs.mkdir` | `path? str`, `paths? str[]` (min 1), `parents? bool` (default false), `mode? str`, `verbose? bool` | Use `path` or `paths`, not both. An existing directory fails unless `parents: true` (then it is a no-op). |
+| `fs.mktemp` | `template? str` (default `tmp.XXXXXXXXXX`), `directory? bool`, `tmpdir? str`, `suffix? str` | The template must END with at least three `X`; `suffix` must be one path component. The created path is printed. |
+| `fs.rm` | `paths str[]` (min 1), `recursive? bool`, `force? bool`, `dir? bool`, `verbose? bool` | Permanent. Directory removal needs `recursive` (or `dir` for empty dirs). |
+| `fs.rmdir` | `paths str[]` (min 1), `parents? bool`, `ignoreNonEmpty? bool`, `verbose? bool` | Empty directories only. |
+| `fs.trash` | `paths str[]` (min 1), `force? bool` | XDG home trash; refuses cross-device moves. |
+| `fs.chmod` | `paths str[]` (min 1), `mode? str`, `reference? str`, `recursive? bool`, `noDereference? bool`, `verbose? bool`, `changes? bool`, `silent? bool` | `mode` or `reference` is required. `mode` is octal (`755`) or symbolic (`u=rwx,go=rx`). |
+| `fs.chown` | `paths str[]` (min 1), `user? str`, `uid? int` (min 0), `group? str`, `gid? int` (min 0), `recursive? bool`, `noDereference? bool` | `user`/`uid` are mutually exclusive, as are `group`/`gid`; at least one of user or group is required. |
+| `fs.touch` | `paths str[]` (min 1), `accessOnly? bool`, `modifyOnly? bool`, `noCreate? bool`, `date? str`, `timestamp? str`, `reference? str`, `noDereference? bool` | `date` is `Date.parse` text or `@epoch`; `timestamp` is GNU `[[CC]YY]MMDDhhmm[.ss]`; `reference` copies another file's times. |
+| `fs.truncate` | `paths str[]` (min 1), `size? str`, `reference? str`, `noCreate? bool`, `noDereference? bool` | `size` or `reference` is required. `size` accepts `10M` or a relative `+1K`/`-1K`. |
+
+### Read, transform, compare text
+
+| Tool | Fields | Notes |
+|---|---|---|
+| `fs.cat` | `paths? str[]`, `path? str`, `number? bool`, `numberNonBlank? bool`, `squeezeBlank? bool`, `showEnds? bool`, `showTabs? bool`, `showNonPrinting? bool` | With no `paths` it reads stdin; Code Mode has no stdin outside `fs.pipe`, so `fs.cat({})` fails. |
+| `fs.head` | `paths? str[]`, `lines? int` (min 1, default 10), `skip? int` (min 0, default 0), `bytes? int` (min 1), `quiet? bool`, `verbose? bool` | `lines` XOR `bytes`; `skip` applies to lines only and is rejected with `bytes`. Range output is lines `skip+1 … skip+lines`. |
+| `fs.tail` | `paths? str[]`, `lines? int` (min 1, default 10), `bytes? int` (min 1), `fromStart? bool`, `quiet? bool`, `verbose? bool`, `follow? bool`, `timeoutMs? int` (100–600000, default 10000), `intervalMs? int` (50–10000, default 250), `maxBytes? int` (min 1, default 1048576) | `lines` XOR `bytes`. `fromStart` makes `lines` a 1-based start line. `follow` needs exactly one file. |
+| `fs.nl` | `paths? str[]`, `all? bool`, `start? int` (min 1, default 1), `width? int` (1–20, default 6), `separator? str` (default tab) | |
+| `fs.tac` | `paths? str[]` | Reverse line order. |
+| `fs.rev` | `paths? str[]` | Reverse characters per line. |
+| `fs.fold` | `paths? str[]`, `width? int` (1–10000, default 80), `spaces? bool` | Wrap at spaces when `spaces`. |
+| `fs.cut` | `paths? str[]`, `fields? str` (`1,3-5`), `characters? str`, `bytes? str`, `delimiter? str` (default tab), `outputDelimiter? str`, `complement? bool`, `onlyDelimited? bool` | Use one of fields/characters/bytes. |
+| `fs.paste` | `paths? str[]`, `delimiters? str` (default tab), `serial? bool` | |
+| `fs.comm` | `left str`, `right str`, `suppress1? bool`, `suppress2? bool`, `suppress3? bool`, `outputDelimiter? str` (default tab) | Inputs must be sorted. |
+| `fs.tr` | `paths? str[]`, `set1 str`, `set2? str`, `delete? bool`, `squeeze? bool`, `complement? bool` | Ranges and character classes supported. |
+| `fs.sed` | `script? str`, `expression? str`, `expressions? str[]`, `paths? str[]`, `path? str`, `inPlace? bool`, `extendedRegexp? bool`, `quiet? bool` | Requires `script`/`expression`/`expressions`. Only `s<delim>pattern<delim>replacement<delim>flags` with `g`, `i`, `p`. `inPlace` requires `paths`. |
+| `fs.sort` | `paths? str[]`, `numeric? bool`, `generalNumeric? bool`, `humanNumeric? bool`, `version? bool`, `reverse? bool`, `unique? bool`, `ignoreCase? bool`, `dictionary? bool`, `ignoreNonPrinting? bool`, `ignoreLeadingBlanks? bool`, `stable? bool`, `check? bool`, `checkQuiet? bool`, `zeroTerminated? bool`, `keys? str[]`, `field? int` (min 1), `separator? str` | `keys` use GNU `-k` syntax (`2,2n`); `field` is a 1-based single field. |
+| `fs.uniq` | `paths? str[]`, `count? bool`, `repeated? bool`, `uniqueOnly? bool`, `ignoreCase? bool`, `skipFields? int` (min 0), `skipChars? int` (min 0) | Compares adjacent lines; sort first for global uniqueness. |
+| `fs.shuf` | `paths? str[]`, `headCount? int` (min 1), `zeroTerminated? bool` | |
+| `fs.wc` | `paths? str[]`, `lines? bool`, `words? bool`, `bytes? bool`, `chars? bool`, `maxLineLength? bool` | |
+| `fs.grep` | `pattern str`, `paths? str[]`, `path? str`, `recursive? bool`, `include? str[]`, `exclude? str[]`, `ignoreCase? bool`, `invert? bool`, `lineNumbers? bool`, `withFilename? bool`, `noFilename? bool`, `filesWithMatches? bool`, `filesWithoutMatch? bool`, `count? bool`, `onlyMatching? bool`, `word? bool`, `line? bool`, `fixed? bool`, `extended? bool`, `context? int` (min 0), `before? int` (min 0), `after? int` (min 0), `maxCount? int` (min 1), `limit? int` (min 1), `noMessages? bool` | A directory path needs `recursive: true`. Exit code 1 when nothing matches. |
+| `fs.tee` | `paths? str[]`, `path? str`, `append? bool`, `content? str` | Needs `paths`, `content`, or stdin. Empty `paths` passes through only. |
+| `fs.strings` | `paths? str[]`, `minLength? int` (1–255, default 4) | |
+| `fs.base64` | `paths? str[]`, `decode? bool`, `wrap? int` (0–4096, default 76), `ignoreGarbage? bool` | `wrap: 0` disables wrapping. |
+| `fs.od` | `paths? str[]`, `offset? int` (min 0, default 0), `length? int` (min 1), `width? int` (1–64, default 16) | |
+| `fs.split` | `input? str`, `prefix? str` (default `x`), `lines? int` (min 1), `bytes? int` (min 1), `suffixLength? int` (1–16, default 2), `numeric? bool`, `additionalSuffix? str` | Exactly one of `lines` or `bytes`. Chunk capacity is checked before writing. |
+| `fs.dd` | `input? str`, `output? str`, `blockSize? int` (1–16777216, default 512), `count? int` (min 1), `skip? int` (min 0), `seek? int` (min 0), `status? bool` | Needs `input` or stdin; omit `output` to write stdout. No conversion flags. |
+| `fs.diff` | `left str`, `right str`, `unified? int` (min 0, default 3), `brief? bool`, `recursive? bool`, `ignoreWhitespace? bool`, `ignoreCase? bool`, `exclude? str[]` | Exit code 1 when files differ; that is a result, not a failure. |
+
+### Archives and hashing
+
+| Tool | Fields | Notes |
+|---|---|---|
+| `fs.tar` | `mode enum(create, extract, list)`, `archive str`, `paths? str[]`, `directory? str`, `gzip? bool`, `stripComponents? int` (min 0), `exclude? str[]`, `verbose? bool`, `input? str`, `member? str` | Create needs `paths`, `input`, or stdin. `gzip` is inferred from `.gz`/`.tgz`. Create resolves relative paths under `directory`. |
+| `fs.zip` | `archive str`, `paths? str[]`, `level? int` (0–9), `input? str`, `member? str` | Recursive by default. Create needs `paths`, `input`, or stdin. |
+| `fs.unzip` | `archive str`, `mode? enum(extract, list)`, `directory? str`, `overwrite? bool`, `noOverwrite? bool` | `mode` default `extract`; `directory` is the destination. |
+| `fs.cpio` | `mode enum(create, list, extract)`, `archive str`, `paths? str[]`, `directory? str`, `members? str[]`, `input? str`, `member? str`, `verbose? bool` | newc format; create needs `paths`, `input`, or stdin. |
+| `fs.ar` | `mode enum(create, list, extract)`, `archive str`, `paths? str[]`, `directory? str`, `members? str[]` | GNU short names (16 bytes max). Create needs `paths`. |
+| `fs.gzip` | `paths? str[]`, `keep? bool`, `force? bool`, `stdout? bool`, `level? int` (0–9, default 6) | File mode writes `<name>.gz` and removes the source unless `keep`. |
+| `fs.gunzip` | `paths? str[]`, `keep? bool`, `force? bool`, `stdout? bool`, `suffix? str` (default `.gz`) | Input must end with `suffix`; strips it and removes the source unless `keep`. |
+| `fs.hash` | `files? str[]`, `paths? str[]`, `path? str`, `algorithm? enum(md5, sha1, sha256, sha512)`, `tag? bool` | Canonical is `files`; `algorithm` default `sha256`. Omit files to hash stdin. |
+
+### Processes, system, HTTP
+
+| Tool | Fields | Notes |
+|---|---|---|
+| `fs.ps` | `pids? int[]` (min 1), `user? str`, `command? str`, `sortBy? enum(pid, rss, start)`, `limit? int` (min 1), `noHeader? bool`, `format? enum(table, json)` | `sortBy` default `pid`; `format` default `table`; `command` is a regex. |
+| `fs.pgrep` | `pattern str`, `full? bool`, `ignoreCase? bool`, `user? str`, `newest? bool`, `oldest? bool`, `count? bool`, `delimiter? str` | Exit code 1 when nothing matches; `delimiter` default newline. |
+| `fs.kill` | `pids int[]` (each min 2), `signal? enum(HUP, INT, QUIT, KILL, TERM, USR1, USR2, STOP, CONT, CHLD)`, `dryRun? bool` | Signal default `TERM`; pid 0, 1, and process groups are rejected. |
+| `fs.id` | `only? enum(user, group, groups)` | |
+| `fs.uname` | `kernel? bool`, `nodename? bool`, `release? bool`, `version? bool`, `machine? bool` | |
+| `fs.uptime` | `pretty? bool`, `loadAverage? bool` | |
+| `fs.date` | `value? str`, `utc? bool`, `format? enum(iso, unix, rfc, date)` | `value` is `Date.parse` text or `@epoch`; `format` default `iso`. |
+| `fs.curl` | `url str`, `method? enum(GET, POST, PUT, PATCH, DELETE, HEAD)`, `headers? obj`, `body? str`, `json? any`, `output? str`, `checksum? str`, `maxBytes? int` (min 1), `timeoutMs? int` (100–600000, default 30000), `failOnError? bool` (default true), `followRedirects? bool` (default true), `maxRedirects? int` (0–20, default 10) | `headers` maps names to string values; `body` and `json` are mutually exclusive. `checksum` is `<md5\|sha1\|sha256\|sha512>:<hex>`; bare hex means sha256. `output` streams to a temp file then renames. |
+
+### Execution and orchestration
+
+| Tool | Fields | Notes |
+|---|---|---|
+| `fs.command` | `command str`, `args? str[]`, `cwd? str`, `stdin? str`, `timeoutMs? int` (100–600000, default 120000), `envVars? obj` (name → str) | `command` is a bare executable name with no path or shell syntax. `args` are literal argv; `cwd` defaults to the project root and is sandboxed; `stdin` is used only outside a pipe. `envVars` is a per-call shallow overlay on `commandEnvVars` with the same validation; `commandPaths`/`commandEnvVars` are plugin options. There is no arbitrary `env` or per-call PATH field. |
+| `fs.pipe` | `stages` 1–50 × `{ tool str, args? obj }`, `input? str`, `output? str`, `append? bool` | Stage names are short (`cat`, not `fs.cat`) and only the registered stage set is accepted (see Pipe). `output`/`append` act as a final `tee` under `fs_tee`. |
+| `fs.job` | `id? str`, `wait? bool`, `cancel? bool`, `list? bool`, `timeoutMs? int` (1–600000, default 600000) | Needs `id` or `list`. `list` cannot combine with `id`/`wait`/`cancel`; `cancel` and `wait` are mutually exclusive. Permission `fs_job`. |
 
 ### Common mistakes
 
-- `fs.hash` canonical is `files`; `paths` and `path` are accepted aliases.
-- `fs.mkdir` canonical is `path`; `paths` is accepted but cannot be combined.
+- Code Mode has no implicit stdin. For a direct call, pass the input field(s)
+  that tool's schema requires: usually `paths`, but also `files` (`fs.hash`),
+  `input` (`fs.split`, `fs.dd`), or `left`/`right` (`fs.diff`, `fs.comm`). With no
+  input, tools that expect stdin fail, for example `fs.cat({})` returns
+  `ERROR: no input files and no stdin.` Use `fs.pipe({ input, ... })` to supply
+  stdin to a pipe source or filter.
+- `fs.hash` canonical is `files`; `paths` and `path` are accepted aliases. `hash`
+  needs `files` or pipe stdin.
+- `fs.mkdir` canonical is `path`; `paths` is accepted but cannot be combined, and
+  an existing directory is an error unless `parents: true`.
+- `fs.stat` accepts `paths` or `path`; omitting both fails even though both are
+  schema-optional.
+- `fs.cp`/`fs.mv`/`fs.ln` use `sources` (or one `source`) plus `destination`;
+  there is no `from`/`to`.
 - `fs.sed` canonical is `script`/`expressions`; `expression` is accepted. Only
   `s/.../.../flags` is supported; line ranges use `fs.head({ skip, lines })` or
   `fs.tail`.
-- `fs.grep` canonical is `maxCount`; `limit` is accepted. Add `recursive: true`
-  for a directory.
-- `fs.find` `action: "delete"`/`"trash"` never removes the starting directory
-  itself; use `fs.rm` if you mean the root. Deletion asserts `fs_rm`/`fs_trash`,
-  and directory matches need `recursive: true` for delete.
-- `fs.cat` and text filters read `paths`; Code Mode has no stdin, so `fs.cat({})`
-  fails. Use `fs.pipe` for stdin.
-- There is no `fs.write`; use the built-in `write` or `fs.tee({ paths, content })`.
+- `fs.grep` canonical is `maxCount`; `limit` is accepted. `pattern` is required,
+  and `maxCount`/`limit` must be at least 1: there is no `0` for "unlimited", so
+  omit the field instead. Add `recursive: true` for a directory.
+- `fs.find.type` takes one GNU letter (`f`, `d`, `l`, `p`, `s`), not a word such
+  as `file` or `dir`; any other value fails the call as invalid input.
+- `fs.find` defaults to `action: "print"`; `recursive: true` is not a delete
+  switch and is legal only together with `action: "delete"`. To delete, pass both
+  `action: "delete"` and `recursive: true`; neither one removes a matched
+  directory on its own. `delete`/`trash` never remove the starting directory, so
+  use `fs.rm` if you mean the root.
+- `fs.readlink` requires `paths` (at least one); it has no single `path` alias.
+- `fs.zip` has no `directory` field: use `archive` plus `paths`/`input`/`member`.
+  `directory` belongs to `fs.unzip` (and to `fs.tar`/`fs.cpio` create/extract).
+- `fs.curl` rejects a body over `maxBytes` with
+  `ERROR: Response exceeded maxBytes (...)`; the host call still completes, so
+  check that text (and `metadata.ok` where exposed) rather than assuming a
+  successful download.
+- An unknown or stale `fs.job` id returns `ERROR: job not found: <id>` as normal
+  content, not a host-level rejection; `fs.job({ list: true })` shows the ids
+  still retained for this session.
+- A missing path in `fs.ls`/`fs.stat`/`fs.cat` returns `ERROR: Not found: ...`;
+  that is not a permission problem. Permission asks and denials happen at the
+  host layer instead of producing an `ERROR:` string, so fix the path or the
+  rule rather than retrying field names.
+- For `fs.command`, a malformed name returns
+  `ERROR: command must be a bare executable name: "<name>"` (schema-type errors
+  still surface as `ERROR: Invalid ...`), an allowed name with no matching
+  binary is `ERROR: exec command not found`, and a name that `fs_command` does
+  not allow is a permission decision, not an argument error; allow the bare
+  executable name rather than changing `args`.
+- `fs.head` range is `skip` lines skipped, then `lines` lines (default 10), so
+  `20–40` is `skip: 19, lines: 21`.
 - `fs.mktemp` needs a template ending in at least three `X`; use `suffix` for an
   extension.
+- `fs.chmod` needs `mode` or `reference`; `fs.truncate` needs `size` or
+  `reference`; `fs.split` needs exactly one of `lines`/`bytes`; `fs.tee` needs
+  `paths`, `content`, or stdin.
+- `fs.command` does not accept a path, arbitrary `env`, or per-call PATH. Use
+  its validated `envVars` overlay for selected child variables, and configure
+  `commandPaths`/`commandEnvVars` in the plugin options.
+- There is no `fs.write`; use the built-in `write` or `fs.tee({ paths, content })`.
+- Do not expect a JSON envelope from ordinary tools: a call resolves to text.
+  `fs.command`, background starts, and `fs.job` are the exceptions.
 
 ### Shell patterns and their fs equivalents
 
@@ -172,12 +287,43 @@ both lookup and the child `PATH`. Each root grants read+exec for its whole
 directory tree and never pre-grants write; the existing exec rules also add exec
 on the resolved binary's directory and parent, with no target read/write from
 this option. The option adds no executable names; `fs_command` still checks the
-bare command name and there is no per-call path, `env`, or PATH field. Prepend
+bare command name and there is no per-call path, arbitrary `env`, or PATH field
+(only the validated `envVars` overlay). Prepend
 only narrow, trusted directories: a broad ancestor such as `$HOME` grants broad
 read+exec, and prepending shadows same-named binaries. A project rooted at `/`
 has no eligible entries: every absolute directory is inside the workspace, so
 setup fails closed. A symlink inside a configured directory is resolved before
 execution under the same rules.
+
+Extra child environment entries can be configured once with `commandEnvVars`, a
+closed object of names to string values. They reach every `fs.command` child,
+including pipe stages and background jobs, and override same-named proxy or
+preset values. The plugin does not explicitly forward arbitrary caller
+`process.env` entries; procage's baseline allowlist still supplies its normal
+variables. Empty strings set a variable to the empty string; they do not unset
+it. `PATH` and `TMPDIR` are refused as plugin-managed, names must match
+`[A-Za-z_][A-Za-z0-9_]*`, values must be NUL-free strings, and invalid
+configuration fails setup. Values are literal: the plugin does no interpolation
+or implicit forwarding of unrelated host variables. OpenCode's own
+`{env:VARIABLE_NAME}` config substitution may apply before plugin setup, and an
+unset variable becomes the empty string.
+
+A single call can overlay selected values with `envVars`. It is a shallow
+per-invocation overlay on `commandEnvVars`: a same-named value wins, unspecified
+configured entries remain, and an empty string sets that variable to empty. It
+works for direct calls, pipe command stages, and background jobs, uses the same
+validation, and adds no lookup, `PATH`, filesystem, or network permission:
+
+```js
+await tools.fs.command({ command: "npm", args: ["test"], envVars: { NODE_ENV: "test" } })
+```
+
+The configured and per-call values are trusted input and can change what the
+allowlisted executable and its descendants do. The plugin does
+not automatically add them to its own errors or result metadata,
+but the executable and its descendants can read them and may print or write
+them; stdout and stderr are returned normally. Treat them as visible to that
+executable and its descendants.
 
 The project is read/write/exec. **Network egress needs Linux tier T1** and uses
 procage's transparent relay. There are no per-call grants. Every TCP/UDP flow is
@@ -214,9 +360,11 @@ Proxy variables (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`, lowercase
 forms, npm proxy settings) pass through explicitly. The relay treats the proxy
 as the destination, never its `CONNECT` target, so allow the proxy's address or
 cached DNS name in `fs_command_network`; approving it lets the proxy reach whatever
-it forwards. No other caller environment variable is forwarded explicitly, but
-the preset's own allowlist still applies, and a proxy variable may itself carry
-proxy credentials.
+it forwards. Beyond the explicit proxy list and plugin-managed `TMPDIR` (and
+`PATH` when `commandPaths` is set), the only caller-supplied entries passed
+explicitly are the validated `commandEnvVars` and per-call `envVars`; arbitrary
+caller `process.env` entries do not pass. The preset's own allowlist still
+applies, and a proxy variable may itself carry proxy credentials.
 
 Denied paths ask `external_directory` and approval covers the denied path's
 containing directory (or nearest existing ancestor) only when procage reports a
@@ -321,12 +469,20 @@ await tools.fs.pipe({
 | `output` | Write final stdout to a file (final `tee`) |
 | `append` | Append to `output` instead of overwriting |
 
-The first stage must be a source (`cat`, `curl`, `dd`, or a path-reading
-text tool such as `tac`, `rev`, `nl`, `base64`, `od`, `strings`) or receive
-`input`. A filter first (`grep`, `sort`, `head`, `wc`) emits
-`ERROR: no input files and no stdin` as pipeline data. Archive writers (`tar`,
-`zip`, `cpio`) emit nothing downstream, so put them last. `wc` and `hash` also
-emit their result text, so they can end a chain or feed a later stage.
+The registered stage set is exact:
+
+| Mode | Stage names |
+|---|---|
+| source | `base64`, `cat`, `curl`, `dd`, `fold`, `nl`, `od`, `paste`, `rev`, `shuf`, `strings`, `tac` |
+| filter | `command`, `cut`, `grep`, `gzip`, `gunzip`, `head`, `sed`, `sort`, `tail`, `tee`, `tr`, `uniq` |
+| sink | `cpio`, `hash`, `tar`, `wc`, `zip` |
+
+The first stage must be a source or receive `input`. A filter first without
+`input` fails the whole call with `ERROR: no input files and no stdin.`; the error
+is the call result, not pipeline data. A source stage later in the chain ignores
+pipe stdin when it has `paths`. Archive writers (`tar`, `zip`, `cpio`) emit no
+stdout, so put them last; `wc` and `hash` emit their result text and can also end
+a chain or feed a later stage.
 
 Stages exchange whole buffers. Set `maxBytes` on `curl`; for large
 downloads prefer `fs.curl({ output })`, which streams to disk. In-memory
@@ -348,25 +504,27 @@ await tools.fs.pipe({
 })
 ```
 
-`output` and `append` assert `fs_tee` on the destination. The result metadata
-lists each stage's `bytesIn`, `bytesOut`, and `exitCode`; use it as the
-verification trail. A stage that yields no stdout becomes an empty buffer, so
+`output` and `append` assert `fs_tee` on the destination. The result carries
+per-stage metadata (`tool`, `bytesIn`, `bytesOut`, `exitCode`), which is the
+verification trail where the surface exposes metadata; `execute` resolves to the
+final text only. A stage that yields no stdout becomes an empty buffer, so
 `output` writes an empty file. The signal is checked before each stage and
 before the final write, so an abort stops the chain before creating output.
+
+The returned content is the final buffer decoded as UTF-8. A binary stage such as
+`gzip` cannot round-trip through that text; write it with `output`, which gets the
+raw bytes before decoding. A stage's `args` use the same schema as the tool but
+cannot include `background`.
 
 Common pipe mistakes:
 
 - `commands` is not a field; the field is `stages`.
-- A bare `{ tool: "sort", args: {} }` first stage returns
-  `ERROR: no input files and no stdin`; add a source stage or `input`.
-- Stage names are `cat`, not `fs.cat`.
+- A bare `{ tool: "sort", args: {} }` first stage fails with
+  `ERROR: no input files and no stdin.`; add a source stage or `input`.
+- Stage names are `cat`, not `fs.cat`; any name outside the table fails with
+  `ERROR: Unknown pipe stage: <name>` (`unsupported`).
 - There is no shell, redirection operator, nested pipe, `find -exec`, or
   `xargs`.
-
-Pipeable filters include `base64`, `command`, `cut`, `fold`, `grep`, `gunzip`,
-`gzip`, `head`, `nl`, `od`, `paste`, `rev`, `sed`, `shuf`, `sort`, `strings`,
-`tac`, `tail`, `tee`, `tr`, and `uniq`. Unknown stage names fail with
-`unsupported`.
 
 ## Background jobs
 
@@ -391,9 +549,12 @@ await tools.fs.job({ id: job.jobId, cancel: true }) // abort
 await tools.fs.job({ list: true })                  // newest first
 ```
 
-`wait` returns the original tool result once the job completes; on timeout it
-returns the status with `timedOut: true`. Jobs are process-local and lost on
-server restart. Status files live under `/tmp/opencode/fs-jobs/<server-pid>/`
+`wait` returns the original tool content once the job completes; on timeout it
+returns the status JSON with `timedOut: true`. Status and `fs.job({ id })` content
+is JSON with `id`, `tool`, `state` (`running`, `completed`, `failed`,
+`cancelled`), `startedAt`, optional `finishedAt`/`error`, and `statusPath`;
+`fs.job({ list: true })` returns `{ "jobs": [ ... ] }`, newest first. Jobs are
+process-local and lost on server restart. Status files live under `/tmp/opencode/fs-jobs/<server-pid>/`
 by default; set the plugin option `jobDir` to move them. The caps are global to
 one server, not per session: eight jobs may run at once and 64 are retained,
 evicting the oldest finished job and deleting its status file; finished jobs are
@@ -559,8 +720,9 @@ await tools.fs.curl({
   Files under `/tmp` are usually on another filesystem; use a project path or a
   same-filesystem holding directory instead.
 - `fs.mktemp` uses the OS temp directory unless `tmpdir` is supplied.
-- `fs.mkdir` fails when the directory already exists; check with `fs.stat`
-  first or treat `ERROR: Already exists` as a no-op.
+- `fs.mkdir` fails when the directory already exists unless `parents: true`,
+  which makes an existing directory a no-op; check with `fs.stat` first when you
+  need a hard answer.
 - `fs.gunzip` needs `force` to overwrite the restored file; without `keep` it
   removes the `.gz` after decompressing.
 
@@ -607,23 +769,45 @@ deny `*` for a closed set. It asks `external_directory` for a blocked path and
 There is no `*` fallback and no direct-IP mode; networking that cannot use the
 relay is disabled. There are no per-call grants and no shell.
 
-`fs_curl` reuses the built-in `webfetch` permission with the requested
-URL as the resource, so one rule set covers both; each redirect hop is checked
-against its URL. Nothing blocks localhost or private addresses by default.
+`fs.curl` reuses the built-in `webfetch` permission (there is no `fs_curl`
+action) with the requested URL as the resource, so one rule set covers both; each
+redirect hop is checked against its URL. Nothing blocks localhost or private addresses by default.
 
-## Errors and output
+## Returns, errors, and exit codes
 
-- `ERROR: ...` is a recoverable tool failure; `BLOCKED: ...` is a sandbox hard
-  stop. Both carry a stable `code` in metadata.
-- `fs.grep` with no matches and `fs.diff` with differences return exit code 1;
-  that is a result, not a tool failure.
-- Binary output is returned as base64 when no `output` file is supplied. NUL
-  output (`print0`, `sort -z`) is base64 too; prefer newline output in Code
-  Mode.
-- Tools that produce no text (`cp`, `mv`, `rm`, `touch`, `chmod`, `sed -i`) return
-  empty content; verify the effect with `fs.stat`, `fs.ls`, or `fs.diff`.
-- Invalid arguments return `ERROR: Invalid ...`; fix the field names or option
-  values rather than retrying the same call.
+- A normal call resolves to its **content text**: stdout decoded as UTF-8. The
+  host attaches metadata beside it (`ok`, `exitCode`, `bytes`, `encoding`, and
+  tool counters); in `execute` you see the content string, not that metadata.
+  JSON *object* text is returned by direct `fs.command`, a background start,
+  `fs.job` status/list/cancel or a timed-out `wait`, while
+  `fs.ps({ format: "json" })` returns a JSON *array*. A completed
+  `fs.job({ wait: true })` returns the original tool's content instead (its
+  plain text, or that tool's own JSON). Every other tool returns plain text.
+- Empty stdout means empty content. Many mutating tools succeed silently, for
+  example `cp`, `mv`, `rm`, `touch`, `chmod`, `truncate`, `sed -i`, archive
+  writes, and `fs.job wait` for them. Verify the effect with `fs.stat`,
+  `fs.ls`, `fs.hash`, or `fs.diff`; do not read empty content as failure.
+- Binary or NUL output is returned as **base64** when stdout contains a NUL byte
+  in its first 8 KiB, with `metadata.encoding: "base64"`. That covers compressed
+  data and NUL modes such as `fs.find({ print0: true })`,
+  `fs.sort({ zeroTerminated: true })`, and `fs.shuf({ zeroTerminated: true })`.
+  Prefer newline output; a pipe's final content is always decoded as UTF-8.
+- `ERROR: ...` is a recoverable failure (`ERROR: Not found`, `ERROR: Invalid
+  <tool> input: ...`, `ERROR: Unknown pipe stage: ...`); `BLOCKED: ...` is a
+  sandbox hard stop. Both carry a stable `code` in metadata. Domain errors
+  resolve as text; permission denials and host validation can reject the call
+  instead.
+- Exit code 1 is a normal result for `fs.grep` with no match, `fs.diff` with
+  differences, `fs.mountpoint` on a non-mount, and `fs.pgrep` with no match.
+  Do not retry those as failures.
+- `fs.command` (direct call) content is JSON text for an object with `command`,
+  `args`, `exitCode`, `signal`, `timedOut`, `aborted`, `sandboxBlocked`, `violations`,
+  `network`, `networkMode`, `networkHosts`, `externalPaths`, `stdout`, and
+  `stderr`, plus `networkReason` only when networking was disabled and `hint`
+  when the sandbox blocked it. A non-zero exit is still a normal result. As a
+  pipe stage it emits raw stdout instead.
+- `fs.mktemp` prints the created path; `fs.ps`/`fs.pgrep` output is text, and
+  `fs.ps({ format: "json" })` returns JSON text.
 
 ## Verification
 

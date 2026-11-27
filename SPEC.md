@@ -162,13 +162,42 @@ Aliases are accepted only where noted: `path` for one `paths` element (`stat`,
   goes through the normal `external_directory` prompt. The existing exec rules
   also grant `exec` on the resolved binary's directory and its parent; this
   option adds no read or write there. The option is config-level only: there is
-  no per-call path, `env`, or PATH field, and it never adds names to the
-  `fs_command` allowlist. Prepend only narrow, trusted directories: a broad
-  ancestor such as `$HOME` or its parent grants broad read+exec, and prepending
-  can shadow a same-named binary. An executable symlink inside a configured
-  directory is resolved before execution under the same rules. Omitting or
-  emptying the option leaves resolution, policy, and the child environment
-  unchanged.
+  no per-call path or arbitrary `env`/PATH field; the only invocation-level
+  environment input is the validated `envVars` overlay below. It never adds
+  names to the `fs_command` allowlist. Prepend only narrow, trusted directories:
+  a broad ancestor such as `$HOME` or its parent grants broad read+exec, and
+  prepending can shadow a same-named binary. An executable symlink inside a
+  configured directory is resolved before execution under the same rules.
+  Omitting or emptying the option leaves resolution, policy, and the child
+  environment unchanged.
+- The plugin option `commandEnvVars` is a closed object of POSIX-style
+  environment variable names (`[A-Za-z_][A-Za-z0-9_]*`) to string values. Each
+  entry is added to every `fs.command` child, including `fs.pipe` command stages
+  and background jobs, and overrides a same-named value from the explicit proxy
+  list or procage's preset allowlist. The plugin does not explicitly forward
+  arbitrary caller `process.env` entries; procage's baseline allowlist still
+  supplies its normal variables. Empty strings set the variable to the empty
+  string; they do not unset or remove it. Values are literal: the plugin does no
+  interpolation or implicit forwarding of unrelated host variables. OpenCode's
+  own `{env:VARIABLE_NAME}` config substitution may apply before plugin setup,
+  and an unset variable becomes the empty string. Non-string
+  values, NUL bytes, invalid names, arrays or non-objects are rejected, and
+  `PATH` and `TMPDIR` are refused
+  because `commandPaths` owns lookup/PATH and the tool owns each child's private
+  temp directory. Invalid configuration fails plugin setup.
+- `fs.command` also accepts an optional per-invocation `envVars` object with the
+  same shape, validation, and failure behavior. It is a shallow overlay on
+  `commandEnvVars`: a same-named value wins, unspecified configured entries
+  remain, and an empty string sets the variable to the empty string. It applies
+  to direct calls, `fs.pipe` command stages, and background jobs. It never
+  changes executable lookup or `PATH` and adds no filesystem or network
+  permission. Invalid input fails the call before that command runs.
+- `commandEnvVars` and `envVars` are trusted input and can change what the
+  allowlisted executable and its descendants do. The plugin does not
+  automatically add their values to its own errors or result metadata, but the
+  executable and its descendants can read them and may print or write them;
+  stdout and stderr are returned normally. Treat every configured or per-call
+  value as visible to that executable and its descendants.
 - The policy is procage `agent_workspace` v3: the project is read/write/exec.
   External paths are denied by default and there are no per-call grants.
 - Network egress uses procage's transparent relay on Linux tier T1. A per-run
@@ -214,9 +243,12 @@ Aliases are accepted only where noted: `path` for one `paths` element (`stat`,
   `NO_PROXY`, lowercase forms, and npm proxy variables) are passed explicitly
   because they are not in the preset environment allowlist. The relay treats
   the proxy as the destination, never its `CONNECT` target, so the proxy's
-  address or cached DNS name must be allowed in `fs_command_network`. No other
-  caller environment variable is forwarded explicitly; the preset's own
-  allowlist still applies, and a proxy variable may itself carry credentials.
+  address or cached DNS name must be allowed in `fs_command_network`. Beyond the
+  explicit proxy list and plugin-managed `TMPDIR` (and `PATH` when `commandPaths`
+  is set), the only caller-supplied entries passed explicitly are the validated
+  `commandEnvVars` and per-call `envVars`; arbitrary caller `process.env` entries
+  are not. The preset's own allowlist still applies, and a proxy variable may
+  itself carry credentials.
 - Denied paths ask `external_directory` on their containing directory (or the
   nearest existing ancestor for a missing or redacted path) only when procage
   reports a structured **write** violation (`file-write-*`). Read, exec,

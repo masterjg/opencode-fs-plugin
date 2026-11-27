@@ -26,6 +26,8 @@ export interface RunSpecOptions {
   allowCommands?: readonly string[];
   /** Canonical trusted executable directories, as resolved by the plugin option. */
   commandPaths?: readonly string[];
+  /** Extra child environment entries, as resolved by the plugin option. */
+  commandEnvVars?: Readonly<Record<string, string>>;
 }
 
 export interface RunSpecResult<I> {
@@ -82,6 +84,7 @@ export async function runSpec<I>(
       signal: options.signal ?? new AbortController().signal,
       tmpdir: options.tmpdir ?? os.tmpdir(),
       commandPaths: options.commandPaths ?? [],
+      commandEnvVars: options.commandEnvVars ?? {},
     },
     input,
     options.stdin === undefined ? {} : { stdin: options.stdin },

@@ -19,6 +19,7 @@ import {
   isSafeExecName,
   isSandboxBlocked,
   relayGapReason,
+  resolveCommandEnvVars,
   resolveCommandPaths,
   resolveExecutable,
   type ExecOutcome,
@@ -920,6 +921,282 @@ describe("command paths", () => {
     await expect(resolveCommandPaths([subLink], root, 4)).rejects.toThrow(
       /project root or inside/,
     );
+  });
+});
+
+describe("command environment", () => {
+  it("passes configured entries to the child and accepts an empty value", async () => {
+    const { sb } = await setup();
+    const result = await runSpec(
+      commandTool,
+      {
+        command: "node",
+        args: [
+          "-e",
+          'process.stdout.write(JSON.stringify({ marker: process.env.FS_TEST_MARKER, empty: process.env.FS_TEST_EMPTY }))',
+        ],
+      },
+      sb,
+      {
+        allowCommands: ["node"],
+        commandEnvVars: { FS_TEST_MARKER: "configured-value", FS_TEST_EMPTY: "" },
+      },
+    );
+    expect(JSON.parse(parsed(result).stdout as string)).toEqual({
+      marker: "configured-value",
+      empty: "",
+    });
+  });
+
+  it("does not automatically add configured values to result metadata", async () => {
+    const { sb } = await setup();
+    const secret = "fs-config-secret-9c1f";
+    const result = await runSpec(
+      commandTool,
+      { command: "node", args: ["-e", "process.stdout.write('ok')"] },
+      sb,
+      { allowCommands: ["node"], commandEnvVars: { FS_CONFIG_SECRET: secret } },
+    );
+    const body = JSON.parse(result.result.stdout.toString()) as { stdout: string };
+    expect(body.stdout).toBe("ok");
+    expect(JSON.stringify(result.result.metadata ?? {})).not.toContain(secret);
+  });
+
+  it("does not forward unrelated parent environment variables", async () => {
+    const { sb } = await setup();
+    const original = process.env.FS_TEST_PARENT_ONLY;
+    process.env.FS_TEST_PARENT_ONLY = "parent-secret";
+    try {
+      const result = await runSpec(
+        commandTool,
+        {
+          command: "node",
+          args: ["-e", 'process.stdout.write(process.env.FS_TEST_PARENT_ONLY ?? "missing")'],
+        },
+        sb,
+        { allowCommands: ["node"], commandEnvVars: { FS_TEST_MARKER: "configured" } },
+      );
+      expect(parsed(result).stdout).toBe("missing");
+    } finally {
+      if (original === undefined) delete process.env.FS_TEST_PARENT_ONLY;
+      else process.env.FS_TEST_PARENT_ONLY = original;
+    }
+  });
+
+  it("overrides same-named proxy and preset values", async () => {
+    const { sb } = await setup();
+    const originalProxy = process.env.HTTP_PROXY;
+    process.env.HTTP_PROXY = "http://parent.invalid:1";
+    try {
+      const result = await runSpec(
+        commandTool,
+        {
+          command: "node",
+          args: [
+            "-e",
+            'process.stdout.write(JSON.stringify({ proxy: process.env.HTTP_PROXY, home: process.env.HOME }))',
+          ],
+        },
+        sb,
+        {
+          allowCommands: ["node"],
+          commandEnvVars: {
+            HTTP_PROXY: "http://configured.invalid:2",
+            HOME: "/fs-command-configured-home",
+          },
+        },
+      );
+      expect(JSON.parse(parsed(result).stdout as string)).toEqual({
+        proxy: "http://configured.invalid:2",
+        home: "/fs-command-configured-home",
+      });
+    } finally {
+      if (originalProxy === undefined) delete process.env.HTTP_PROXY;
+      else process.env.HTTP_PROXY = originalProxy;
+    }
+  });
+
+  it("keeps TMPDIR tool-managed under the configured temp root", async () => {
+    const { sb } = await setup();
+    const tmpdir = await makeCommandPath("fs-command-env-tmp-");
+    const result = await runSpec(
+      commandTool,
+      { command: "node", args: ["-e", "process.stdout.write(process.env.TMPDIR ?? '')"] },
+      sb,
+      { allowCommands: ["node"], tmpdir, commandEnvVars: { FS_TEST_MARKER: "configured" } },
+    );
+    const seen = parsed(result).stdout as string;
+    expect(seen.startsWith(`${tmpdir}${path.sep}fs-exec-`)).toBe(true);
+    expect(seen.endsWith(path.sep)).toBe(false);
+  });
+
+  it("passes configured entries into a pipe command stage", async () => {
+    const { sb } = await setup();
+    const result = await runSpec(
+      pipeTool,
+      {
+        stages: [
+          {
+            tool: "command",
+            args: {
+              command: "node",
+              args: ["-e", "process.stdout.write(process.env.FS_PIPE_MARKER ?? 'missing')"],
+            },
+          },
+          { tool: "cat" },
+        ],
+      },
+      sb,
+      { allowCommands: ["node"], commandEnvVars: { FS_PIPE_MARKER: "piped-env" } },
+    );
+    expect(result.result.stdout.toString()).toBe("piped-env");
+  });
+
+  it("overlays per-call entries on configured values and keeps unrelated ones", async () => {
+    const { sb } = await setup();
+    const result = await runSpec(
+      commandTool,
+      {
+        command: "node",
+        args: [
+          "-e",
+          'process.stdout.write(JSON.stringify({ marker: process.env.FS_TEST_MARKER, keep: process.env.FS_TEST_KEEP, only: process.env.FS_TEST_ONLY, empty: process.env.FS_TEST_EMPTY }))',
+        ],
+        envVars: { FS_TEST_MARKER: "call-value", FS_TEST_ONLY: "call-only", FS_TEST_EMPTY: "" },
+      },
+      sb,
+      {
+        allowCommands: ["node"],
+        commandEnvVars: { FS_TEST_MARKER: "configured-value", FS_TEST_KEEP: "keep-value", FS_TEST_EMPTY: "configured" },
+      },
+    );
+    expect(JSON.parse(parsed(result).stdout as string)).toEqual({
+      marker: "call-value",
+      keep: "keep-value",
+      only: "call-only",
+      empty: "",
+    });
+  });
+
+  it("does not add per-call values to result metadata", async () => {
+    const { sb } = await setup();
+    const secret = "fs-call-secret-4a7d";
+    const result = await runSpec(
+      commandTool,
+      {
+        command: "node",
+        args: ["-e", "process.stdout.write(process.env.FS_CALL_SECRET ?? 'missing')"],
+        envVars: { FS_CALL_SECRET: secret },
+      },
+      sb,
+      { allowCommands: ["node"] },
+    );
+    expect(parsed(result).stdout).toBe(secret);
+    expect(JSON.stringify(result.result.metadata ?? {})).not.toContain(secret);
+  });
+
+  it("overlays per-call entries in a pipe command stage", async () => {
+    const { sb } = await setup();
+    const result = await runSpec(
+      pipeTool,
+      {
+        stages: [
+          {
+            tool: "command",
+            args: {
+              command: "node",
+              args: [
+                "-e",
+                'process.stdout.write(`${process.env.FS_PIPE_MARKER}:${process.env.FS_PIPE_ONLY}`)',
+              ],
+              envVars: { FS_PIPE_MARKER: "call", FS_PIPE_ONLY: "only" },
+            },
+          },
+          { tool: "cat" },
+        ],
+      },
+      sb,
+      { allowCommands: ["node"], commandEnvVars: { FS_PIPE_MARKER: "global" } },
+    );
+    expect(result.result.stdout.toString()).toBe("call:only");
+  });
+
+  it("rejects invalid per-call entries without running or leaking values", async () => {
+    const { sb } = await setup();
+    const secret = "s3cret-call\0value";
+    for (const envVars of ["nope", null, [], { PATH: "/tmp/bin" }, { TMPDIR: "/tmp" }, { "1BAD": "x" }, { "TOPSECRET\nKEY": "x" }, { "TOPSECRET\nKEY": 42 }, { FS_BAD: 1 }, { FS_SECRET: secret }]) {
+      let message = "";
+      try {
+        await runSpec(
+          commandTool,
+          { command: "node", args: ["-e", "process.stdout.write('ran')"], envVars },
+          sb,
+          { allowCommands: ["node"] },
+        );
+      } catch (error) {
+        message = (error as Error).message;
+      }
+      expect(message).toMatch(/envVars/);
+      expect(message).not.toContain("s3cret");
+      expect(message).not.toContain("1BAD");
+      expect(message).not.toContain("TOPSECRET");
+    }
+  });
+});
+
+describe("command environment validation", () => {
+  it("returns an empty object when the option is unset", () => {
+    expect(resolveCommandEnvVars(undefined)).toEqual({});
+  });
+
+  it("accepts standard names and string values, including empty", () => {
+    const raw = { FS_A: "1", _FS_B2: "", LC_ALL: "C" };
+    expect(resolveCommandEnvVars(raw)).toEqual(raw);
+  });
+
+  it("rejects non-object shapes", () => {
+    for (const value of [null, [], "nope", 42, true]) {
+      expect(() => resolveCommandEnvVars(value)).toThrow(/must be an object/);
+    }
+  });
+
+  it("rejects invalid environment names without echoing the key", () => {
+    for (const name of ["1BAD", "BAD-NAME", "BAD NAME", "A=B", "A\0B"]) {
+      let message = "";
+      try {
+        resolveCommandEnvVars({ [name]: "x" });
+      } catch (error) {
+        message = (error as Error).message;
+      }
+      expect(message).toMatch(/invalid environment variable name/);
+      expect(message).not.toContain(name);
+    }
+    expect(() => resolveCommandEnvVars({ "": "x" })).toThrow(
+      /invalid environment variable name/,
+    );
+  });
+
+  it("rejects the plugin-managed PATH and TMPDIR names", () => {
+    for (const name of ["PATH", "TMPDIR"]) {
+      expect(() => resolveCommandEnvVars({ [name]: "x" })).toThrow(
+        new RegExp(`cannot set ${name}`),
+      );
+    }
+  });
+
+  it("rejects non-string and NUL values without echoing the value", () => {
+    for (const value of [1, null, true, {}]) {
+      expect(() => resolveCommandEnvVars({ FS_BAD: value })).toThrow(/must be a string/);
+    }
+    const secret = "s3cret\0value";
+    let message = "";
+    try {
+      resolveCommandEnvVars({ FS_SECRET: secret });
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).toMatch(/NUL/);
+    expect(message).not.toContain("s3cret");
   });
 });
 

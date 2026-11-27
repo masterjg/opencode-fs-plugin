@@ -16,7 +16,7 @@ unit, end-to-end and coverage tests.
 | `chmod` | `fs.chmod` | octal/symbolic mode, `reference`, `recursive`, `noDereference`, `verbose`, `changes`, `silent` |
 | `chown` | `fs.chown` | `user`/`uid`, `group`/`gid`, `recursive`, `noDereference` |
 | `comm` | `fs.comm` | `suppress1`/`2`/`3`, `outputDelimiter` |
-| `command` | `fs.command` | `command`, `args`, `cwd`, `stdin`, `timeoutMs`; `fs_command` permission, procage sandbox, no shell; plugin `commandPaths` prepends trusted executable dirs |
+| `command` | `fs.command` | `command`, `args`, `cwd`, `stdin`, `timeoutMs`, `envVars`; `fs_command` permission, procage sandbox, no shell; plugin `commandPaths` prepends trusted executable dirs and `commandEnvVars` adds fixed child environment entries that a call may overlay with `envVars` |
 | `cp` | `fs.cp` | `recursive`, `archive`, `force`, `noClobber`, `update`, `preserve`, `dereference`, `verbose` |
 | `cpio` | `fs.cpio` | `create`/`list`/`extract` (newc), `directory`, `members`, `input`, `member`, `verbose` |
 | `curl` | `fs.curl` | `url`, `method`, `headers`, `body`, `json`, `output`, `checksum`, `maxBytes`, `timeoutMs`, `failOnError`, `followRedirects`, `maxRedirects` |
@@ -111,8 +111,13 @@ await tools.fs.pipe({
 })
 ```
 
-Filter stages: `base64`, `command`, `fold`, `nl`, `od`, `paste`, `rev`, `shuf`, `tac`,
-and `strings`; `dd` and `cpio` are source/sink stages like `tar`.
+Registered stages are sources (`base64`, `cat`, `curl`, `dd`, `fold`, `nl`, `od`,
+`paste`, `rev`, `shuf`, `strings`, `tac`), filters (`command`, `cut`, `grep`,
+`gzip`, `gunzip`, `head`, `sed`, `sort`, `tail`, `tee`, `tr`, `uniq`), and sinks
+(`cpio`, `hash`, `tar`, `wc`, `zip`). The first stage must be a source or receive
+`input`; a filter first without `input` fails the whole call with
+`ERROR: no input files and no stdin`, not pipeline data. `stages` holds 1–50
+`{ tool, args }` entries.
 
 `fs.curl` is a pipe source, so network data can feed the same stages:
 
@@ -159,37 +164,102 @@ resource. Deny `*` to close the set, then allow the names you need:
 With no rule the base allow applies to every executable, so keep the `*` deny
 when you want a closed set.
 
-Executable lookup is not configurable per call. To resolve a trusted binary
-outside the host PATH, list its directories once in the plugin options:
+### `commandPaths`, `commandEnvVars`, and per-call `envVars`
+
+`commandPaths` and `commandEnvVars` are plugin options, set once in the config.
+`commandPaths` is config-only; `commandEnvVars` supplies defaults that one
+`fs.command` call may overlay with its optional `envVars` argument. They touch
+different surfaces:
+
+| Option | Surface | What it changes |
+|---|---|---|
+| `commandPaths: string[]` | Executable lookup and child `PATH` | Prepends trusted absolute directories to executable lookup and to the child `PATH`, so a bare `command` name can resolve outside the host PATH |
+| `commandEnvVars: Record<string, string>` | Child environment only | Adds fixed name/value entries to every `fs.command` child; it never changes lookup or `PATH` |
+| `envVars: Record<string, string>` (per call) | Child environment only | Shallow overlay for this invocation: a same-named value replaces the configured one, unspecified configured entries remain, and it never changes lookup or `PATH` |
+
+Combined example, modeled on a Homebrew + uv/podman setup:
 
 ```jsonc
 {
   "plugins": [
     {
       "package": "opencode-fs-plugin@<version>",
-      "options": { "commandPaths": ["/home/linuxbrew/.linuxbrew/bin"] }
+      "options": {
+        "commandPaths": ["/var/home/linuxbrew/.linuxbrew/bin"],
+        "commandEnvVars": {
+          "PYTHONDONTWRITEBYTECODE": "1",
+          "HOMEBREW_NO_ENV_HINTS": "1",
+          "HOMEBREW_NO_ANALYTICS": "1",
+          "GOPATH": "{env:HOME}/.local/state/go",
+          "GOBIN": "{env:HOME}/.local/bin",
+          "PODMAN_COMPOSE_WARNING_LOGS": "false",
+          "DOCKER_HOST": "unix://{env:XDG_RUNTIME_DIR}/podman/podman.sock",
+          "UV_LINK_MODE": "copy",
+          "UV_ENV_FILE": ".env .env.creds",
+          "UV_LOCKED": "1"
+        }
+      }
     }
   ]
 }
 ```
 
-Configured directories are canonicalized (a configuration symlink is trusted at
-its real target), deduplicated in configured order, and prepended to both
-executable lookup and the child `PATH`; the existing PATH follows them. Each
-root grants procage `read` and `exec` for its whole directory tree and never
-pre-grants `write`; a later write denial still goes through the normal
-`external_directory` prompt. The existing exec rules also grant `exec` on the
-resolved binary's directory and its parent; this option adds no read or write
-there. The bare-name `fs_command` check is unchanged, so the option adds trusted
-locations, not executable names. Entries must be absolute existing directories
-that are not the filesystem root or the project root (or inside it), or plugin
-setup fails closed. A project rooted at `/` therefore has no eligible entries:
-every absolute directory is inside the workspace, so setup fails closed by
-design. Prepend only narrow, trusted directories: a broad ancestor such as
-`$HOME` or its parent grants broad read+exec, and prepending can shadow a
-same-named binary on PATH. An executable symlink inside a configured directory
-is resolved before execution under the same rules. When the option is unset or
-empty, resolution and the child environment keep the preset PATH unchanged.
+**`commandPaths` — lookup and PATH.** Entries must be absolute, existing
+directories and are canonicalized (a configuration symlink is trusted at its real
+target), deduplicated in configured order, and prepended to both executable
+lookup and the child `PATH`; the existing PATH follows them. Each root grants
+procage `read` and `exec` for its whole directory tree and never pre-grants
+`write`; a later write denial still goes through the normal `external_directory`
+prompt. The existing exec rules also grant `exec` on the resolved binary's
+directory and its parent; this option adds no read or write there. The bare-name
+`fs_command` check is unchanged, so the option adds trusted locations, not
+executable names. Entries must be absolute existing directories that are not the
+filesystem root or the project root (or inside it), or plugin setup fails closed.
+A project rooted at `/` therefore has no eligible entries: every absolute
+directory is inside the workspace, so setup fails closed by design. Prepend only
+narrow, trusted directories: a broad ancestor such as `$HOME` or its parent
+grants broad read+exec, and prepending can shadow a same-named binary on PATH. An
+executable symlink inside a configured directory is resolved before execution
+under the same rules. When the option is unset or empty, resolution and the child
+environment keep the preset PATH unchanged.
+
+**`commandEnvVars` — child environment.** A closed object of environment variable
+names to string values, added to every `fs.command` child, including `fs.pipe`
+command stages and background jobs. They override a same-named value from the
+explicit proxy list or procage's preset allowlist. The plugin does not explicitly
+forward arbitrary caller `process.env` entries; procage's baseline allowlist
+still supplies its normal variables. An empty string sets that variable to the
+empty string; it does not unset or remove it. `PATH` and `TMPDIR` cannot be
+configured: `commandPaths` owns lookup and PATH, and the tool owns each child's
+private temp directory. Names must match `[A-Za-z_][A-Za-z0-9_]*`; values must be
+strings without NUL bytes. Invalid configuration fails plugin setup. The values
+above are non-secret examples, and none of them grants path, socket, or
+filesystem access by itself: naming `unix://…/podman.sock` or `UV_ENV_FILE` does
+not authorize that socket or file.
+
+**`envVars` — per-invocation overlay.** `fs.command` also accepts an optional
+`envVars` object with the same shape and validation rules. It is a shallow
+overlay on `commandEnvVars` for that invocation only: a same-named value replaces
+the configured one, unspecified configured entries remain, and an empty string
+sets the variable to the empty string. It applies to direct calls, `fs.pipe`
+command stages, and background jobs, and it never changes executable lookup or
+`PATH`. Invalid shapes, names, non-string values, NUL bytes, `PATH`, or `TMPDIR`
+make the call fail as invalid input before that command runs. It adds no filesystem
+or network permission.
+
+`{env:NAME}` is OpenCode's native configuration substitution, applied to config
+strings before plugin setup; an unset variable becomes the empty string. That
+substitution belongs to OpenCode, not to this plugin: `commandEnvVars` receives
+the already-substituted text. The plugin does no interpolation itself, so a
+literal `${NAME}` or `$NAME` in a configured value reaches the child unchanged
+(for example, `UV_ENV_FILE` stays one literal string).
+
+`commandEnvVars` and a call's `envVars` are trusted input and can change what the
+allowlisted executable and its descendants do. The plugin itself does not
+automatically add their values to its errors or result metadata, but the
+executable and its descendants can read the values and may print or write them;
+stdout and stderr are returned normally. Treat every configured or per-call value
+as visible to that executable and its descendants.
 
 The workspace (project) is read/write/exec. **Network egress needs Linux tier
 T1** (user namespaces and TPROXY). Every run gets procage's transparent relay:
@@ -243,9 +313,11 @@ The relay treats the proxy as the destination, never its `CONNECT` target, so
 an external proxy works only when `fs_command_network` allows the proxy's address
 (or its cached DNS name, which also needs its DNS query allowed). That approval
 lets the proxy forward to whatever it reaches; it is not scoped to the target
-URL behind the proxy. No other caller environment variable is forwarded
-explicitly, but the preset's own environment allowlist still applies, and a
-proxy variable may itself carry proxy credentials.
+URL behind the proxy. Beyond the explicit proxy list and plugin-managed `TMPDIR`
+(and `PATH` when `commandPaths` is set), the only caller-supplied entries passed
+explicitly are the validated `commandEnvVars` and per-call `envVars`; arbitrary
+caller `process.env` entries are not. The preset's own environment allowlist
+still applies, and a proxy variable may itself carry proxy credentials.
 
 External paths are separate: a blocked path asks `external_directory` for its
 containing directory (or the nearest existing ancestor), and the sandbox grants
@@ -274,12 +346,24 @@ Unix sockets.
 await tools.fs.command({ command: "npm", args: ["install"], timeoutMs: 300000 })
 ```
 
+A per-call `envVars` overlays only the names it lists; everything else comes from
+`commandEnvVars` and the sandbox baseline:
+
+```js
+await tools.fs.command({
+  command: "npm",
+  args: ["test"],
+  envVars: { NODE_ENV: "test" },
+})
+```
+
 `command` is a bare name, `args` are literal, and `cwd` is sandboxed. Direct
 calls return JSON with `exitCode`, `stdout`, `stderr`, `violations`, and the
 network fields `network`, `networkMode`, `networkHosts`, and `networkReason`
 (when networking was disabled); `externalPaths` lists the external roots the
-run could write to. A pipe stage returns raw stdout so it composes with `grep`,
-`sort`, `tee`, and the rest.
+run could write to. The JSON does not echo the configured or per-call environment
+values. A pipe stage returns raw stdout so it composes with `grep`, `sort`, `tee`,
+and the rest.
 
 ```js
 await tools.fs.pipe({

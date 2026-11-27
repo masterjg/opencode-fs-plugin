@@ -35,6 +35,13 @@ export interface RunContext {
    * `commandPaths` option. They are prepended to PATH for `fs.command` only.
    */
   readonly commandPaths: readonly string[];
+  /**
+   * Validated extra environment entries configured with the plugin
+   * `commandEnvVars` option. They are added to every `fs.command` child and
+   * override same-named proxy or preset values; `PATH` and `TMPDIR` stay
+   * plugin-managed.
+   */
+  readonly commandEnvVars: Readonly<Record<string, string>>;
 }
 
 export interface ToolSpec<I> {
