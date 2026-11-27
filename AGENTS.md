@@ -55,8 +55,8 @@ a tool.
 
 ## Validation and self-review
 
-CI (`.github/workflows/ci.yml`) on Node 22 and 24 is the floor, not proof.
-Reproduce it locally before declaring complete:
+CI (`.github/workflows/ci.yml`) runs Node 22, 24 and 26 on Ubuntu and is the
+floor, not proof. Reproduce it locally before declaring complete:
 
 ```bash
 npm ci
