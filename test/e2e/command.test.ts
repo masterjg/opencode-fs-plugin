@@ -19,6 +19,8 @@ import {
   isSafeExecName,
   isSandboxBlocked,
   relayGapReason,
+  resolveCommandPaths,
+  resolveExecutable,
   type ExecOutcome,
   type PolicyDocument,
 } from "../../src/tools/command.js";
@@ -39,6 +41,21 @@ async function setup(): Promise<{ root: string; sb: Sandbox }> {
 
 function parsed(result: { result: { stdout: Buffer } }): Record<string, unknown> {
   return JSON.parse(result.result.stdout.toString()) as Record<string, unknown>;
+}
+
+/** A tiny Node executable so a test never needs a shell shebang. */
+async function writeProbe(dir: string, name: string, body: string): Promise<string> {
+  await fs.mkdir(dir, { recursive: true });
+  const file = path.join(dir, name);
+  await fs.writeFile(file, `#!${process.execPath}\n${body}\n`, { mode: 0o755 });
+  await fs.chmod(file, 0o755);
+  return file;
+}
+
+async function makeCommandPath(prefix: string): Promise<string> {
+  const dir = await makeRoot(prefix);
+  roots.push(dir);
+  return fs.realpath(dir);
 }
 
 /** Ports the relay sniffs as HTTP; the fixture falls back to an ephemeral one. */
@@ -662,6 +679,247 @@ describe("command", () => {
       { allowCommands: ["node"] },
     );
     expect(result.result.stdout.length).toBeGreaterThan(0);
+  });
+});
+
+describe("command paths", () => {
+  it("prepends configured paths to the child PATH and keeps the host PATH after them", async () => {
+    const { sb } = await setup();
+    const extra = await makeCommandPath("fs-command-path-");
+    const result = await runSpec(
+      commandTool,
+      { command: "node", args: ["-e", "process.stdout.write(process.env.PATH??'')"] },
+      sb,
+      { allowCommands: ["node"], commandPaths: [extra] },
+    );
+    const seen = parsed(result).stdout as string;
+    expect(seen.startsWith(`${extra}${path.delimiter}`)).toBe(true);
+    expect(seen.endsWith(process.env.PATH ?? "")).toBe(true);
+  });
+
+  it("resolves a command from a configured path before the host PATH", async () => {
+    const { sb } = await setup();
+    const first = await makeCommandPath("fs-command-first-");
+    const second = await makeCommandPath("fs-command-second-");
+    await writeProbe(first, "fs-command-probe", 'process.stdout.write("first")');
+    await writeProbe(second, "fs-command-probe", 'process.stdout.write("second")');
+    const original = process.env.PATH;
+    process.env.PATH = second;
+    try {
+      const started = await runSpec(
+        commandTool,
+        { command: "fs-command-probe" },
+        sb,
+        { allowCommands: ["fs-command-probe"], commandPaths: [first, second] },
+      );
+      expect(parsed(started).stdout).toBe("first");
+      const reversed = await runSpec(
+        commandTool,
+        { command: "fs-command-probe" },
+        sb,
+        { allowCommands: ["fs-command-probe"], commandPaths: [second, first] },
+      );
+      expect(parsed(reversed).stdout).toBe("second");
+    } finally {
+      if (original === undefined) delete process.env.PATH;
+      else process.env.PATH = original;
+    }
+  });
+
+  it("uses a configured path in a pipe stage", async () => {
+    const { sb } = await setup();
+    const dir = await makeCommandPath("fs-command-pipe-");
+    await writeProbe(dir, "fs-command-probe", 'process.stdout.write("piped")');
+    const result = await runSpec(
+      pipeTool,
+      { stages: [{ tool: "command", args: { command: "fs-command-probe" } }, { tool: "cat" }] },
+      sb,
+      { allowCommands: ["fs-command-probe"], commandPaths: [dir] },
+    );
+    expect(result.result.stdout.toString()).toBe("piped");
+  });
+
+  it("uses only the configured paths for the child PATH when PATH is unset or empty", async () => {
+    const { sb } = await setup();
+    const dir = await makeCommandPath("fs-command-nopath-");
+    await writeProbe(dir, "fs-command-probe", 'process.stdout.write(process.env.PATH??"")');
+    const original = process.env.PATH;
+    try {
+      for (const value of [undefined, ""]) {
+        if (value === undefined) delete process.env.PATH;
+        else process.env.PATH = value;
+        const result = await runSpec(
+          commandTool,
+          { command: "fs-command-probe" },
+          sb,
+          { allowCommands: ["fs-command-probe"], commandPaths: [dir] },
+        );
+        expect(parsed(result).stdout).toBe(dir);
+      }
+    } finally {
+      if (original === undefined) delete process.env.PATH;
+      else process.env.PATH = original;
+    }
+  });
+
+  it("does not add executable names to the fs_command allowlist", async () => {
+    const { sb } = await setup();
+    const dir = await makeCommandPath("fs-command-deny-");
+    await writeProbe(dir, "fs-command-probe", 'process.stdout.write("ran")');
+    await expect(
+      runSpec(commandTool, { command: "fs-command-probe" }, sb, {
+        allowCommands: [],
+        commandPaths: [dir],
+      }),
+    ).rejects.toThrow("permission denied by test");
+  });
+
+  it("rejects a commandPaths field in the tool input", async () => {
+    const { sb } = await setup();
+    await expect(
+      runSpec(
+        commandTool,
+        { command: "node", commandPaths: ["/tmp"] },
+        sb,
+        { allowCommands: ["node"] },
+      ),
+    ).rejects.toMatchObject({ code: "invalid" });
+  });
+
+  it("validates and canonicalizes the commandPaths option", async () => {
+    const { root } = await setup();
+    await fs.mkdir(path.join(root, "sub"));
+    await fs.writeFile(path.join(root, "file"), "x");
+    const outside = await makeCommandPath("fs-command-outside-");
+    await fs.symlink(outside, path.join(root, "outlink"));
+
+    await expect(resolveCommandPaths(undefined, root, 4)).resolves.toEqual([]);
+    await expect(resolveCommandPaths([], root, 4)).resolves.toEqual([]);
+    for (const value of ["nope", [42], [""], ["relative/bin"], ["/"]]) {
+      await expect(resolveCommandPaths(value, root, 4)).rejects.toMatchObject({ code: "invalid" });
+    }
+    await expect(resolveCommandPaths(["a\0b"], root, 4)).rejects.toThrow(/NUL/);
+    await expect(resolveCommandPaths(["/definitely/not/here"], root, 4)).rejects.toMatchObject({
+      code: "not-found",
+    });
+    await expect(resolveCommandPaths([path.join(root, "file")], root, 4)).rejects.toMatchObject({
+      code: "not-directory",
+    });
+    await expect(resolveCommandPaths([root], root, 4)).rejects.toThrow(/project root or inside/);
+    await expect(resolveCommandPaths([path.join(root, "sub")], root, 4)).rejects.toThrow(
+      /project root or inside/,
+    );
+    await expect(resolveCommandPaths(["/"], "/", 4)).rejects.toThrow(/filesystem root/);
+    await expect(resolveCommandPaths(["/usr"], "/", 4)).rejects.toThrow(/project root or inside/);
+    await expect(resolveCommandPaths(["/tmp"], "/", 4)).rejects.toThrow(/project root or inside/);
+    await expect(
+      resolveCommandPaths([outside, path.join(root, "outlink"), outside], root, 4),
+    ).resolves.toEqual([outside]);
+  });
+
+  it("reports the first configured entry's error in configured order", async () => {
+    const { root } = await setup();
+    await expect(
+      resolveCommandPaths(["/definitely/not/here", "relative"], root, 4),
+    ).rejects.toMatchObject({ code: "not-found" });
+    await expect(
+      resolveCommandPaths(["relative", "/definitely/not/here"], root, 4),
+    ).rejects.toMatchObject({ code: "invalid" });
+  });
+
+  it("deduplicates canonical paths without reordering", async () => {
+    const { root } = await setup();
+    const first = await makeCommandPath("fs-command-order-first-");
+    const second = await makeCommandPath("fs-command-order-second-");
+    const link = path.join(root, "link");
+    await fs.symlink(first, link);
+    await expect(resolveCommandPaths([second, link, first, second], root, 4)).resolves.toEqual([
+      second,
+      first,
+    ]);
+  });
+
+  it("executes a configured-path symlink to an outside executable", async () => {
+    const { sb } = await setup();
+    const dir = await makeCommandPath("fs-command-symlink-");
+    await fs.symlink(process.execPath, path.join(dir, "fs-command-link"));
+    const result = await runSpec(
+      commandTool,
+      { command: "fs-command-link", args: ["-e", 'process.stdout.write("linked")'] },
+      sb,
+      { allowCommands: ["fs-command-link"], commandPaths: [dir] },
+    );
+    expect(parsed(result)).toMatchObject({
+      stdout: "linked",
+      exitCode: 0,
+      sandboxBlocked: false,
+    });
+  });
+
+  it("executes a symlink target outside the configured entry", async () => {
+    const { sb } = await setup();
+    const dir = await makeCommandPath("fs-command-symlink-");
+    const targetDir = await makeCommandPath("fs-command-target-");
+    const target = path.join(targetDir, "true-binary");
+    await fs.copyFile("/usr/bin/true", target);
+    await fs.chmod(target, 0o755);
+    await fs.symlink(target, path.join(dir, "fs-command-link"));
+    const result = await runSpec(
+      commandTool,
+      { command: "fs-command-link" },
+      sb,
+      { allowCommands: ["fs-command-link"], commandPaths: [dir] },
+    );
+    expect(parsed(result)).toMatchObject({ exitCode: 0, sandboxBlocked: false });
+  });
+
+  it("resolves only executable files from configured paths in order", async () => {
+    const dir = await makeCommandPath("fs-command-resolve-");
+    const empty = await makeCommandPath("fs-command-empty-");
+    const probe = await writeProbe(dir, "fs-command-probe", 'process.stdout.write("x")');
+    await fs.writeFile(path.join(empty, "fs-command-plain"), "not executable");
+    await expect(resolveExecutable("fs-command-probe", [empty, dir])).resolves.toEqual({
+      path: probe,
+      real: probe,
+    });
+    await expect(resolveExecutable("fs-command-plain", [empty])).rejects.toMatchObject({
+      code: "not-found",
+    });
+  });
+
+  it("skips a directory named like the command and finds the later executable", async () => {
+    const { sb } = await setup();
+    const first = await makeCommandPath("fs-command-shadow-first-");
+    const second = await makeCommandPath("fs-command-shadow-second-");
+    await fs.mkdir(path.join(first, "fs-command-probe"));
+    const probe = await writeProbe(second, "fs-command-probe", 'process.stdout.write("later")');
+    await expect(resolveExecutable("fs-command-probe", [first, second])).resolves.toEqual({
+      path: probe,
+      real: probe,
+    });
+    const result = await runSpec(
+      commandTool,
+      { command: "fs-command-probe" },
+      sb,
+      { allowCommands: ["fs-command-probe"], commandPaths: [first, second] },
+    );
+    expect(parsed(result).stdout).toBe("later");
+  });
+
+  it("rejects a config symlink that resolves into the project root", async () => {
+    const { root } = await setup();
+    const outside = await makeCommandPath("fs-command-project-link-");
+    await fs.mkdir(path.join(root, "sub"));
+    const projectLink = path.join(outside, "project-link");
+    const subLink = path.join(outside, "sub-link");
+    await fs.symlink(root, projectLink);
+    await fs.symlink(path.join(root, "sub"), subLink);
+    await expect(resolveCommandPaths([projectLink], root, 4)).rejects.toThrow(
+      /project root or inside/,
+    );
+    await expect(resolveCommandPaths([subLink], root, 4)).rejects.toThrow(
+      /project root or inside/,
+    );
   });
 });
 

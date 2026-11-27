@@ -16,7 +16,7 @@ unit, end-to-end and coverage tests.
 | `chmod` | `fs.chmod` | octal/symbolic mode, `reference`, `recursive`, `noDereference`, `verbose`, `changes`, `silent` |
 | `chown` | `fs.chown` | `user`/`uid`, `group`/`gid`, `recursive`, `noDereference` |
 | `comm` | `fs.comm` | `suppress1`/`2`/`3`, `outputDelimiter` |
-| `command` | `fs.command` | `command`, `args`, `cwd`, `stdin`, `timeoutMs`; `fs_command` permission, procage sandbox, no shell |
+| `command` | `fs.command` | `command`, `args`, `cwd`, `stdin`, `timeoutMs`; `fs_command` permission, procage sandbox, no shell; plugin `commandPaths` prepends trusted executable dirs |
 | `cp` | `fs.cp` | `recursive`, `archive`, `force`, `noClobber`, `update`, `preserve`, `dereference`, `verbose` |
 | `cpio` | `fs.cpio` | `create`/`list`/`extract` (newc), `directory`, `members`, `input`, `member`, `verbose` |
 | `curl` | `fs.curl` | `url`, `method`, `headers`, `body`, `json`, `output`, `checksum`, `maxBytes`, `timeoutMs`, `failOnError`, `followRedirects`, `maxRedirects` |
@@ -158,6 +158,38 @@ resource. Deny `*` to close the set, then allow the names you need:
 
 With no rule the base allow applies to every executable, so keep the `*` deny
 when you want a closed set.
+
+Executable lookup is not configurable per call. To resolve a trusted binary
+outside the host PATH, list its directories once in the plugin options:
+
+```jsonc
+{
+  "plugins": [
+    {
+      "package": "opencode-fs-plugin@<version>",
+      "options": { "commandPaths": ["/home/linuxbrew/.linuxbrew/bin"] }
+    }
+  ]
+}
+```
+
+Configured directories are canonicalized (a configuration symlink is trusted at
+its real target), deduplicated in configured order, and prepended to both
+executable lookup and the child `PATH`; the existing PATH follows them. Each
+root grants procage `read` and `exec` for its whole directory tree and never
+pre-grants `write`; a later write denial still goes through the normal
+`external_directory` prompt. The existing exec rules also grant `exec` on the
+resolved binary's directory and its parent; this option adds no read or write
+there. The bare-name `fs_command` check is unchanged, so the option adds trusted
+locations, not executable names. Entries must be absolute existing directories
+that are not the filesystem root or the project root (or inside it), or plugin
+setup fails closed. A project rooted at `/` therefore has no eligible entries:
+every absolute directory is inside the workspace, so setup fails closed by
+design. Prepend only narrow, trusted directories: a broad ancestor such as
+`$HOME` or its parent grants broad read+exec, and prepending can shadow a
+same-named binary on PATH. An executable symlink inside a configured directory
+is resolved before execution under the same rules. When the option is unset or
+empty, resolution and the child environment keep the preset PATH unchanged.
 
 The workspace (project) is read/write/exec. **Network egress needs Linux tier
 T1** (user namespaces and TPROXY). Every run gets procage's transparent relay:

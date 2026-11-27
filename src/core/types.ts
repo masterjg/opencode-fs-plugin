@@ -30,6 +30,11 @@ export interface RunContext {
   readonly concurrency: number;
   readonly signal: AbortSignal;
   readonly tmpdir: string;
+  /**
+   * Canonical trusted executable directories configured with the plugin
+   * `commandPaths` option. They are prepended to PATH for `fs.command` only.
+   */
+  readonly commandPaths: readonly string[];
 }
 
 export interface ToolSpec<I> {

@@ -9,7 +9,8 @@ import { randomBytes } from "node:crypto";
 import * as path from "node:path";
 import { Type, type Static } from "@sinclair/typebox";
 import type { CageOptions, Relaxation, Violation } from "procage";
-import { FsError, errorMessage } from "../core/errors.js";
+import { FsError, errorMessage, fromErrno, isMissing } from "../core/errors.js";
+import { mapLimit } from "../core/parallel.js";
 import { RelayControlServer } from "../core/relay-control.js";
 import { collect } from "../core/stream.js";
 import { textResult, type RunContext, type ToolSpec } from "../core/types.js";
@@ -44,6 +45,112 @@ const EXEC_NAME = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/;
 
 export function isSafeExecName(value: string): boolean {
   return EXEC_NAME.test(value);
+}
+
+/**
+ * Containment predicate for canonical absolute paths. `path.relative` handles
+ * the filesystem root correctly: for root `/`, relative("/", "/usr") is "usr",
+ * while a naive `startsWith(root + path.sep)` becomes `startsWith("//")` and
+ * reports a false negative.
+ */
+function isWithinRoot(root: string, candidate: string): boolean {
+  if (candidate === root) return true;
+  const relative = path.relative(root, candidate);
+  return (
+    relative.length > 0 &&
+    relative !== ".." &&
+    !relative.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(relative)
+  );
+}
+
+type CommandPathResult =
+  | { readonly ok: true; readonly real: string }
+  | { readonly ok: false; readonly error: FsError };
+
+/**
+ * Validate the plugin `commandPaths` option and return canonical directory
+ * roots in configured order. This is config-level only: there is no per-call
+ * executable path option.
+ *
+ * Each entry must be a nonempty absolute directory that exists. Entries are
+ * canonicalized (so a configuration symlink is trusted at its real target),
+ * deduplicated after canonicalization, and must not be the filesystem root or
+ * the project root, or a descendant of the project root. Those roots are
+ * rejected because the workspace baseline is writable, while `commandPaths`
+ * grants only read+exec.
+ */
+export async function resolveCommandPaths(
+  raw: unknown,
+  projectRoot: string,
+  concurrency: number,
+): Promise<string[]> {
+  if (raw === undefined) return [];
+  if (!Array.isArray(raw)) {
+    throw new FsError("commandPaths must be an array of absolute directory paths.", "invalid");
+  }
+
+  const root = path.parse(projectRoot).root;
+  // Entries are independent, so resolve them in bounded parallel. Each mapper
+  // returns a result instead of throwing: errors are then thrown in configured
+  // order, so the first configured entry's error always wins regardless of
+  // which realpath/stat finished first.
+  const results = await mapLimit(
+    raw,
+    concurrency,
+    async (entry): Promise<CommandPathResult> => {
+      try {
+        if (typeof entry !== "string" || entry.length === 0) {
+          throw new FsError("commandPaths entries must be non-empty strings.", "invalid");
+        }
+        if (entry.includes("\0")) {
+          throw new FsError("commandPaths entries must not contain NUL bytes.", "invalid");
+        }
+        if (!path.isAbsolute(entry)) {
+          throw new FsError(
+            `commandPaths entry must be an absolute directory path: "${entry}".`,
+            "invalid",
+          );
+        }
+
+        let real: string;
+        try {
+          real = await fs.realpath(entry);
+        } catch (error) {
+          /* v8 ignore next */
+          if (!isMissing(error)) throw fromErrno(error, "access");
+          throw new FsError(`commandPaths entry not found: "${entry}".`, "not-found");
+        }
+        const stats = await fs.stat(real);
+        if (!stats.isDirectory()) {
+          throw new FsError(`commandPaths entry is not a directory: "${entry}".`, "not-directory");
+        }
+        if (real === root) {
+          throw new FsError(
+            `commandPaths must not be the filesystem root: "${entry}".`,
+            "invalid",
+          );
+        }
+        if (isWithinRoot(projectRoot, real)) {
+          throw new FsError(
+            `commandPaths must not be the project root or inside it: "${entry}".`,
+            "invalid",
+          );
+        }
+        return { ok: true, real };
+      } catch (error) {
+        /* v8 ignore next */
+        return { ok: false, error: error instanceof FsError ? error : fromErrno(error, "access") };
+      }
+    },
+  );
+
+  const resolved = new Set<string>();
+  for (const result of results) {
+    if (!result.ok) throw result.error;
+    resolved.add(result.real);
+  }
+  return [...resolved];
 }
 
 const Schema = Type.Object(
@@ -128,8 +235,9 @@ export const commandTool: ToolSpec<Input> = {
   name: "command",
   description:
     "Run an executable allowed by fs_command in a procage sandbox without a shell. Direct calls return JSON; " +
-    "pipe stages pass raw stdout. On Linux tier T1 every network flow is named to the transparent relay, " +
-    "which asks fs_command_network for its exact resource; elsewhere networking is disabled.",
+    "pipe stages pass raw stdout. Trusted executable directories configured by the plugin `commandPaths` option " +
+    "are searched before PATH; they are not per-call arguments. On Linux tier T1 every network flow is named " +
+    "to the transparent relay, which asks fs_command_network for its exact resource; elsewhere networking is disabled.",
   schema: Schema,
   pipeable: "filter",
   mutates: true,
@@ -154,7 +262,7 @@ export const commandTool: ToolSpec<Input> = {
     await ctx.permission.assertExternal([{ target: cwdTarget, boundary: cwdTarget.full }]);
     if (ctx.signal.aborted) throw new FsError("command interrupted.", "interrupted");
 
-    const executable = await resolveExecutable(command);
+    const executable = await resolveExecutable(command, ctx.commandPaths);
     const tempDir = await fs.mkdtemp(path.join(ctx.tmpdir, "fs-exec-"));
     try {
       const inputData = io.stdin === undefined
@@ -175,6 +283,7 @@ export const commandTool: ToolSpec<Input> = {
         allowed: approved,
         tempDir,
         input: inputData,
+        commandPaths: ctx.commandPaths,
       };
 
       let attempt: RelayAttempt | undefined;
@@ -258,6 +367,7 @@ interface CagedInput {
   allowed: Array<{ full: string }>;
   tempDir: string;
   input: Buffer | undefined;
+  commandPaths: readonly string[];
   relay?: RelaySettings;
 }
 
@@ -333,6 +443,13 @@ async function runCaged(ctx: RunContext, input: CagedInput): Promise<ExecOutcome
   addRule(doc, "exec", path.dirname(input.executable.real));
   addRule(doc, "exec", path.resolve(path.dirname(input.executable.real), ".."));
   await addOptionalRoots(doc, ["/home/linuxbrew", "/var/home/linuxbrew"], (root) => fs.access(root));
+  // Configured command roots are trusted for read and exec only. Never add a
+  // write rule here: the option exists to resolve binaries, not to widen the
+  // writable workspace.
+  for (const root of input.commandPaths) {
+    addRule(doc, "read", root);
+    addRule(doc, "exec", root);
+  }
   addRule(doc, "write", input.tempDir);
   addRule(doc, "write", input.cwd);
   for (const allowed of input.allowed) addRule(doc, "write", allowed.full);
@@ -374,6 +491,13 @@ async function runCaged(ctx: RunContext, input: CagedInput): Promise<ExecOutcome
   for (const name of EXEC_PROXY_ENV) {
     const value = process.env[name];
     if (value !== undefined) env[name] = value;
+  }
+  // Configured command roots are prepended to the existing PATH. Add nothing
+  // when the option is empty, so the preset supplies its own PATH unchanged.
+  if (input.commandPaths.length > 0) {
+    env.PATH = [...input.commandPaths, process.env.PATH ?? ""]
+      .filter((entry) => entry.length > 0)
+      .join(path.delimiter);
   }
 
   // Attach the listener before the spawn: an abort during the spawn await must
@@ -521,12 +645,24 @@ export function discoverExternalPaths(ctx: RunContext, outcome: ExecOutcome): st
     .filter((candidate, index, all) => all.indexOf(candidate) === index);
 }
 
-async function resolveExecutable(command: string): Promise<{ path: string; real: string }> {
-  const directories = (process.env.PATH ?? "").split(path.delimiter).filter(Boolean);
+export async function resolveExecutable(
+  command: string,
+  commandPaths: readonly string[] = [],
+): Promise<{ path: string; real: string }> {
+  const directories = [
+    ...commandPaths,
+    ...(process.env.PATH ?? "").split(path.delimiter).filter(Boolean),
+  ];
   for (const directory of directories) {
     const candidate = path.join(directory, command);
     try {
       await fs.access(candidate, fsConstants.X_OK);
+      // A directory named like the command can pass the X_OK search check but
+      // can never be spawned. Skip it so it does not shadow a real executable
+      // further down PATH. `stat` follows symlinks, so a symlink to a regular
+      // file still resolves and is accepted.
+      const stats = await fs.stat(candidate);
+      if (!stats.isFile()) continue;
       return { path: candidate, real: await fs.realpath(candidate) };
     } catch {
       // keep searching PATH

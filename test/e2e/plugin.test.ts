@@ -23,6 +23,19 @@ async function load(options: Record<string, unknown> = {}) {
   return { root, ...harness };
 }
 
+async function makeCommandPath(prefix: string): Promise<string> {
+  const dir = await makeRoot(prefix);
+  roots.push(dir);
+  return fs.realpath(dir);
+}
+
+async function writeProbe(dir: string, name: string, body: string): Promise<void> {
+  await fs.mkdir(dir, { recursive: true });
+  const file = path.join(dir, name);
+  await fs.writeFile(file, `#!${process.execPath}\n${body}\n`, { mode: 0o755 });
+  await fs.chmod(file, 0o755);
+}
+
 describe("plugin registration", () => {
   it("registers the fs namespace and native tools", async () => {
     const { editor } = await load();
@@ -64,6 +77,51 @@ describe("plugin registration", () => {
     roots.push(root);
     const harness = makePluginHarness(root, { concurrency: 0 });
     await expect(plugin.setup(harness.context as never)).rejects.toThrow(/concurrency/);
+  });
+
+  it("rejects invalid commandPaths", async () => {
+    const root = await makeRoot();
+    roots.push(root);
+    for (const commandPaths of ["nope", [""], ["relative/bin"], [root]]) {
+      const harness = makePluginHarness(root, { commandPaths });
+      await expect(plugin.setup(harness.context as never)).rejects.toThrow(/commandPaths/);
+    }
+  });
+
+  it("rejects commandPaths inside the filesystem root project", async () => {
+    const harness = makePluginHarness("/", { commandPaths: ["/tmp"] });
+    await expect(plugin.setup(harness.context as never)).rejects.toThrow(
+      /project root or inside/,
+    );
+  });
+
+  it("resolves a background command from a configured command path", async () => {
+    const root = await makeRoot();
+    const dir = await makeCommandPath("fs-command-plugin-");
+    await writeProbe(dir, "fs-command-probe", 'process.stdout.write("background")');
+    roots.push(root);
+    const harness = makePluginHarness(root, {
+      commandPaths: [dir],
+      jobDir: path.join(root, "jobs"),
+    });
+    const cleanup = (await plugin.setup(harness.context as never)) as () => void;
+    try {
+      const command = harness.editor.tools.find((tool) => tool.name === "command");
+      const job = harness.editor.tools.find((tool) => tool.name === "job");
+      const started = (await command?.execute(
+        { command: "fs-command-probe", background: true },
+        makeToolContext(),
+      )) as { content: string; metadata: Record<string, unknown> };
+      const payload = JSON.parse(started.content) as { jobId: string };
+      const waited = (await job?.execute(
+        { id: payload.jobId, wait: true, timeoutMs: 5000 },
+        makeToolContext(),
+      )) as { content: string; metadata: Record<string, unknown> };
+      expect(JSON.parse(waited.content)).toMatchObject({ stdout: "background", exitCode: 0 });
+      expect(waited.metadata).toMatchObject({ ok: true, state: "completed" });
+    } finally {
+      cleanup();
+    }
   });
 });
 

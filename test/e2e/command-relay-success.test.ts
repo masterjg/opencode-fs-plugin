@@ -6,6 +6,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as fs from "node:fs/promises";
 import * as net from "node:net";
+import * as path from "node:path";
 import { once } from "node:events";
 import { Sandbox } from "../../src/core/sandbox.js";
 import { RELAY_HELLO, encodeDecisionRequest, encodeFrame } from "../../src/core/relay-protocol.js";
@@ -14,6 +15,10 @@ import { makeRoot, runSpec } from "../helpers.js";
 
 interface MockState {
   options?: Record<string, unknown>;
+  policy?: {
+    fs: Array<{ access: string; target: { subpath: string } }>;
+    net?: string;
+  };
   spawnEnv?: Record<string, string>;
   decision?: { verdict: number; reason: string };
   repeatDecision?: { verdict: number; reason: string };
@@ -30,7 +35,8 @@ vi.mock("procage", async () => {
       return { toJSON: () => ({ fs: [], net: "none", ipc: { unix_sockets: [] } }) };
     }
 
-    static fromJSON() {
+    static fromJSON(doc: unknown) {
+      state.policy = doc as MockState["policy"];
       return {};
     }
   }
@@ -117,6 +123,7 @@ const roots: string[] = [];
 
 beforeEach(() => {
   state.options = undefined;
+  state.policy = undefined;
   state.spawnEnv = undefined;
   state.decision = undefined;
   state.repeatDecision = undefined;
@@ -194,6 +201,57 @@ describe("command relay success", () => {
         else process.env[name] = value;
       }
     }
+  });
+
+  it("grants read and exec only for configured command paths", async () => {
+    const dir = await makeRoot("fs-command-relay-paths-");
+    roots.push(dir);
+    const real = await fs.realpath(dir);
+    const root = await makeRoot("fs-command-relay-root-");
+    roots.push(root);
+    const result = await runSpec(
+      commandTool,
+      { command: "node", args: ["-e", "process.stdout.write('unused')"] },
+      await Sandbox.create(root),
+      { allowCommands: ["node"], commandPaths: [real] },
+    );
+    const rules = state.policy?.fs ?? [];
+    expect(rules).toContainEqual({ access: "read", target: { subpath: real } });
+    expect(rules).toContainEqual({ access: "exec", target: { subpath: real } });
+    expect(rules.some((rule) => rule.access === "write" && rule.target.subpath === real)).toBe(false);
+    expect(state.spawnEnv?.PATH).toBe(
+      `${real}${path.delimiter}${process.env.PATH ?? ""}`,
+    );
+    expect(JSON.parse(result.result.stdout.toString())).toMatchObject({ exitCode: 0 });
+  });
+
+  it("executes a symlink target without granting its directory read or write", async () => {
+    const dir = await makeRoot("fs-command-link-path-");
+    const targetDir = await makeRoot("fs-command-link-target-");
+    roots.push(dir, targetDir);
+    const realDir = await fs.realpath(dir);
+    const realTargetDir = await fs.realpath(targetDir);
+    const target = path.join(realTargetDir, "true-binary");
+    await fs.copyFile("/usr/bin/true", target);
+    await fs.chmod(target, 0o755);
+    await fs.symlink(target, path.join(realDir, "fs-command-link"));
+    const root = await makeRoot("fs-command-link-root-");
+    roots.push(root);
+    const result = await runSpec(
+      commandTool,
+      { command: "fs-command-link" },
+      await Sandbox.create(root),
+      { allowCommands: ["fs-command-link"], commandPaths: [realDir] },
+    );
+    const rules = state.policy?.fs ?? [];
+    expect(rules).toContainEqual({ access: "read", target: { subpath: realDir } });
+    expect(rules).toContainEqual({ access: "exec", target: { subpath: realDir } });
+    // The resolved target's directory gets the existing exec rule needed to run
+    // it, but the option must not add read or write there.
+    expect(rules).toContainEqual({ access: "exec", target: { subpath: realTargetDir } });
+    expect(rules.some((rule) => rule.access === "read" && rule.target.subpath === realTargetDir)).toBe(false);
+    expect(rules.some((rule) => rule.access === "write" && rule.target.subpath === realTargetDir)).toBe(false);
+    expect(JSON.parse(result.result.stdout.toString())).toMatchObject({ exitCode: 0 });
   });
 
   it("does not consult a legacy fs_exec_network rule", async () => {

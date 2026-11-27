@@ -165,6 +165,20 @@ you need:
 
 With no rule the base allow applies to every executable.
 
+Executable lookup can be widened once in the plugin options with
+`commandPaths`: absolute trusted directories are canonicalized (a configuration
+symlink is trusted at its real target), deduplicated, and prepended in order to
+both lookup and the child `PATH`. Each root grants read+exec for its whole
+directory tree and never pre-grants write; the existing exec rules also add exec
+on the resolved binary's directory and parent, with no target read/write from
+this option. The option adds no executable names; `fs_command` still checks the
+bare command name and there is no per-call path, `env`, or PATH field. Prepend
+only narrow, trusted directories: a broad ancestor such as `$HOME` grants broad
+read+exec, and prepending shadows same-named binaries. A project rooted at `/`
+has no eligible entries: every absolute directory is inside the workspace, so
+setup fails closed. A symlink inside a configured directory is resolved before
+execution under the same rules.
+
 The project is read/write/exec. **Network egress needs Linux tier T1** and uses
 procage's transparent relay. There are no per-call grants. Every TCP/UDP flow is
 named as a DNS QNAME, TLS SNI, HTTP `Host`, QUIC SNI, or IP literal, and that

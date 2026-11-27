@@ -150,6 +150,25 @@ Aliases are accepted only where noted: `path` for one `paths` element (`stat`,
   `fs_command` permission: the tool asserts that action with the bare name as its
   resource. With no rule the base allow applies to every executable; a `*` deny
   plus name allows closes the set.
+- The plugin option `commandPaths` accepts absolute existing directory paths.
+  Each entry is canonicalized (a configuration symlink is trusted at its real
+  target), deduplicated in configured order, and rejected if it is the
+  filesystem root, the project root, or inside the project. A project rooted at
+  `/` therefore has no eligible entry: every absolute directory is inside the
+  workspace, so setup fails closed by design. Configured roots are
+  prepended, in order, to executable resolution and to the child `PATH`; the
+  existing PATH follows. Each root grants procage `read` and `exec` for its
+  whole directory tree and never pre-grants `write`; a later write denial still
+  goes through the normal `external_directory` prompt. The existing exec rules
+  also grant `exec` on the resolved binary's directory and its parent; this
+  option adds no read or write there. The option is config-level only: there is
+  no per-call path, `env`, or PATH field, and it never adds names to the
+  `fs_command` allowlist. Prepend only narrow, trusted directories: a broad
+  ancestor such as `$HOME` or its parent grants broad read+exec, and prepending
+  can shadow a same-named binary. An executable symlink inside a configured
+  directory is resolved before execution under the same rules. Omitting or
+  emptying the option leaves resolution, policy, and the child environment
+  unchanged.
 - The policy is procage `agent_workspace` v3: the project is read/write/exec.
   External paths are denied by default and there are no per-call grants.
 - Network egress uses procage's transparent relay on Linux tier T1. A per-run

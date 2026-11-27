@@ -24,6 +24,8 @@ export interface RunSpecOptions {
   stdin?: AsyncIterable<Buffer>;
   /** Executables allowed by the mocked fs_command permission, when set. */
   allowCommands?: readonly string[];
+  /** Canonical trusted executable directories, as resolved by the plugin option. */
+  commandPaths?: readonly string[];
 }
 
 export interface RunSpecResult<I> {
@@ -79,6 +81,7 @@ export async function runSpec<I>(
       concurrency: options.concurrency ?? 4,
       signal: options.signal ?? new AbortController().signal,
       tmpdir: options.tmpdir ?? os.tmpdir(),
+      commandPaths: options.commandPaths ?? [],
     },
     input,
     options.stdin === undefined ? {} : { stdin: options.stdin },
