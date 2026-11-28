@@ -7,6 +7,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { TSchema } from "@sinclair/typebox";
+import type { EnvFileSource } from "../src/core/env-file.js";
 import { PermissionGate, type PermissionAssertInput } from "../src/core/permissions.js";
 import { parseSchema } from "../src/core/schema.js";
 import { Sandbox } from "../src/core/sandbox.js";
@@ -28,6 +29,8 @@ export interface RunSpecOptions {
   commandPaths?: readonly string[];
   /** Extra child environment entries, as resolved by the plugin option. */
   commandEnvVars?: Readonly<Record<string, string>>;
+  /** Resolved env-file sources, as produced by the plugin option resolver. */
+  commandEnvFiles?: readonly EnvFileSource[];
 }
 
 export interface RunSpecResult<I> {
@@ -85,6 +88,7 @@ export async function runSpec<I>(
       tmpdir: options.tmpdir ?? os.tmpdir(),
       commandPaths: options.commandPaths ?? [],
       commandEnvVars: options.commandEnvVars ?? {},
+      commandEnvFiles: options.commandEnvFiles ?? [],
     },
     input,
     options.stdin === undefined ? {} : { stdin: options.stdin },

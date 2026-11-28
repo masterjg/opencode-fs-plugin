@@ -120,6 +120,106 @@ describe("plugin registration", () => {
     );
   });
 
+  it("rejects invalid commandEnvFiles", async () => {
+    const root = await makeRoot();
+    roots.push(root);
+    for (const commandEnvFiles of ["nope", null, [""], [1], ["a\0b"]]) {
+      const harness = makePluginHarness(root, { commandEnvFiles });
+      await expect(plugin.setup(harness.context as never)).rejects.toThrow(/commandEnvFiles/);
+    }
+  });
+
+  it("resolves a relative commandEnvFiles path against the project root", async () => {
+    const root = await makeRoot();
+    const dir = await makeCommandPath("fs-command-plugin-env-file-");
+    await writeProbe(
+      dir,
+      "fs-command-probe",
+      'process.stdout.write(process.env.FS_RELATIVE_ENV ?? "missing")',
+    );
+    roots.push(root);
+    await fs.writeFile(path.join(root, ".env"), "FS_RELATIVE_ENV=relative-ok\n");
+    const harness = makePluginHarness(root, {
+      commandPaths: [dir],
+      commandEnvFiles: [".env"],
+    });
+    const cleanup = (await plugin.setup(harness.context as never)) as () => void;
+    try {
+      const command = harness.editor.tools.find((tool) => tool.name === "command");
+      const result = (await command?.execute(
+        { command: "fs-command-probe" },
+        makeToolContext(),
+      )) as { content: string; metadata: Record<string, unknown> };
+      expect(JSON.parse(result.content)).toMatchObject({ stdout: "relative-ok", exitCode: 0 });
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("passes env-file entries to a background command", async () => {
+    const root = await makeRoot();
+    const dir = await makeCommandPath("fs-command-plugin-env-file-bg-");
+    await writeProbe(
+      dir,
+      "fs-command-probe",
+      'process.stdout.write(process.env.FS_BACKGROUND_FILE ?? "missing")',
+    );
+    roots.push(root);
+    await fs.writeFile(path.join(root, ".env"), "FS_BACKGROUND_FILE=file-env\n");
+    const harness = makePluginHarness(root, {
+      commandPaths: [dir],
+      commandEnvFiles: [".env"],
+      jobDir: path.join(root, "jobs"),
+    });
+    const cleanup = (await plugin.setup(harness.context as never)) as () => void;
+    try {
+      const command = harness.editor.tools.find((tool) => tool.name === "command");
+      const job = harness.editor.tools.find((tool) => tool.name === "job");
+      const started = (await command?.execute(
+        { command: "fs-command-probe", background: true },
+        makeToolContext(),
+      )) as { content: string };
+      const payload = JSON.parse(started.content) as { jobId: string };
+      const waited = (await job?.execute(
+        { id: payload.jobId, wait: true, timeoutMs: 5000 },
+        makeToolContext(),
+      )) as { content: string; metadata: Record<string, unknown> };
+      expect(JSON.parse(waited.content)).toMatchObject({ stdout: "file-env", exitCode: 0 });
+      expect(waited.metadata).toMatchObject({ ok: true, state: "completed" });
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("fails a command per call, before spawn, when a configured env file is missing", async () => {
+    const root = await makeRoot();
+    roots.push(root);
+    const marker = path.join(root, "spawned-missing-env");
+    await fs.writeFile(path.join(root, ".env"), "FS_PRESENT=1\n");
+    const harness = makePluginHarness(root, {
+      commandEnvFiles: [".env", "missing.env", "missing.env"],
+    });
+    const cleanup = (await plugin.setup(harness.context as never)) as () => void;
+    try {
+      const command = harness.editor.tools.find((tool) => tool.name === "command");
+      const result = (await command?.execute(
+        {
+          command: "node",
+          args: [
+            "-e",
+            `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "ran")`,
+          ],
+        },
+        makeToolContext(),
+      )) as { content: string; metadata: Record<string, unknown> };
+      expect(result.content).toMatch(/^ERROR: commandEnvFiles\[1\] \(".*missing\.env"\)/);
+      expect(result.metadata).toMatchObject({ ok: false, code: "not-found" });
+      expect(await pathExists(marker)).toBe(false);
+    } finally {
+      cleanup();
+    }
+  });
+
   it("resolves a background command from a configured command path", async () => {
     const root = await makeRoot();
     const dir = await makeCommandPath("fs-command-plugin-");

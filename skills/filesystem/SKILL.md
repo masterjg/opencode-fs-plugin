@@ -1,6 +1,6 @@
 ---
 name: Filesystem
-description: Use when a task needs Linux-style filesystem, text, network, process, or system operations through the `fs` namespace - call `tools.fs.*` under `execute` or direct `fs_*` tools for paths, metadata, copy/move/remove, permissions, text filters and pipes, archives, hashing, comparing files/directories (`fs.diff`/`fs.comm`), HTTP(S) fetches, process listing, or the sandboxed `command` runner; includes `commandPaths`/`commandEnvVars`/per-call `envVars`, background jobs, and exact per-tool argument schemas, field types, bounds, required/optional fields, returns, and exit codes.
+description: Use when a task needs Linux-style filesystem, text, network, process, or system operations through the `fs` namespace - call `tools.fs.*` under `execute` or direct `fs_*` tools for paths, metadata, copy/move/remove, permissions, text filters and pipes, archives, hashing, comparing files/directories (`fs.diff`/`fs.comm`), HTTP(S) fetches, process listing, or the sandboxed `command` runner; includes `commandPaths`/`commandEnvVars`/`commandEnvFiles`/per-call `envVars`, background jobs, and exact per-tool argument schemas, field types, bounds, required/optional fields, returns, and exit codes.
 ---
 
 # Filesystem
@@ -173,7 +173,7 @@ accepts `path` or `paths`, but not both.
 
 | Tool | Fields | Notes |
 |---|---|---|
-| `fs.command` | `command str`, `args? str[]`, `cwd? str`, `stdin? str`, `timeoutMs? int` (100–600000, default 120000), `envVars? obj` (name → str) | `command` is a bare executable name with no path or shell syntax. `args` are literal argv; `cwd` defaults to the project root and is sandboxed; `stdin` is used only outside a pipe. `envVars` is a per-call shallow overlay on `commandEnvVars` with the same validation; `commandPaths`/`commandEnvVars` are plugin options. There is no arbitrary `env` or per-call PATH field. |
+| `fs.command` | `command str`, `args? str[]`, `cwd? str`, `stdin? str`, `timeoutMs? int` (100–600000, default 120000), `envVars? obj` (name → str) | `command` is a bare executable name with no path or shell syntax. `args` are literal argv; `cwd` defaults to the project root and is sandboxed; `stdin` is used only outside a pipe. `envVars` is a per-call shallow overlay on `commandEnvVars` and `.env` entries from `commandEnvFiles` with the same validation; `commandPaths`/`commandEnvVars`/`commandEnvFiles` are plugin options. There is no arbitrary `env` or per-call PATH field. |
 | `fs.pipe` | `stages` 1–50 × `{ tool str, args? obj }`, `input? str`, `output? str`, `append? bool` | Stage names are short (`cat`, not `fs.cat`) and only the registered stage set is accepted (see Pipe). `output`/`append` act as a final `tee` under `fs_tee`. |
 | `fs.job` | `id? str`, `wait? bool`, `cancel? bool`, `list? bool`, `timeoutMs? int` (1–600000, default 600000) | Needs `id` or `list`. `list` cannot combine with `id`/`wait`/`cancel`; `cancel` and `wait` are mutually exclusive. Permission `fs_job`. |
 
@@ -235,7 +235,7 @@ accepts `path` or `paths`, but not both.
   `paths`, `content`, or stdin.
 - `fs.command` does not accept a path, arbitrary `env`, or per-call PATH. Use
   its validated `envVars` overlay for selected child variables, and configure
-  `commandPaths`/`commandEnvVars` in the plugin options.
+  `commandPaths`/`commandEnvVars`/`commandEnvFiles` in the plugin options.
 - There is no `fs.write`; use the built-in `write` or `fs.tee({ paths, content })`.
 - Do not expect a JSON envelope from ordinary tools: a call resolves to text.
   `fs.command`, background starts, and `fs.job` are the exceptions.
@@ -308,8 +308,43 @@ or implicit forwarding of unrelated host variables. OpenCode's own
 `{env:VARIABLE_NAME}` config substitution may apply before plugin setup, and an
 unset variable becomes the empty string.
 
+`commandEnvFiles` adds `.env` file defaults. It is an ordered array of file
+paths: an absolute path is used as given, a relative path resolves against the
+project root, and OpenCode's `{env:NAME}` substitution applies before setup.
+An unset variable becomes empty, and an entry left empty is rejected at setup.
+Paths are trusted config and may name files outside the project. Identical
+resolved paths are read once and keep the first configured index in errors.
+Each file is read once per call, before the command starts; a relay retry reuses
+the snapshot, so rotation applies to the next call without a reload. A file
+inside the writable workspace can be changed by the model or a build step and
+then injects env into later commands: keep credentials in absolute paths outside
+the workspace. (Per-call `envVars` already sets arbitrary names except
+`PATH`/`TMPDIR`, so persistence is the distinct risk.)
+Precedence is `commandEnvVars`, then files in listed order, then per-call
+`envVars`. Parsing is strict data, never shell: UTF-8 (one BOM allowed),
+LF/CRLF, blank and `#` lines, optional `export `, `KEY=VALUE` with trimmed
+whitespace, unquoted `#` comments only at the value start or after whitespace,
+literal single quotes (no embedded single quote), only `\n`/`\r`/`\t`/`\\`/`\"`
+in double quotes, last
+duplicate key wins, empty values allowed, and no interpolation or execution.
+`PATH`/`TMPDIR`, invalid names, NUL bytes, invalid UTF-8, a missing `=`,
+unterminated quotes, trailing text after a quote, unsupported escapes, and files
+over 1 MiB fail closed. The read stops at 1 MiB + 1 byte, so a growing file or
+zero-size pseudo-file cannot make it unbounded. The resolve/open/read is not
+bounded by `fs.command.timeoutMs`, and an in-flight read is not cancelled by
+abort; a stalled remote or FUSE mount can stall the call. A missing, unreadable,
+or non-regular file (directory, FIFO, device, socket) fails the call before
+spawn;
+FIFO has no deterministic test fixture but uses the same non-blocking,
+regular-file check. The plugin reads those paths itself outside the child
+sandbox; it grants no child read rule and no `external_directory` prompt.
+A configured symlink is followed at its real target; a hard link reads the
+regular file it names. Errors name the file index/path; parse errors add a line
+number, never content or values.
+
 A single call can overlay selected values with `envVars`. It is a shallow
-per-invocation overlay on `commandEnvVars`: a same-named value wins, unspecified
+per-invocation overlay on `commandEnvVars` and the file-derived entries: a
+same-named value wins, unspecified
 configured entries remain, and an empty string sets that variable to empty. It
 works for direct calls, pipe command stages, and background jobs, uses the same
 validation, and adds no lookup, `PATH`, filesystem, or network permission:
@@ -318,9 +353,12 @@ validation, and adds no lookup, `PATH`, filesystem, or network permission:
 await tools.fs.command({ command: "npm", args: ["test"], envVars: { NODE_ENV: "test" } })
 ```
 
-The configured and per-call values are trusted input and can change what the
-allowlisted executable and its descendants do. The plugin does
-not automatically add them to its own errors or result metadata,
+`commandEnvVars` and per-call `envVars` are config/caller-controlled trusted
+input and can change what the
+allowlisted executable and its descendants do. File-derived entries reach the
+child the same way once parsed, but their content may be writable by the model
+or build steps and is not equivalent config. The plugin does
+not automatically add any of these values to its own errors or result metadata,
 but the executable and its descendants can read them and may print or write
 them; stdout and stderr are returned normally. Treat them as visible to that
 executable and its descendants.
@@ -362,7 +400,8 @@ as the destination, never its `CONNECT` target, so allow the proxy's address or
 cached DNS name in `fs_command_network`; approving it lets the proxy reach whatever
 it forwards. Beyond the explicit proxy list and plugin-managed `TMPDIR` (and
 `PATH` when `commandPaths` is set), the only caller-supplied entries passed
-explicitly are the validated `commandEnvVars` and per-call `envVars`; arbitrary
+explicitly are the validated `commandEnvVars`, entries parsed from configured
+`commandEnvFiles`, and per-call `envVars`; arbitrary
 caller `process.env` entries do not pass. The preset's own allowlist still
 applies, and a proxy variable may itself carry proxy credentials.
 

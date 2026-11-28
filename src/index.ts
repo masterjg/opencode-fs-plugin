@@ -20,7 +20,7 @@ import { catTool } from "./tools/cat.js";
 import { chmodTool } from "./tools/chmod.js";
 import { chownTool } from "./tools/chown.js";
 import { commTool } from "./tools/comm.js";
-import { commandTool, resolveCommandEnvVars, resolveCommandPaths } from "./tools/command.js";
+import { commandTool, resolveCommandEnvFiles, resolveCommandEnvVars, resolveCommandPaths } from "./tools/command.js";
 import { cpTool } from "./tools/cp.js";
 import { cpioTool } from "./tools/cpio.js";
 import { curlTool } from "./tools/curl.js";
@@ -212,6 +212,10 @@ export default Plugin.define({
       concurrency,
     );
     const commandEnvVars = resolveCommandEnvVars(ctx.options?.commandEnvVars);
+    const commandEnvFiles = resolveCommandEnvFiles(
+      ctx.options?.commandEnvFiles,
+      sandbox.root,
+    );
     const jobs = new JobManager(
       typeof ctx.options?.jobDir === "string" ? { dir: ctx.options.jobDir } : {},
     );
@@ -261,6 +265,7 @@ export default Plugin.define({
                     tmpdir: os.tmpdir(),
                     commandPaths,
                     commandEnvVars,
+                    commandEnvFiles,
                   },
                   parsed,
                   {},

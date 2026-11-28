@@ -185,19 +185,80 @@ Aliases are accepted only where noted: `path` for one `paths` element (`stat`,
   `PATH` and `TMPDIR` are refused
   because `commandPaths` owns lookup/PATH and the tool owns each child's private
   temp directory. Invalid configuration fails plugin setup.
+- The plugin option `commandEnvFiles` is an ordered array of `.env` file paths.
+  An absolute path is used as given; a relative path resolves against the
+  sandbox/project root at setup. The option is trusted configuration and is not
+  confined to the project: an absolute path, or a relative path using `..`, may
+  name a file outside it. OpenCode's `{env:NAME}` substitution has
+  already run, so a path receives the expanded text; an unset variable becomes
+  the empty string, and an entry that is empty after substitution is rejected at
+  setup as a non-empty-string violation. The plugin expands no `~`
+  or `$HOME` and performs no substitution. Every file is read once per
+  `fs.command` call, before the first spawn attempt; a relay fallback retry
+  reuses that snapshot, so rotation applies without a reload. Existence is
+  checked per call, not at setup, and identical resolved paths are read once,
+  retaining the first configured index for diagnostics. The option list is
+  trusted configuration, but file content is only as trustworthy as the file: a
+  workspace-relative path can be modified by the model or a build step, and its
+  values persist into every later command, so a writable file can inject names
+  such as `NODE_OPTIONS` or `LD_PRELOAD`. Keep credentials in absolute paths
+  outside the writable workspace. This is not a new per-command capability
+  (per-call `envVars` already sets arbitrary names except `PATH` and `TMPDIR`),
+  but persistence across calls is the distinct risk. Precedence is
+  `commandEnvVars`, then the files in listed order (later overrides earlier),
+  then per-call `envVars`. Entries use the `commandEnvVars` validator, including
+  its name rule and its refusal of `PATH` and `TMPDIR`. The format is strict
+  `.env` data, never shell source: UTF-8 with LF/CRLF, one optional leading BOM,
+  blank and `#` comment lines, optional `export ` as plain text, `KEY=VALUE`
+  with whitespace trimmed around the key and an unquoted value, an unquoted `#`
+  comment only at the value start or after whitespace, literal single-quoted
+  values (which cannot contain a single quote), double-quoted `\n`, `\r`, `\t`,
+  `\\`, and `\"` escapes only, and the
+  last duplicate key wins. Empty values are accepted. There is no interpolation
+  or execution. Invalid names, NUL bytes, invalid UTF-8, unterminated quotes,
+  text after a quoted value, unsupported escapes, a line without `=`, a file
+  over 1 MiB, `PATH`, and `TMPDIR` fail closed. A missing, unreadable, or
+  non-regular file also fails the call before executable resolution, temp
+  directory creation, or spawn; the first configured file's error wins in list
+  order, and an abort stops scheduling further reads. The resolved final
+  component is opened
+  no-follow and non-blocking, so a final symlink swapped in after resolution
+  fails instead of being followed, and a directory, FIFO, or device is refused
+  instead of read. A FIFO uses the same non-blocking open and regular-file
+  check; no deterministic FIFO fixture exists in the test suite, while
+  directories, a character device, and a Unix socket are covered. A configured
+  symlink itself is followed at its real target.
+  The read is bounded to 1 MiB + 1 byte, so a file that grows after the size
+  check, or a pseudo-file that reports a zero size, cannot make the read
+  unbounded. The host-side resolve/open/read is not governed by
+  `fs.command.timeoutMs`, and an in-flight read is not cancelled by abort; a
+  stalled remote or FUSE mount can stall the call. The cap bounds memory, not
+  elapsed time. A hard link reads the regular file it names; only the configured path is
+  opened. A parent-directory swap, or a replacement of the final regular file
+  after resolution, remains a TOCTOU gap. The plugin applies no
+  ownership or mode policy of its own; the OS read permission for the plugin's
+  user decides. This is a host read outside the child sandbox: it adds no
+  procage read rule and raises no `external_directory` prompt. Errors name the
+  file index/path; parse errors add a line number, while read, size, and
+  `PATH`/`TMPDIR` validation errors do not. Errors never include file content
+  or entry values, and file-derived values are not added to result metadata.
 - `fs.command` also accepts an optional per-invocation `envVars` object with the
   same shape, validation, and failure behavior. It is a shallow overlay on
-  `commandEnvVars`: a same-named value wins, unspecified configured entries
+  `commandEnvVars` and the file-derived entries: a same-named value wins, unspecified configured entries
   remain, and an empty string sets the variable to the empty string. It applies
   to direct calls, `fs.pipe` command stages, and background jobs. It never
   changes executable lookup or `PATH` and adds no filesystem or network
   permission. Invalid input fails the call before that command runs.
-- `commandEnvVars` and `envVars` are trusted input and can change what the
-  allowlisted executable and its descendants do. The plugin does not
-  automatically add their values to its own errors or result metadata, but the
-  executable and its descendants can read them and may print or write them;
-  stdout and stderr are returned normally. Treat every configured or per-call
-  value as visible to that executable and its descendants.
+- `commandEnvVars` and `envVars` are config/caller-controlled trusted input and
+  can change what the
+  allowlisted executable and its descendants do. File-derived entries reach the
+  child the same way once parsed, but their content may be writable by the model
+  or build steps, so they are not equivalent config. The plugin does not
+  automatically add any of these values to its own errors or result metadata,
+  but the executable and its descendants can read them and may print or write
+  them; stdout and stderr are returned normally. Treat every configured,
+  file-derived, or per-call value as visible to that executable and its
+  descendants.
 - The policy is procage `agent_workspace` v3: the project is read/write/exec.
   External paths are denied by default and there are no per-call grants.
 - Network egress uses procage's transparent relay on Linux tier T1. A per-run
@@ -246,7 +307,8 @@ Aliases are accepted only where noted: `path` for one `paths` element (`stat`,
   address or cached DNS name must be allowed in `fs_command_network`. Beyond the
   explicit proxy list and plugin-managed `TMPDIR` (and `PATH` when `commandPaths`
   is set), the only caller-supplied entries passed explicitly are the validated
-  `commandEnvVars` and per-call `envVars`; arbitrary caller `process.env` entries
+  `commandEnvVars`, entries parsed from configured `commandEnvFiles`, and
+  per-call `envVars`; arbitrary caller `process.env` entries
   are not. The preset's own allowlist still applies, and a proxy variable may
   itself carry credentials.
 - Denied paths ask `external_directory` on their containing directory (or the

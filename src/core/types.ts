@@ -4,6 +4,7 @@
  */
 
 import type { TSchema } from "@sinclair/typebox";
+import type { EnvFileSource } from "./env-file.js";
 import type { Sandbox } from "./sandbox.js";
 import type { PermissionGate } from "./permissions.js";
 
@@ -42,6 +43,14 @@ export interface RunContext {
    * plugin-managed.
    */
   readonly commandEnvVars: Readonly<Record<string, string>>;
+  /**
+   * Configured `commandEnvFiles` entries in merge order, each retaining its
+   * original option index. `fs.command` reads them once per call, before the
+   * first spawn attempt, so a rotated file applies to the next call without a
+   * plugin reload and a relay fallback reuses the same snapshot. The plugin
+   * reads them itself; the child sandbox gets no read rule for them.
+   */
+  readonly commandEnvFiles: readonly EnvFileSource[];
 }
 
 export interface ToolSpec<I> {

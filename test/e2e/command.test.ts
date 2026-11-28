@@ -19,12 +19,14 @@ import {
   isSafeExecName,
   isSandboxBlocked,
   relayGapReason,
+  resolveCommandEnvFiles,
   resolveCommandEnvVars,
   resolveCommandPaths,
   resolveExecutable,
   type ExecOutcome,
   type PolicyDocument,
 } from "../../src/tools/command.js";
+import { MAX_ENV_FILE_BYTES, type EnvFileSource } from "../../src/core/env-file.js";
 import { pipeTool } from "../../src/tools/pipe.js";
 import { makeOutside, makeRoot, pathExists, runSpec } from "../helpers.js";
 
@@ -775,16 +777,17 @@ describe("command paths", () => {
     ).rejects.toThrow("permission denied by test");
   });
 
-  it("rejects a commandPaths field in the tool input", async () => {
+  it("rejects config-only fields in the tool input", async () => {
     const { sb } = await setup();
-    await expect(
-      runSpec(
-        commandTool,
-        { command: "node", commandPaths: ["/tmp"] },
-        sb,
-        { allowCommands: ["node"] },
-      ),
-    ).rejects.toMatchObject({ code: "invalid" });
+    for (const extra of [
+      { commandPaths: ["/tmp"] },
+      { commandEnvFiles: [".env"] },
+      { commandEnvVars: { FS_EXTRA: "x" } },
+    ]) {
+      await expect(
+        runSpec(commandTool, { command: "node", ...extra }, sb, { allowCommands: ["node"] }),
+      ).rejects.toMatchObject({ code: "invalid" });
+    }
   });
 
   it("validates and canonicalizes the commandPaths option", async () => {
@@ -1140,6 +1143,246 @@ describe("command environment", () => {
       expect(message).not.toContain("s3cret");
       expect(message).not.toContain("1BAD");
       expect(message).not.toContain("TOPSECRET");
+    }
+  });
+});
+
+describe("command env files", () => {
+  function source(file: string, index = 0): EnvFileSource {
+    return { path: file, index };
+  }
+
+  async function writeEnvFile(root: string, name: string, content: string): Promise<string> {
+    const file = path.join(root, name);
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(file, content);
+    return file;
+  }
+
+  function markerScript(marker: string): string {
+    return `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "ran")`;
+  }
+
+  it("merges configured values, files in order, and the per-call overlay", async () => {
+    const { root, sb } = await setup();
+    const first = await writeEnvFile(
+      root,
+      ".env",
+      "FS_ENV_MARKER=file-one\nFS_ENV_ONE=one\nFS_ENV_KEEP=keep\nFS_ENV_EMPTY=from-file\n",
+    );
+    const second = await writeEnvFile(
+      root,
+      ".env.local",
+      "FS_ENV_MARKER=file-two\nFS_ENV_TWO=two\nFS_ENV_EMPTY=\n",
+    );
+    const result = await runSpec(
+      commandTool,
+      {
+        command: "node",
+        args: [
+          "-e",
+          'process.stdout.write(JSON.stringify({ marker: process.env.FS_ENV_MARKER, one: process.env.FS_ENV_ONE, two: process.env.FS_ENV_TWO, keep: process.env.FS_ENV_KEEP, empty: process.env.FS_ENV_EMPTY, configured: process.env.FS_ENV_CONFIGURED }))',
+        ],
+        envVars: { FS_ENV_MARKER: "call-value" },
+      },
+      sb,
+      {
+        allowCommands: ["node"],
+        commandEnvVars: { FS_ENV_MARKER: "configured", FS_ENV_CONFIGURED: "yes" },
+        commandEnvFiles: [source(first, 0), source(second, 1)],
+      },
+    );
+    expect(JSON.parse(parsed(result).stdout as string)).toEqual({
+      marker: "call-value",
+      one: "one",
+      two: "two",
+      keep: "keep",
+      empty: "",
+      configured: "yes",
+    });
+  });
+
+  it("lets a later file override an earlier file and the configured value", async () => {
+    const { root, sb } = await setup();
+    const first = await writeEnvFile(root, ".env", "FS_ENV_ORDER=first\n");
+    const second = await writeEnvFile(root, ".env.local", "FS_ENV_ORDER=second\n");
+    const result = await runSpec(
+      commandTool,
+      { command: "node", args: ["-e", "process.stdout.write(process.env.FS_ENV_ORDER ?? 'missing')"] },
+      sb,
+      {
+        allowCommands: ["node"],
+        commandEnvVars: { FS_ENV_ORDER: "configured" },
+        commandEnvFiles: [source(first, 0), source(second, 1)],
+      },
+    );
+    expect(parsed(result).stdout).toBe("second");
+  });
+
+  it("re-reads configured files on every command", async () => {
+    const { root, sb } = await setup();
+    const file = await writeEnvFile(root, ".env", "FS_ENV_ROTATE=first\n");
+    const options = { allowCommands: ["node"], commandEnvFiles: [source(file)] };
+    const args = ["-e", "process.stdout.write(process.env.FS_ENV_ROTATE ?? 'missing')"];
+    const before = await runSpec(commandTool, { command: "node", args }, sb, options);
+    expect(parsed(before).stdout).toBe("first");
+    await fs.writeFile(file, "FS_ENV_ROTATE=second\n");
+    const after = await runSpec(commandTool, { command: "node", args }, sb, options);
+    expect(parsed(after).stdout).toBe("second");
+  });
+
+  it("fails before spawning when a configured file is missing, a directory, or a device", async () => {
+    const { root, sb } = await setup();
+    const cases: Array<{ file: string; code: string }> = [
+      { file: path.join(root, "missing.env"), code: "not-found" },
+      { file: root, code: "not-file" },
+      { file: "/dev/null", code: "not-file" },
+    ];
+    for (const [index, item] of cases.entries()) {
+      const marker = path.join(root, `spawned-${index}`);
+      let message = "";
+      try {
+        await runSpec(
+          commandTool,
+          { command: "node", args: ["-e", markerScript(marker)] },
+          sb,
+          { allowCommands: ["node"], commandEnvFiles: [source(item.file)] },
+        );
+      } catch (error) {
+        message = (error as Error).message;
+        expect(error).toMatchObject({ code: item.code });
+      }
+      expect(message).toContain('commandEnvFiles[0] ("');
+      expect(await pathExists(marker)).toBe(false);
+    }
+
+    if (process.getuid?.() !== 0) {
+      const file = await writeEnvFile(root, "unreadable.env", "FS_ENV_UNREADABLE=1\n");
+      await fs.chmod(file, 0o000);
+      const marker = path.join(root, "spawned-unreadable");
+      await expect(
+        runSpec(
+          commandTool,
+          { command: "node", args: ["-e", markerScript(marker)] },
+          sb,
+          { allowCommands: ["node"], commandEnvFiles: [source(file)] },
+        ),
+      ).rejects.toMatchObject({ code: "access" });
+      expect(await pathExists(marker)).toBe(false);
+    }
+  });
+
+  it("fails before spawning on malformed file content without leaking values", async () => {
+    const { root, sb } = await setup();
+    const secret = "fs-env-secret-7d2a";
+    const cases = [
+      { content: `FS_ENV_OK=1\nBROKEN LINE ${secret}\n`, match: /line 2: expected KEY=VALUE/ },
+      { content: `PATH=${secret}\n`, match: /cannot set PATH/ },
+      { content: `FS_ENV_SECRET=${secret}\0tail\n`, match: /line 1: FS_ENV_SECRET must not contain NUL/ },
+      { content: `FS_ENV_SECRET="${secret}\n`, match: /line 1: unterminated double-quoted value/ },
+    ];
+    for (const [index, item] of cases.entries()) {
+      const file = await writeEnvFile(root, `bad-${index}.env`, item.content);
+      const marker = path.join(root, `spawned-bad-${index}`);
+      let message = "";
+      try {
+        await runSpec(
+          commandTool,
+          { command: "node", args: ["-e", markerScript(marker)] },
+          sb,
+          { allowCommands: ["node"], commandEnvFiles: [source(file)] },
+        );
+      } catch (error) {
+        message = (error as Error).message;
+        expect(error).toMatchObject({ code: "invalid" });
+      }
+      expect(message).toMatch(item.match);
+      expect(message).not.toContain(secret);
+      expect(await pathExists(marker)).toBe(false);
+    }
+  });
+
+  it("rejects an oversized file before spawning", async () => {
+    const { root, sb } = await setup();
+    const file = path.join(root, "huge.env");
+    await fs.writeFile(file, `A=${"x".repeat(MAX_ENV_FILE_BYTES)}`);
+    const marker = path.join(root, "spawned-huge");
+    await expect(
+      runSpec(
+        commandTool,
+        { command: "node", args: ["-e", markerScript(marker)] },
+        sb,
+        { allowCommands: ["node"], commandEnvFiles: [source(file)] },
+      ),
+    ).rejects.toMatchObject({ code: "invalid" });
+    expect(await pathExists(marker)).toBe(false);
+  });
+
+  it("follows a configured symlink to a regular env file", async () => {
+    const { root, sb } = await setup();
+    const target = await writeEnvFile(root, "real.env", "FS_ENV_LINK=followed\n");
+    const link = path.join(root, ".env");
+    await fs.symlink(target, link);
+    const result = await runSpec(
+      commandTool,
+      { command: "node", args: ["-e", "process.stdout.write(process.env.FS_ENV_LINK ?? 'missing')"] },
+      sb,
+      { allowCommands: ["node"], commandEnvFiles: [source(link)] },
+    );
+    expect(parsed(result).stdout).toBe("followed");
+  });
+
+  it("passes file entries into a pipe command stage", async () => {
+    const { root, sb } = await setup();
+    const file = await writeEnvFile(root, ".env", "FS_PIPE_ENV=from-file\n");
+    const result = await runSpec(
+      pipeTool,
+      {
+        stages: [
+          {
+            tool: "command",
+            args: {
+              command: "node",
+              args: ["-e", "process.stdout.write(process.env.FS_PIPE_ENV ?? 'missing')"],
+            },
+          },
+          { tool: "cat" },
+        ],
+      },
+      sb,
+      { allowCommands: ["node"], commandEnvFiles: [source(file)] },
+    );
+    expect(result.result.stdout.toString()).toBe("from-file");
+  });
+
+  it("does not add file-derived values to result metadata", async () => {
+    const { root, sb } = await setup();
+    const secret = "fs-env-metadata-3b8c";
+    const file = await writeEnvFile(root, ".env", `FS_ENV_SECRET=${secret}\n`);
+    const result = await runSpec(
+      commandTool,
+      { command: "node", args: ["-e", "process.stdout.write(process.env.FS_ENV_SECRET ?? 'missing')"] },
+      sb,
+      { allowCommands: ["node"], commandEnvFiles: [source(file)] },
+    );
+    expect(parsed(result).stdout).toBe(secret);
+    expect(JSON.stringify(result.result.metadata ?? {})).not.toContain(secret);
+  });
+
+  it("validates and resolves the commandEnvFiles option", () => {
+    expect(resolveCommandEnvFiles(undefined, "/project")).toEqual([]);
+    expect(
+      resolveCommandEnvFiles(["a.env", "/abs/b.env", "a.env", "./a.env"], "/project"),
+    ).toEqual([
+      { path: path.resolve("/project", "a.env"), index: 0 },
+      { path: "/abs/b.env", index: 1 },
+    ]);
+    expect(resolveCommandEnvFiles(["x.env", "y.env", "x.env"], "/project")).toEqual([
+      { path: path.resolve("/project", "x.env"), index: 0 },
+      { path: path.resolve("/project", "y.env"), index: 1 },
+    ]);
+    for (const raw of ["nope", null, 42, [""], [1], ["a\0b"]]) {
+      expect(() => resolveCommandEnvFiles(raw, "/project")).toThrow(/commandEnvFiles/);
     }
   });
 });

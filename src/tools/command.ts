@@ -10,6 +10,8 @@ import * as path from "node:path";
 import { Type, type Static } from "@sinclair/typebox";
 import type { CageOptions, Relaxation, Violation } from "procage";
 import { FsError, errorMessage, fromErrno, isMissing } from "../core/errors.js";
+import { resolveCommandEnvVars } from "../core/env.js";
+import { loadEnvFiles, type EnvFileSource } from "../core/env-file.js";
 import { mapLimit } from "../core/parallel.js";
 import { RelayControlServer } from "../core/relay-control.js";
 import { collect } from "../core/stream.js";
@@ -18,10 +20,10 @@ import { textResult, type RunContext, type ToolSpec } from "../core/types.js";
 /**
  * Proxy settings the child may inherit in addition to the preset's own
  * environment allowlist. They are passed explicitly because the policy's
- * allowlist does not name them. The validated `commandEnvVars` and per-call
- * `envVars` entries are also passed explicitly; no other caller `process.env`
- * variable is, but the preset's allowlist still applies, and a proxy variable
- * may itself carry proxy credentials.
+ * allowlist does not name them. The validated `commandEnvVars`, `commandEnvFiles`,
+ * and per-call `envVars` entries are also passed explicitly; no other caller
+ * `process.env` variable is, but the preset's allowlist still applies, and a
+ * proxy variable may itself carry proxy credentials.
  */
 export const EXEC_PROXY_ENV = [
   "HTTP_PROXY",
@@ -154,53 +156,50 @@ export async function resolveCommandPaths(
   return [...resolved];
 }
 
-/** POSIX-style environment variable names only; no `=` or NUL can occur. */
-const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
-/** Names the plugin owns, so a configuration cannot break resolution or sandboxing. */
-const MANAGED_ENV_NAMES: ReadonlySet<string> = new Set(["PATH", "TMPDIR"]);
+/**
+ * Re-exported so callers and tests reach the shared environment validator
+ * through the command tool module.
+ */
+export { resolveCommandEnvVars };
 
 /**
- * Validate an environment entry map and return its entries. The same rules
- * apply to the plugin `commandEnvVars` option and the per-invocation `envVars`
- * argument; `label` names the field in diagnostics.
+ * Validate the plugin `commandEnvFiles` option and return `EnvFileSource`
+ * entries in configured order. Each entry carries the absolute resolved path
+ * plus its original zero-based index in the option array; the index is retained
+ * across deduplication so diagnostics still name the configured position.
  *
- * It is a closed object of environment-name keys to string values. Values are
- * never echoed in an error, because they may carry credentials. NUL bytes are
- * rejected because they cannot reach a child environment intact. `PATH` and
- * `TMPDIR` are rejected because `commandPaths` owns lookup/PATH and the tool
- * owns each child's private temp directory. Empty values are accepted and set
- * the variable to the empty string; they do not unset or remove it.
+ * Entries must be non-empty strings without NUL bytes. An absolute path is
+ * used as given; a relative path resolves against the project (sandbox) root,
+ * so a project-local config behaves the same regardless of the server's
+ * working directory. OpenCode substitutes `{env:NAME}` before plugin setup, so
+ * this option receives the expanded text; an unset variable becomes the empty
+ * string, which then fails the non-empty-string check. The plugin performs no
+ * substitution of its own and expands no `~`. Existence, readability, and
+ * content are
+ * checked on every `fs.command` call, not at setup, so a rotated or recreated
+ * file applies without a plugin reload. Identical resolved paths are read once;
+ * the entry keeps the first configured index for diagnostics.
  */
-export function resolveCommandEnvVars(
-  raw: unknown,
-  label = "commandEnvVars",
-): Record<string, string> {
-  if (raw === undefined) return {};
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-    throw new FsError(
-      `${label} must be an object mapping environment variable names to string values.`,
-      "invalid",
-    );
+export function resolveCommandEnvFiles(raw: unknown, projectRoot: string): EnvFileSource[] {
+  if (raw === undefined) return [];
+  if (!Array.isArray(raw)) {
+    throw new FsError("commandEnvFiles must be an array of .env file paths.", "invalid");
   }
-
-  const entries: Array<[string, string]> = [];
-  for (const [name, value] of Object.entries(raw)) {
-    if (!ENV_NAME.test(name)) {
-      // Do not echo the supplied key: it can be malformed or carry sensitive text.
-      throw new FsError(`${label} contains an invalid environment variable name.`, "invalid");
+  const seen = new Set<string>();
+  const files: EnvFileSource[] = [];
+  for (const [index, entry] of raw.entries()) {
+    if (typeof entry !== "string" || entry.length === 0) {
+      throw new FsError("commandEnvFiles entries must be non-empty strings.", "invalid");
     }
-    if (MANAGED_ENV_NAMES.has(name)) {
-      throw new FsError(`${label} cannot set ${name}; the plugin manages it.`, "invalid");
+    if (entry.includes("\0")) {
+      throw new FsError("commandEnvFiles entries must not contain NUL bytes.", "invalid");
     }
-    if (typeof value !== "string") {
-      throw new FsError(`${label}.${name} must be a string.`, "invalid");
-    }
-    if (value.includes("\0")) {
-      throw new FsError(`${label}.${name} must not contain NUL bytes.`, "invalid");
-    }
-    entries.push([name, value]);
+    const full = path.resolve(projectRoot, entry);
+    if (seen.has(full)) continue;
+    seen.add(full);
+    files.push({ path: full, index });
   }
-  return Object.fromEntries(entries);
+  return files;
 }
 
 const Schema = Type.Object(
@@ -219,7 +218,7 @@ const Schema = Type.Object(
       // key or a value, though a valid variable name can appear in its message.
       Type.Record(Type.String({ pattern: "^[\\s\\S]*$" }), Type.Unknown(), {
         description:
-          "Object mapping environment variable names to string values. Shallow per-call overlay on the plugin `commandEnvVars` values: same name overrides, unspecified values remain. Same rules as the plugin option; `PATH` and `TMPDIR` are refused.",
+          "Object mapping environment variable names to string values. Shallow per-call overlay on the plugin `commandEnvVars` and `commandEnvFiles` values: same name overrides, unspecified values remain. Same rules as the plugin option; `PATH` and `TMPDIR` are refused.",
       }),
     ),
   },
@@ -295,8 +294,8 @@ export const commandTool: ToolSpec<Input> = {
   name: "command",
   description:
     "Run an executable allowed by fs_command in a procage sandbox without a shell. Direct calls return JSON; " +
-    "pipe stages pass raw stdout. An optional per-call `envVars` overwrites selected plugin `commandEnvVars` values " +
-    "for this invocation only. Trusted executable directories configured by the plugin `commandPaths` option " +
+    "pipe stages pass raw stdout. An optional per-call `envVars` overwrites selected plugin `commandEnvVars` or " +
+    "`commandEnvFiles` values for this invocation only. Trusted executable directories configured by the plugin `commandPaths` option " +
     "are searched before PATH; they are not per-call arguments. On Linux tier T1 every network flow is named " +
     "to the transparent relay, which asks fs_command_network for its exact resource; elsewhere networking is disabled.",
   schema: Schema,
@@ -327,6 +326,14 @@ export const commandTool: ToolSpec<Input> = {
     await ctx.permission.assertExternal([{ target: cwdTarget, boundary: cwdTarget.full }]);
     if (ctx.signal.aborted) throw new FsError("command interrupted.", "interrupted");
 
+    // Configured .env files are read once per call, so rotation applies
+    // without a plugin reload; a relay fallback retry reuses this snapshot
+    // rather than reading again. The fs_command decision above comes first: a
+    // denied command never causes a read. A missing, unreadable, non-regular,
+    // oversized, or malformed file fails here, before executable resolution,
+    // temp-directory creation, and any child spawn.
+    const fileEnvVars = await loadEnvFiles(ctx.commandEnvFiles, ctx.concurrency, ctx.signal);
+
     const executable = await resolveExecutable(command, ctx.commandPaths);
     const tempDir = await fs.mkdtemp(path.join(ctx.tmpdir, "fs-exec-"));
     try {
@@ -349,6 +356,7 @@ export const commandTool: ToolSpec<Input> = {
         tempDir,
         input: inputData,
         commandPaths: ctx.commandPaths,
+        fileEnvVars,
         envVars,
       };
 
@@ -434,6 +442,8 @@ interface CagedInput {
   tempDir: string;
   input: Buffer | undefined;
   commandPaths: readonly string[];
+  /** Validated entries parsed from the configured env files, in merge order. */
+  fileEnvVars: Readonly<Record<string, string>>;
   /** Validated per-call overlay, layered over the plugin defaults when the child env is built. */
   envVars: Readonly<Record<string, string>>;
   relay?: RelaySettings;
@@ -551,10 +561,11 @@ async function runCaged(ctx: RunContext, input: CagedInput): Promise<ExecOutcome
   // USER. Explicit values win over that allowlist, so pass only the tool's own
   // TMPDIR, proxy settings, and the validated environment entries:
   // forwarding process.env would defeat the preset's secret filtering.
-  // Configured entries and then the per-call overlay are appended last so they
-  // override a same-named proxy value or preset allowlist entry; the overlay
-  // wins over a same-named plugin default. PATH and TMPDIR cannot be set by
-  // either layer.
+  // Configured entries, then file-derived entries in configured file order,
+  // then the per-call overlay are appended last so they override a same-named
+  // proxy value or preset allowlist entry; a later file overrides an earlier
+  // one, and the overlay wins over a same-named plugin or file value. PATH and
+  // TMPDIR cannot be set by any layer.
   // The transparent relay treats a connection to the proxy as the proxy's own
   // destination (never its CONNECT target), so the proxy's address, or its
   // cached DNS name, is authorized through fs_command_network; the target URL
@@ -574,7 +585,11 @@ async function runCaged(ctx: RunContext, input: CagedInput): Promise<ExecOutcome
         .join(path.delimiter),
     ]);
   }
-  for (const [name, value] of Object.entries({ ...ctx.commandEnvVars, ...input.envVars })) {
+  for (const [name, value] of Object.entries({
+    ...ctx.commandEnvVars,
+    ...input.fileEnvVars,
+    ...input.envVars,
+  })) {
     envEntries.push([name, value]);
   }
   const env: Record<string, string> = Object.fromEntries(envEntries);
